@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import '@/lib/watchdog'; // in-process watchdog (server-side singleton, starts every-60s review loop)
 
 export const runtime = 'nodejs';
 
