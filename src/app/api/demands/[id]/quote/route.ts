@@ -47,11 +47,12 @@ export async function POST(
 
     const body = await req.json().catch(() => ({}));
 
-    // estimatedEffortDays required.
+    // estimatedEffortDays: accept from body, else fall back to already-stored value.
     let effortDays: number | null = null;
     const e = body.estimatedEffortDays;
     if (typeof e === 'number' && e >= 0) effortDays = e;
     else if (typeof e === 'string' && e.trim() && !isNaN(Number(e))) effortDays = Number(e);
+    else if (demand.estimatedEffortDays != null) effortDays = demand.estimatedEffortDays;
     if (effortDays === null) {
       return NextResponse.json(
         { error: 'estimatedEffortDays is required and must be a non-negative number' },
@@ -59,6 +60,7 @@ export async function POST(
       );
     }
 
+    // estimatedCost: accept from body, else fall back to stored.
     let cost: number | null = null;
     if (body.estimatedCost !== undefined && body.estimatedCost !== null) {
       const c = body.estimatedCost;
@@ -70,12 +72,15 @@ export async function POST(
           { status: 400 },
         );
       }
+    } else if (demand.estimatedCost != null) {
+      cost = demand.estimatedCost;
     }
 
+    // quoteNotes: accept from body, else fall back to stored.
     const quoteNotes =
       typeof body.quoteNotes === 'string' && body.quoteNotes.trim()
         ? body.quoteNotes.trim()
-        : null;
+        : demand.quoteNotes ?? null;
 
     const updated = await db.demand.update({
       where: { id },

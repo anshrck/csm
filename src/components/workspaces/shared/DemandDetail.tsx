@@ -498,6 +498,58 @@ function CloseDialog({
   );
 }
 
+function ReturnQuoteDialog({
+  open,
+  onOpenChange,
+  notes,
+  setNotes,
+  onConfirm,
+  pending,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  notes: string;
+  setNotes: (v: string) => void;
+  onConfirm: () => void;
+  pending: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CornerUpRight className="size-5 text-rose-600" /> Return Quote for Revision
+          </DialogTitle>
+          <DialogDescription>
+            Return this quote draft to the SCM Worker for revision. The SCM Worker will be notified with your notes and the quote will remain in UNDER_REVIEW status.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="return-notes">Revision notes (required)</Label>
+          <Textarea
+            id="return-notes"
+            rows={5}
+            placeholder="Explain what needs to change in the quote — scope, effort estimate, SLA class, assumptions, dependencies, etc."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            This text is recorded in the demand audit trail and shown to the SCM Worker in their notification.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={pending || !notes.trim()}>
+            {pending ? 'Returning…' : 'Return for Revision'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* --------------------- assessment fields sub-component -------------------- */
 
 function AssessmentFieldsSection({
@@ -702,9 +754,17 @@ function StatusCallout({
       );
     case 'UNDER_REVIEW':
       if (role === 'SCM_WORKER') {
+        const draftFilled =
+          demand.estimatedEffortDays != null &&
+          demand.estimatedEffortDays > 0 &&
+          !!demand.quoteNotes?.trim();
         return demand.quoteApprovedByCmLeader ? (
           <Callout tone="success" icon={<CheckCircle2 className="size-4" />} title="Quote approved">
             Submit the quote to the customer to advance the demand.
+          </Callout>
+        ) : draftFilled ? (
+          <Callout tone="warning" icon={<Clock className="size-4" />} title="Pending CM Leader Approval">
+            Your quote draft is saved. Request CM Leader approval from the actions below — CM Leader has been notified once you click.
           </Callout>
         ) : (
           <Callout tone="warning" icon={<Clock className="size-4" />} title="Quote draft">
@@ -719,7 +779,7 @@ function StatusCallout({
         </Callout>
       ) : (
         <Callout tone="warning" icon={<ShieldCheck className="size-4" />} title="Governance gate">
-          Review the SCM Worker&apos;s quote draft and approve or reject.
+          Review the SCM Worker&apos;s quote draft and approve, return for revision, or reject.
         </Callout>
       );
     case 'QUOTED':
@@ -847,6 +907,8 @@ export default function DemandDetail({
   const [ceImplementationPlan, setCeImplementationPlan] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
   const [closeNote, setCloseNote] = useState('');
+  const [returnQuoteOpen, setReturnQuoteOpen] = useState(false);
+  const [returnQuoteNotes, setReturnQuoteNotes] = useState('');
 
   /* --- mutations --- */
   const invalidate = () => {
@@ -902,6 +964,31 @@ export default function DemandDetail({
     onSuccess: () => {
       toast.success('Quote submitted to customer.');
       invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const requestApprovalMutation = useMutation({
+    mutationFn: () => apiPost<Demand>(`/api/demands/${id}/request-approval`),
+    onSuccess: () => {
+      toast.success('CM Leader has been notified', {
+        description: 'Your quote draft has been submitted for CM Leader approval. You will be notified when it is approved or returned for revision.',
+      });
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const returnQuoteMutation = useMutation({
+    mutationFn: (body: { notes: string }) =>
+      apiPost<Demand>(`/api/demands/${id}/return-quote`, body),
+    onSuccess: () => {
+      toast.info('Quote returned to SCM Worker for revision', {
+        description: 'The SCM Worker has been notified with your revision notes.',
+      });
+      invalidate();
+      setReturnQuoteOpen(false);
+      setReturnQuoteNotes('');
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -1435,10 +1522,22 @@ export default function DemandDetail({
                         >
                           <Send className="size-4" /> Submit Quote to Customer
                         </ActionButton>
+                      ) : savedQuoteFieldsFilled ? (
+                        <>
+                          <ActionButton
+                            onClick={() => requestApprovalMutation.mutate()}
+                            pending={requestApprovalMutation.isPending}
+                          >
+                            <ShieldCheck className="size-4" /> Request CM Leader Approval
+                          </ActionButton>
+                          <Callout tone="info" icon={<Clock className="size-4" />} title="Pending CM Leader Approval">
+                            Your quote draft has been saved. Request CM Leader approval to enable submission to the customer. The CM Leader will be notified when you click the button above.
+                          </Callout>
+                        </>
                       ) : (
                         <Callout tone="info" icon={<FileCheck2 className="size-4" />}>
                           Fill the assessment fields and click <span className="font-semibold">Save Quote
-                          Draft</span> above. The CM Leader will then approve.
+                          Draft</span> above. You can then request CM Leader approval.
                         </Callout>
                       )}
                       <ActionButton variant="outline" onClick={openRedirect}>
@@ -1457,14 +1556,29 @@ export default function DemandDetail({
                         <Callout tone="success" icon={<CheckCircle2 className="size-4" />}>
                           You approved this quote. The SCM Worker can now submit it to the customer.
                         </Callout>
+                      ) : savedQuoteFieldsFilled ? (
+                        <>
+                          <ActionButton
+                            onClick={() => approveQuoteMutation.mutate()}
+                            pending={approveQuoteMutation.isPending}
+                          >
+                            <ShieldCheck className="size-4" /> Approve Quote
+                          </ActionButton>
+                          <ActionButton
+                            variant="outline"
+                            onClick={() => {
+                              setReturnQuoteNotes('');
+                              setReturnQuoteOpen(true);
+                            }}
+                            pending={returnQuoteMutation.isPending}
+                          >
+                            <CornerUpRight className="size-4" /> Return for Revision…
+                          </ActionButton>
+                        </>
                       ) : (
-                        <ActionButton
-                          onClick={() => approveQuoteMutation.mutate()}
-                          pending={approveQuoteMutation.isPending}
-                          disabled={!savedQuoteFieldsFilled}
-                        >
-                          <ShieldCheck className="size-4" /> Approve Quote
-                        </ActionButton>
+                        <Callout tone="warning" icon={<Clock className="size-4" />} title="Awaiting SCM quote draft">
+                          The SCM Worker has not yet submitted a quote draft for approval. Approve / Return will be enabled once a draft is saved.
+                        </Callout>
                       )}
                       <ActionButton variant="destructive" onClick={openReject}>
                         <Ban className="size-4" /> Reject Demand…
@@ -1591,6 +1705,14 @@ export default function DemandDetail({
         setNote={setCloseNote}
         onConfirm={() => closeMutation.mutate({ note: closeNote.trim() || undefined })}
         pending={closeMutation.isPending}
+      />
+      <ReturnQuoteDialog
+        open={returnQuoteOpen}
+        onOpenChange={setReturnQuoteOpen}
+        notes={returnQuoteNotes}
+        setNotes={setReturnQuoteNotes}
+        onConfirm={() => returnQuoteMutation.mutate({ notes: returnQuoteNotes.trim() })}
+        pending={returnQuoteMutation.isPending}
       />
     </div>
   );

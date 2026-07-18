@@ -258,7 +258,7 @@ model Problem {
 model Notification {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // DemandQuoted | DemandFulfilled | DemandRejected | SlaWarning | SlaBreached | DemandAccepted | ChangeClosed | DemandCreated
+  type      String   // DemandQuoted | DemandFulfilled | DemandRejected | SlaWarning | SlaBreached | DemandAccepted | ChangeClosed | DemandCreated | QuoteApprovalRequested | SlaReportApproved | SlaReportReturned | CommitmentApproved | CommitmentEscalated | BreachCommunicated | BreachResponded
   title     String
   message   String
   entityRef String?  // e.g. demand:<id>
@@ -269,4 +269,68 @@ model Notification {
 
   @@index([userId])
   @@index([read])
+}
+
+// SLA performance report prepared by SCM Worker, reviewed/approved by CM Leader
+model SlaReport {
+  id              String    @id @default(cuid())
+  title           String
+  periodStart     DateTime
+  periodEnd       DateTime
+  serviceIds      String    // JSON array
+  serviceCustomerIds String  // JSON array
+  preparedById    String
+  reviewedByCmLeaderId String?
+  status          String    // DRAFT | PENDING_REVIEW | APPROVED | RETURNED | ISSUED
+  summary         String    // compliance summary text
+  metricsJson     String    // JSON: per-service compliance, breaches, warnings
+  reviewNotes     String?   // CM Leader feedback on return
+  approvedAt      DateTime?
+  issuedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([preparedById])
+}
+
+// Customer communication record — the governed thread owned by SCM Worker
+model Communication {
+  id           String    @id @default(cuid())
+  demandId     String?
+  serviceId    String?
+  serviceCustomerId String?
+  slaEventId   String?
+  direction    String    // TO_CUSTOMER | INTERNAL_NOTE
+  channel      String    // PORTAL | EMAIL | MESSAGE
+  subject      String
+  body         String
+  authorId     String
+  authorName   String
+  createdAt    DateTime  @default(now())
+
+  @@index([demandId])
+  @@index([serviceCustomerId])
+}
+
+// Service Owner governance decision (commitment approval, escalation, breach response)
+model GovernanceDecision {
+  id              String    @id @default(cuid())
+  serviceId       String
+  demandId        String?
+  slaEventId      String?
+  problemId       String?
+  decisionType    String    // COMMITMENT_APPROVAL | COMMITMENT_ESCALATION | BREACH_RESPONSE | LIFECYCLE_DIRECTION | CATALOG_ACCURACY
+  decision        String    // APPROVED | REJECTED | ESCALATED | REMEDIATION_AUTHORIZED | RESOURCES_AUTHORIZED | EMERGENCY_CHANGE_DIRECTED
+  rationale       String
+  resourcesAuthorized String?
+  followUpOwner   String?
+  followUpDate    DateTime?
+  decidedById     String
+  decidedByName   String
+  createdAt       DateTime  @default(now())
+
+  @@index([serviceId])
+  @@index([demandId])
+  @@index([decisionType])
 }

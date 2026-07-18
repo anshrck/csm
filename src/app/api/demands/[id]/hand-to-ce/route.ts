@@ -50,11 +50,22 @@ export async function POST(
 
     const body = await req.json().catch(() => ({}));
 
-    let relatedServiceIds: string[] = [];
-    try {
-      relatedServiceIds = demand.relatedServiceIds ? JSON.parse(demand.relatedServiceIds) : [];
-    } catch {
-      relatedServiceIds = [];
+    // affectedServiceIds: prefer body (SCM specifies at handover), else demand.relatedServiceIds.
+    let affectedServiceIds: string[] = [];
+    if (Array.isArray(body.affectedServiceIds) && body.affectedServiceIds.length > 0) {
+      affectedServiceIds = body.affectedServiceIds.map(String).filter(Boolean);
+    } else {
+      try {
+        affectedServiceIds = demand.relatedServiceIds ? JSON.parse(demand.relatedServiceIds) : [];
+      } catch {
+        affectedServiceIds = [];
+      }
+    }
+    if (affectedServiceIds.length === 0) {
+      return NextResponse.json(
+        { error: 'Cannot hand to CE — at least one affected service must be specified. Provide affectedServiceIds in the request body or set relatedServiceIds on the demand.' },
+        { status: 400 },
+      );
     }
 
     const implementationPlan =
@@ -78,7 +89,7 @@ export async function POST(
           complexity,
           originType: 'DEMAND',
           originDemandId: demand.id,
-          affectedServiceIds: JSON.stringify(relatedServiceIds),
+          affectedServiceIds: JSON.stringify(affectedServiceIds),
           implementationPlan,
           technicalOwnerTasksJson: JSON.stringify([]),
         },

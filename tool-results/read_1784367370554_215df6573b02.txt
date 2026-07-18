@@ -1,0 +1,1598 @@
+     1→'use client';
+     2→
+     3→/**
+     4→ * DemandDetail — CSM-side Demand Work Surface (WS-02-003).
+     5→ *
+     6→ * Shared screen used by SCM Worker and CM Leader workspaces.
+     7→ * Renders the full demand lifecycle work surface: customer input, catalog
+     8→ * check, assessment/quote draft (with CM Leader approval gate), commitment,
+     9→ * linked change, activity log, demand meta, related services, and a sticky
+    10→ * governance actions card.
+    11→ *
+    12→ * Export contract (other agents import this exact signature):
+    13→ *   export default function DemandDetail({ id, role }: { id: string; role: 'SCM_WORKER' | 'CM_LEADER' })
+    14→ */
+    15→
+    16→import * as React from 'react';
+    17→import { useMemo, useState } from 'react';
+    18→import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+    19→import { toast } from 'sonner';
+    20→
+    21→import { useApp } from '@/lib/store';
+    22→import { apiGet, apiPatch, apiPost } from '@/lib/api';
+    23→import type { Demand, Service, ServiceOffering } from '@/lib/types';
+    24→
+    25→// Shared design system
+    26→import {
+    27→  ActivityLog,
+    28→  Badge,
+    29→  Button,
+    30→  ChangeStatusBadge,
+    31→  Days,
+    32→  DemandPipelineTimeline,
+    33→  DemandStatusBadge,
+    34→  EmptyState,
+    35→  FormattedDate,
+    36→  KeyValue,
+    37→  LoadingState,
+    38→  Money,
+    39→  PageHeader,
+    40→  RelativeTime,
+    41→  SectionCard,
+    42→  SlaClassBadge,
+    43→  UserAvatar,
+    44→} from '@/components/shared';
+    45→
+    46→// shadcn/ui primitives
+    47→import { Input } from '@/components/ui/input';
+    48→import { Label } from '@/components/ui/label';
+    49→import { Textarea } from '@/components/ui/textarea';
+    50→import { Separator } from '@/components/ui/separator';
+    51→import {
+    52→  Select,
+    53→  SelectContent,
+    54→  SelectItem,
+    55→  SelectTrigger,
+    56→  SelectValue,
+    57→} from '@/components/ui/select';
+    58→import {
+    59→  Dialog,
+    60→  DialogContent,
+    61→  DialogDescription,
+    62→  DialogFooter,
+    63→  DialogHeader,
+    64→  DialogTitle,
+    65→} from '@/components/ui/dialog';
+    66→
+    67→import {
+    68→  AlertTriangle,
+    69→  ArrowLeft,
+    70→  ArrowRightLeft,
+    71→  Ban,
+    72→  Building2,
+    73→  Calendar,
+    74→  CheckCircle2,
+    75→  Clock,
+    76→  CornerUpRight,
+    77→  FileCheck2,
+    78→  GitBranch,
+    79→  Info,
+    80→  MessageSquare,
+    81→  PackageCheck,
+    82→  Play,
+    83→  Send,
+    84→  ShieldCheck,
+    85→  UserPlus,
+    86→  Wrench,
+    87→} from 'lucide-react';
+    88→
+    89→/* ------------------------------ helpers ------------------------------ */
+    90→
+    91→const isScm = (role: 'SCM_WORKER' | 'CM_LEADER') => role === 'SCM_WORKER';
+    92→const isCm = (role: 'SCM_WORKER' | 'CM_LEADER') => role === 'CM_LEADER';
+    93→
+    94→interface ScmWorkerHint {
+    95→  id: string;
+    96→  name: string;
+    97→  title: string | null;
+    98→  avatarColor: string;
+    99→  openDemandCount: number;
+   100→}
+   101→
+   102→type CalloutTone = 'info' | 'warning' | 'success' | 'danger';
+   103→
+   104→function Callout({
+   105→  tone = 'info',
+   106→  icon,
+   107→  title,
+   108→  children,
+   109→  className = '',
+   110→}: {
+   111→  tone?: CalloutTone;
+   112→  icon?: React.ReactNode;
+   113→  title?: string;
+   114→  children?: React.ReactNode;
+   115→  className?: string;
+   116→}) {
+   117→  const map: Record<CalloutTone, string> = {
+   118→    info: 'border-teal-200 bg-teal-50 text-teal-900 dark:border-teal-900/60 dark:bg-teal-950/40 dark:text-teal-200',
+   119→    warning:
+   120→      'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200',
+   121→    success:
+   122→      'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200',
+   123→    danger:
+   124→      'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200',
+   125→  };
+   126→  return (
+   127→    <div className={`flex gap-2.5 rounded-md border px-3 py-2.5 text-xs ${map[tone]} ${className}`}>
+   128→      {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
+   129→      <div className="space-y-0.5 min-w-0">
+   130→        {title && <p className="font-semibold">{title}</p>}
+   131→        {children && <div className="text-[11px] leading-relaxed opacity-90">{children}</div>}
+   132→      </div>
+   133→    </div>
+   134→  );
+   135→}
+   136→
+   137→function ActionButton({
+   138→  children,
+   139→  variant = 'default',
+   140→  onClick,
+   141→  disabled,
+   142→  pending,
+   143→  className = '',
+   144→}: {
+   145→  children: React.ReactNode;
+   146→  variant?: 'default' | 'outline' | 'secondary' | 'destructive' | 'ghost';
+   147→  onClick?: () => void;
+   148→  disabled?: boolean;
+   149→  pending?: boolean;
+   150→  className?: string;
+   151→}) {
+   152→  return (
+   153→    <Button
+   154→      variant={variant}
+   155→      onClick={onClick}
+   156→      disabled={disabled || pending}
+   157→      className={`w-full justify-start ${className}`}
+   158→    >
+   159→      {pending ? <Clock className="size-4 animate-pulse" /> : children}
+   160→    </Button>
+   161→  );
+   162→}
+   163→
+   164→/* ------------------------------ dialogs ------------------------------ */
+   165→
+   166→function RejectDialog({
+   167→  open,
+   168→  onOpenChange,
+   169→  reason,
+   170→  setReason,
+   171→  onConfirm,
+   172→  pending,
+   173→}: {
+   174→  open: boolean;
+   175→  onOpenChange: (v: boolean) => void;
+   176→  reason: string;
+   177→  setReason: (v: string) => void;
+   178→  onConfirm: () => void;
+   179→  pending: boolean;
+   180→}) {
+   181→  return (
+   182→    <Dialog open={open} onOpenChange={onOpenChange}>
+   183→      <DialogContent>
+   184→        <DialogHeader>
+   185→          <DialogTitle className="flex items-center gap-2">
+   186→            <Ban className="size-5 text-rose-600" /> Reject Demand
+   187→          </DialogTitle>
+   188→          <DialogDescription>
+   189→            Rejecting this demand is a terminal action. The customer will be notified with the reason below.
+   190→          </DialogDescription>
+   191→        </DialogHeader>
+   192→        <div className="space-y-2">
+   193→          <Label htmlFor="reject-reason">Reason for rejection</Label>
+   194→          <Textarea
+   195→            id="reject-reason"
+   196→            rows={5}
+   197→            placeholder="Explain why this demand cannot be fulfilled, and where the customer should go instead (e.g. catalog offering)."
+   198→            value={reason}
+   199→            onChange={(e) => setReason(e.target.value)}
+   200→          />
+   201→          <p className="text-xs text-muted-foreground">
+   202→            This text is shown to the Service Customer in their notification.
+   203→          </p>
+   204→        </div>
+   205→        <DialogFooter>
+   206→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   207→            Cancel
+   208→          </Button>
+   209→          <Button variant="destructive" onClick={onConfirm} disabled={pending || !reason.trim()}>
+   210→            {pending ? 'Rejecting…' : 'Reject Demand'}
+   211→          </Button>
+   212→        </DialogFooter>
+   213→      </DialogContent>
+   214→    </Dialog>
+   215→  );
+   216→}
+   217→
+   218→function RedirectDialog({
+   219→  open,
+   220→  onOpenChange,
+   221→  offerings,
+   222→  offeringsLoading,
+   223→  offering,
+   224→  setOffering,
+   225→  reason,
+   226→  setReason,
+   227→  onConfirm,
+   228→  pending,
+   229→}: {
+   230→  open: boolean;
+   231→  onOpenChange: (v: boolean) => void;
+   232→  offerings: ServiceOffering[];
+   233→  offeringsLoading: boolean;
+   234→  offering: string;
+   235→  setOffering: (v: string) => void;
+   236→  reason: string;
+   237→  setReason: (v: string) => void;
+   238→  onConfirm: () => void;
+   239→  pending: boolean;
+   240→}) {
+   241→  return (
+   242→    <Dialog open={open} onOpenChange={onOpenChange}>
+   243→      <DialogContent>
+   244→        <DialogHeader>
+   245→          <DialogTitle className="flex items-center gap-2">
+   246→            <CornerUpRight className="size-5 text-orange-600" /> Redirect to Catalog Offering
+   247→          </DialogTitle>
+   248→          <DialogDescription>
+   249→            The customer need is already covered by an existing catalog offering. Select the offering to
+   250→            redirect this demand to. The customer will be notified.
+   251→          </DialogDescription>
+   252→        </DialogHeader>
+   253→        <div className="space-y-3">
+   254→          <div className="space-y-1.5">
+   255→            <Label htmlFor="offering-select">Catalog offering</Label>
+   256→            {offeringsLoading ? (
+   257→              <div className="h-9 rounded-md border bg-muted/30 animate-pulse" />
+   258→            ) : offerings.length === 0 ? (
+   259→              <Callout tone="warning" icon={<AlertTriangle className="size-4" />}>
+   260→                No active offerings found in the catalog.
+   261→              </Callout>
+   262→            ) : (
+   263→              <Select value={offering} onValueChange={setOffering}>
+   264→                <SelectTrigger id="offering-select" className="w-full">
+   265→                  <SelectValue placeholder="Choose an offering…" />
+   266→                </SelectTrigger>
+   267→                <SelectContent>
+   268→                  {offerings.map((o) => (
+   269→                    <SelectItem key={o.id} value={o.id}>
+   270→                      <span className="font-medium">{o.name}</span>
+   271→                      <span className="text-muted-foreground ml-1">— {o.serviceName ?? 'service'}</span>
+   272→                    </SelectItem>
+   273→                  ))}
+   274→                </SelectContent>
+   275→              </Select>
+   276→            )}
+   277→          </div>
+   278→          <div className="space-y-1.5">
+   279→            <Label htmlFor="redirect-reason">Note to customer (optional)</Label>
+   280→            <Textarea
+   281→              id="redirect-reason"
+   282→              rows={3}
+   283→              placeholder="e.g. Your need is fulfilled by the existing 'New ERP Module Request' offering."
+   284→              value={reason}
+   285→              onChange={(e) => setReason(e.target.value)}
+   286→            />
+   287→          </div>
+   288→        </div>
+   289→        <DialogFooter>
+   290→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   291→            Cancel
+   292→          </Button>
+   293→          <Button
+   294→            variant="default"
+   295→            onClick={onConfirm}
+   296→            disabled={pending || !offering || offerings.length === 0}
+   297→          >
+   298→            {pending ? 'Redirecting…' : 'Redirect Demand'}
+   299→          </Button>
+   300→        </DialogFooter>
+   301→      </DialogContent>
+   302→    </Dialog>
+   303→  );
+   304→}
+   305→
+   306→function HandToCeDialog({
+   307→  open,
+   308→  onOpenChange,
+   309→  relatedServices,
+   310→  plan,
+   311→  setPlan,
+   312→  onConfirm,
+   313→  pending,
+   314→}: {
+   315→  open: boolean;
+   316→  onOpenChange: (v: boolean) => void;
+   317→  relatedServices: Service[];
+   318→  plan: string;
+   319→  setPlan: (v: string) => void;
+   320→  onConfirm: () => void;
+   321→  pending: boolean;
+   322→}) {
+   323→  return (
+   324→    <Dialog open={open} onOpenChange={onOpenChange}>
+   325→      <DialogContent>
+   326→        <DialogHeader>
+   327→          <DialogTitle className="flex items-center gap-2">
+   328→            <GitBranch className="size-5 text-teal-600" /> Create Change &amp; Hand to CE
+   329→          </DialogTitle>
+   330→          <DialogDescription>
+   331→            A Change Request will be created from this demand and handed to Change Enablement. The demand
+   332→            moves to <span className="font-medium">In Change</span> until the change is closed.
+   333→          </DialogDescription>
+   334→        </DialogHeader>
+   335→        <div className="space-y-3">
+   336→          <div>
+   337→            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+   338→              Affected services (from demand)
+   339→            </Label>
+   340→            <ul className="mt-1 space-y-1">
+   341→              {relatedServices.length === 0 ? (
+   342→                <li className="text-sm text-muted-foreground">No related services on the demand.</li>
+   343→              ) : (
+   344→                relatedServices.map((s) => (
+   345→                  <li
+   346→                    key={s.id}
+   347→                    className="flex items-center justify-between rounded-md border px-2.5 py-1.5"
+   348→                  >
+   349→                    <span className="text-sm font-medium">{s.name}</span>
+   350→                    <SlaClassBadge slaClass={s.slaClass} />
+   351→                  </li>
+   352→                ))
+   353→              )}
+   354→            </ul>
+   355→          </div>
+   356→          <div className="space-y-1.5">
+   357→            <Label htmlFor="ce-plan">Implementation plan (optional)</Label>
+   358→            <Textarea
+   359→              id="ce-plan"
+   360→              rows={5}
+   361→              placeholder="High-level steps, owners, and rollback notes. The CE worker will detail this further."
+   362→              value={plan}
+   363→              onChange={(e) => setPlan(e.target.value)}
+   364→            />
+   365→          </div>
+   366→        </div>
+   367→        <DialogFooter>
+   368→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   369→            Cancel
+   370→          </Button>
+   371→          <Button onClick={onConfirm} disabled={pending}>
+   372→            {pending ? 'Creating change…' : 'Create Change & Hand to CE'}
+   373→          </Button>
+   374→        </DialogFooter>
+   375→      </DialogContent>
+   376→    </Dialog>
+   377→  );
+   378→}
+   379→
+   380→function AssignDialog({
+   381→  open,
+   382→  onOpenChange,
+   383→  workers,
+   384→  workersLoading,
+   385→  selected,
+   386→  setSelected,
+   387→  onConfirm,
+   388→  pending,
+   389→}: {
+   390→  open: boolean;
+   391→  onOpenChange: (v: boolean) => void;
+   392→  workers: ScmWorkerHint[];
+   393→  workersLoading: boolean;
+   394→  selected: string;
+   395→  setSelected: (v: string) => void;
+   396→  onConfirm: () => void;
+   397→  pending: boolean;
+   398→}) {
+   399→  return (
+   400→    <Dialog open={open} onOpenChange={onOpenChange}>
+   401→      <DialogContent>
+   402→        <DialogHeader>
+   403→          <DialogTitle className="flex items-center gap-2">
+   404→            <UserPlus className="size-5 text-teal-600" /> Assign SCM Worker
+   405→          </DialogTitle>
+   406→          <DialogDescription>
+   407→            Choose a Service Customer Manager to own this demand. Workload hints are shown next to each
+   408→            worker.
+   409→          </DialogDescription>
+   410→        </DialogHeader>
+   411→        <div className="space-y-1.5">
+   412→          <Label htmlFor="worker-select">SCM Worker</Label>
+   413→          {workersLoading ? (
+   414→            <div className="h-9 rounded-md border bg-muted/30 animate-pulse" />
+   415→          ) : workers.length === 0 ? (
+   416→            <Callout tone="warning" icon={<AlertTriangle className="size-4" />}>
+   417→              No SCM workers found. Try assigning to yourself from the SCM Worker workspace.
+   418→            </Callout>
+   419→          ) : (
+   420→            <Select value={selected} onValueChange={setSelected}>
+   421→              <SelectTrigger id="worker-select" className="w-full">
+   422→                <SelectValue placeholder="Select an SCM worker…" />
+   423→              </SelectTrigger>
+   424→              <SelectContent>
+   425→                {workers.map((w) => (
+   426→                  <SelectItem key={w.id} value={w.id}>
+   427→                    <div className="flex items-center gap-2">
+   428→                      <span className="font-medium">{w.name}</span>
+   429→                      <span className="text-muted-foreground">
+   430→                        · {w.openDemandCount} open {w.openDemandCount === 1 ? 'demand' : 'demands'}
+   431→                      </span>
+   432→                    </div>
+   433→                  </SelectItem>
+   434→                ))}
+   435→              </SelectContent>
+   436→            </Select>
+   437→          )}
+   438→        </div>
+   439→        <DialogFooter>
+   440→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   441→            Cancel
+   442→          </Button>
+   443→          <Button onClick={onConfirm} disabled={pending || !selected || workers.length === 0}>
+   444→            {pending ? 'Assigning…' : 'Assign Worker'}
+   445→          </Button>
+   446→        </DialogFooter>
+   447→      </DialogContent>
+   448→    </Dialog>
+   449→  );
+   450→}
+   451→
+   452→function CloseDialog({
+   453→  open,
+   454→  onOpenChange,
+   455→  note,
+   456→  setNote,
+   457→  onConfirm,
+   458→  pending,
+   459→}: {
+   460→  open: boolean;
+   461→  onOpenChange: (v: boolean) => void;
+   462→  note: string;
+   463→  setNote: (v: string) => void;
+   464→  onConfirm: () => void;
+   465→  pending: boolean;
+   466→}) {
+   467→  return (
+   468→    <Dialog open={open} onOpenChange={onOpenChange}>
+   469→      <DialogContent>
+   470→        <DialogHeader>
+   471→          <DialogTitle className="flex items-center gap-2">
+   472→            <CheckCircle2 className="size-5 text-emerald-600" /> Close Demand
+   473→          </DialogTitle>
+   474→          <DialogDescription>
+   475→            Closing this demand completes its lifecycle. The customer will be notified.
+   476→          </DialogDescription>
+   477→        </DialogHeader>
+   478→        <div className="space-y-1.5">
+   479→          <Label htmlFor="close-note">Closing note (optional)</Label>
+   480→          <Textarea
+   481→            id="close-note"
+   482→            rows={4}
+   483→            placeholder="Any final remarks, outcomes, or follow-up actions."
+   484→            value={note}
+   485→            onChange={(e) => setNote(e.target.value)}
+   486→          />
+   487→        </div>
+   488→        <DialogFooter>
+   489→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   490→            Cancel
+   491→          </Button>
+   492→          <Button onClick={onConfirm} disabled={pending}>
+   493→            {pending ? 'Closing…' : 'Close Demand'}
+   494→          </Button>
+   495→        </DialogFooter>
+   496→      </DialogContent>
+   497→    </Dialog>
+   498→  );
+   499→}
+   500→
+   501→/* --------------------- assessment fields sub-component -------------------- */
+   502→
+   503→function AssessmentFieldsSection({
+   504→  demand,
+   505→  role,
+   506→  onSave,
+   507→  savePending,
+   508→}: {
+   509→  demand: Demand;
+   510→  role: 'SCM_WORKER' | 'CM_LEADER';
+   511→  onSave: (body: {
+   512→    estimatedEffortDays: number | null;
+   513→    estimatedCost: number | null;
+   514→    quoteNotes: string | null;
+   515→  }) => void;
+   516→  savePending: boolean;
+   517→}) {
+   518→  const canEdit = demand.status === 'UNDER_REVIEW' && isScm(role);
+   519→
+   520→  // Lazy initial state — runs once per mount. Parent remounts via key={demand.id}.
+   521→  const [effort, setEffort] = useState<string>(() =>
+   522→    demand.estimatedEffortDays != null ? String(demand.estimatedEffortDays) : '',
+   523→  );
+   524→  const [cost, setCost] = useState<string>(() =>
+   525→    demand.estimatedCost != null ? String(demand.estimatedCost) : '',
+   526→  );
+   527→  const [quoteNotes, setQuoteNotes] = useState<string>(() => demand.quoteNotes ?? '');
+   528→
+   529→  const quoteFieldsFilled = !!quoteNotes.trim() && effort.trim() !== '' && Number(effort) > 0;
+   530→  const savedQuoteFieldsFilled =
+   531→    demand.estimatedEffortDays != null &&
+   532→    demand.estimatedEffortDays > 0 &&
+   533→    !!demand.quoteNotes?.trim();
+   534→
+   535→  return (
+   536→    <SectionCard
+   537→      title="Assessment & Quote Draft"
+   538→      description={
+   539→        canEdit
+   540→          ? 'Fill in the estimated effort, cost, and notes. The CM Leader must approve before the quote is sent to the customer.'
+   541→          : "Review the SCM Worker's quote draft. Approve to enable submission to the customer, or reject the demand."
+   542→      }
+   543→      actions={
+   544→        demand.quoteApprovedByCmLeader ? (
+   545→          <Badge
+   546→            variant="outline"
+   547→            className="border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+   548→          >
+   549→            <CheckCircle2 className="size-3.5" /> CM Approved
+   550→          </Badge>
+   551→        ) : undefined
+   552→      }
+   553→    >
+   554→      <div id="assessment-section" className="space-y-4 scroll-mt-4">
+   555→        <div className="grid sm:grid-cols-2 gap-4">
+   556→          <div className="space-y-1.5">
+   557→            <Label htmlFor="effort">Estimated Effort (days)</Label>
+   558→            {canEdit ? (
+   559→              <Input
+   560→                id="effort"
+   561→                type="number"
+   562→                min="0"
+   563→                step="0.5"
+   564→                placeholder="e.g. 12"
+   565→                value={effort}
+   566→                onChange={(e) => setEffort(e.target.value)}
+   567→              />
+   568→            ) : (
+   569→              <div className="text-sm py-1.5">
+   570→                <Days value={demand.estimatedEffortDays} />
+   571→              </div>
+   572→            )}
+   573→          </div>
+   574→          <div className="space-y-1.5">
+   575→            <Label htmlFor="cost">Estimated Cost (USD)</Label>
+   576→            {canEdit ? (
+   577→              <Input
+   578→                id="cost"
+   579→                type="number"
+   580→                min="0"
+   581→                step="100"
+   582→                placeholder="e.g. 12000"
+   583→                value={cost}
+   584→                onChange={(e) => setCost(e.target.value)}
+   585→              />
+   586→            ) : (
+   587→              <div className="text-sm py-1.5">
+   588→                <Money value={demand.estimatedCost} />
+   589→              </div>
+   590→            )}
+   591→          </div>
+   592→        </div>
+   593→
+   594→        <div className="space-y-1.5">
+   595→          <Label htmlFor="quoteNotes">Quote Notes</Label>
+   596→          {canEdit ? (
+   597→            <Textarea
+   598→              id="quoteNotes"
+   599→              rows={5}
+   600→              placeholder="Scope, deliverables, assumptions, SLA class, and any dependencies on other services."
+   601→              value={quoteNotes}
+   602→              onChange={(e) => setQuoteNotes(e.target.value)}
+   603→            />
+   604→          ) : (
+   605→            <div className="text-sm whitespace-pre-wrap rounded-md border bg-muted/30 p-3 min-h-[3rem] leading-relaxed">
+   606→              {demand.quoteNotes ?? (
+   607→                <span className="text-muted-foreground italic">
+   608→                  SCM Worker has not yet filled the quote notes.
+   609→                </span>
+   610→              )}
+   611→            </div>
+   612→          )}
+   613→        </div>
+   614→
+   615→        {/* SCM save button + status callout */}
+   616→        {canEdit && (
+   617→          <div className="flex flex-col gap-3 pt-1">
+   618→            <div className="flex flex-wrap items-center gap-2">
+   619→              <Button
+   620→                disabled={savePending || !quoteFieldsFilled}
+   621→                onClick={() =>
+   622→                  onSave({
+   623→                    estimatedEffortDays: effort ? Number(effort) : null,
+   624→                    estimatedCost: cost ? Number(cost) : null,
+   625→                    quoteNotes: quoteNotes.trim() || null,
+   626→                  })
+   627→                }
+   628→              >
+   629→                {savePending ? (
+   630→                  <Clock className="size-4 animate-pulse" />
+   631→                ) : (
+   632→                  <CheckCircle2 className="size-4" />
+   633→                )}
+   634→                Save Quote Draft
+   635→              </Button>
+   636→              {!quoteFieldsFilled && (
+   637→                <span className="text-xs text-muted-foreground">
+   638→                  Effort and notes are required to save.
+   639→                </span>
+   640→              )}
+   641→            </div>
+   642→            {demand.quoteApprovedByCmLeader ? (
+   643→              <Callout tone="success" icon={<CheckCircle2 className="size-4" />}>
+   644→                Quote approved by CM Leader — you can submit it to the customer from the Governance
+   645→                Actions panel.
+   646→              </Callout>
+   647→            ) : (
+   648→              <Callout tone="warning" icon={<Clock className="size-4" />}>
+   649→                Saving the draft notifies the CM Leader to approve. You cannot submit the quote to the
+   650→                customer until approved.
+   651→              </Callout>
+   652→            )}
+   653→          </div>
+   654→        )}
+   655→
+   656→        {/* CM Leader governance hint */}
+   657→        {isCm(role) && !demand.quoteApprovedByCmLeader && (
+   658→          <Callout
+   659→            tone="warning"
+   660→            icon={<ShieldCheck className="size-4" />}
+   661→            title="Governance gate — your approval is required"
+   662→          >
+   663→            {savedQuoteFieldsFilled
+   664→              ? "Review the SCM Worker's quote draft above. Approve to allow the SCM to submit it to the customer, or reject the demand."
+   665→              : 'The SCM Worker has not yet submitted a quote draft. Approve / Reject will be enabled once a draft is saved.'}
+   666→          </Callout>
+   667→        )}
+   668→        {isCm(role) && demand.quoteApprovedByCmLeader && (
+   669→          <Callout tone="success" icon={<CheckCircle2 className="size-4" />}>
+   670→            You approved this quote
+   671→            {demand.quoteApprovedAt ? (
+   672→              <>
+   673→                {' '}
+   674→                on <FormattedDate date={demand.quoteApprovedAt} />
+   675→              </>
+   676→            ) : null}
+   677→            . The SCM Worker can now submit it to the customer.
+   678→          </Callout>
+   679→        )}
+   680→      </div>
+   681→    </SectionCard>
+   682→  );
+   683→}
+   684→
+   685→/* ----------------------- status callout (side panel) ----------------------- */
+   686→
+   687→function StatusCallout({
+   688→  demand,
+   689→  role,
+   690→  changeClosed,
+   691→}: {
+   692→  demand: Demand;
+   693→  role: 'SCM_WORKER' | 'CM_LEADER';
+   694→  changeClosed: boolean;
+   695→}) {
+   696→  switch (demand.status) {
+   697→    case 'NEW':
+   698→      return (
+   699→        <Callout tone="info" icon={<Info className="size-4" />} title="New demand">
+   700→          Assign an SCM Worker and start the review to begin the lifecycle.
+   701→        </Callout>
+   702→      );
+   703→    case 'UNDER_REVIEW':
+   704→      if (role === 'SCM_WORKER') {
+   705→        return demand.quoteApprovedByCmLeader ? (
+   706→          <Callout tone="success" icon={<CheckCircle2 className="size-4" />} title="Quote approved">
+   707→            Submit the quote to the customer to advance the demand.
+   708→          </Callout>
+   709→        ) : (
+   710→          <Callout tone="warning" icon={<Clock className="size-4" />} title="Quote draft">
+   711→            Fill the assessment fields and save the draft. CM Leader approval is required before
+   712→            submission.
+   713→          </Callout>
+   714→        );
+   715→      }
+   716→      return demand.quoteApprovedByCmLeader ? (
+   717→        <Callout tone="success" icon={<ShieldCheck className="size-4" />} title="You approved this quote">
+   718→          The SCM Worker can now submit it to the customer.
+   719→        </Callout>
+   720→      ) : (
+   721→        <Callout tone="warning" icon={<ShieldCheck className="size-4" />} title="Governance gate">
+   722→          Review the SCM Worker&apos;s quote draft and approve or reject.
+   723→        </Callout>
+   724→      );
+   725→    case 'QUOTED':
+   726→      return (
+   727→        <Callout tone="info" icon={<Clock className="size-4" />} title="Quoted">
+   728→          The quote is with the customer. Awaiting their decision.
+   729→        </Callout>
+   730→      );
+   731→    case 'ACCEPTED':
+   732→      return role === 'SCM_WORKER' ? (
+   733→        <Callout tone="info" icon={<GitBranch className="size-4" />} title="Quote accepted">
+   734→          Create a Change Request and hand it to Change Enablement.
+   735→        </Callout>
+   736→      ) : (
+   737→        <Callout tone="info" icon={<Info className="size-4" />} title="Quote accepted">
+   738→          Awaiting SCM Worker to create the Change Request.
+   739→        </Callout>
+   740→      );
+   741→    case 'IN_CHANGE':
+   742→      return changeClosed ? (
+   743→        <Callout tone="success" icon={<PackageCheck className="size-4" />} title="Change closed">
+   744→          The linked change is closed — you can mark this demand fulfilled.
+   745→        </Callout>
+   746→      ) : (
+   747→        <Callout tone="warning" icon={<Clock className="size-4" />} title="Change in progress">
+   748→          The linked change is being implemented by Change Enablement.
+   749→        </Callout>
+   750→      );
+   751→    case 'FULFILLED':
+   752→      return (
+   753→        <Callout tone="success" icon={<CheckCircle2 className="size-4" />} title="Fulfilled">
+   754→          The demand has been fulfilled. Close it to complete the lifecycle.
+   755→        </Callout>
+   756→      );
+   757→    case 'REJECTED':
+   758→      return (
+   759→        <Callout tone="danger" icon={<Ban className="size-4" />} title="Rejected">
+   760→          This demand was rejected. Terminal state.
+   761→        </Callout>
+   762→      );
+   763→    case 'REDIRECTED':
+   764→      return (
+   765→        <Callout tone="danger" icon={<CornerUpRight className="size-4" />} title="Redirected">
+   766→          This demand was redirected to a catalog offering. Terminal state.
+   767→        </Callout>
+   768→      );
+   769→    case 'CLOSED':
+   770→      return (
+   771→        <Callout tone="info" icon={<CheckCircle2 className="size-4" />} title="Closed">
+   772→          This demand is closed. Lifecycle complete.
+   773→        </Callout>
+   774→      );
+   775→    default:
+   776→      return null;
+   777→  }
+   778→}
+   779→
+   780→/* ------------------------------ main ------------------------------ */
+   781→
+   782→export default function DemandDetail({
+   783→  id,
+   784→  role,
+   785→}: {
+   786→  id: string;
+   787→  role: 'SCM_WORKER' | 'CM_LEADER';
+   788→}) {
+   789→  const { navigate, session } = useApp();
+   790→  const qc = useQueryClient();
+   791→
+   792→  const queryKey = useMemo(() => ['demand', id] as const, [id]);
+   793→
+   794→  /* --- demand fetch --- */
+   795→  const {
+   796→    data: demand,
+   797→    isLoading,
+   798→    isError,
+   799→  } = useQuery({
+   800→    queryKey,
+   801→    queryFn: () => apiGet<Demand>(`/api/demands/${id}`),
+   802→    enabled: !!id,
+   803→  });
+   804→
+   805→  /* --- related services (best-effort, parallel) --- */
+   806→  const serviceQueries = useQueries({
+   807→    queries: (demand?.relatedServiceIds ?? []).map((sid) => ({
+   808→      queryKey: ['service', sid] as const,
+   809→      queryFn: () => apiGet<Service>(`/api/services/${sid}`),
+   810→      enabled: !!demand,
+   811→      staleTime: 60_000,
+   812→      retry: false,
+   813→    })),
+   814→  });
+   815→  const relatedServices: Service[] = serviceQueries
+   816→    .map((q) => q.data)
+   817→    .filter((s): s is Service => !!s);
+   818→
+   819→  /* --- offerings for redirect dialog (lazy) --- */
+   820→  const [redirectOpen, setRedirectOpen] = useState(false);
+   821→  const [redirectOffering, setRedirectOffering] = useState('');
+   822→  const [redirectReason, setRedirectReason] = useState('');
+   823→  const { data: offerings, isLoading: offeringsLoading } = useQuery({
+   824→    queryKey: ['offerings'] as const,
+   825→    queryFn: () => apiGet<ServiceOffering[]>('/api/offerings'),
+   826→    enabled: redirectOpen,
+   827→    staleTime: 60_000,
+   828→    retry: false,
+   829→  });
+   830→
+   831→  /* --- SCM workers list for CM_LEADER assignment + workload hints --- */
+   832→  const [assignOpen, setAssignOpen] = useState(false);
+   833→  const [assignWorker, setAssignWorker] = useState('');
+   834→  const { data: scmWorkers, isLoading: scmWorkersLoading } = useQuery({
+   835→    queryKey: ['scm-workers'] as const,
+   836→    queryFn: () => apiGet<ScmWorkerHint[]>('/api/workers/scm'),
+   837→    enabled: isCm(role) && !!demand,
+   838→    staleTime: 30_000,
+   839→    retry: false,
+   840→  });
+   841→  const assignedWorkerHint = scmWorkers?.find((w) => w.id === demand?.assignedScmWorkerId);
+   842→
+   843→  /* --- other dialog state --- */
+   844→  const [rejectOpen, setRejectOpen] = useState(false);
+   845→  const [rejectReason, setRejectReason] = useState('');
+   846→  const [handToCeOpen, setHandToCeOpen] = useState(false);
+   847→  const [ceImplementationPlan, setCeImplementationPlan] = useState('');
+   848→  const [closeOpen, setCloseOpen] = useState(false);
+   849→  const [closeNote, setCloseNote] = useState('');
+   850→
+   851→  /* --- mutations --- */
+   852→  const invalidate = () => {
+   853→    qc.invalidateQueries({ queryKey });
+   854→    qc.invalidateQueries({ queryKey: ['demands'] });
+   855→  };
+   856→
+   857→  const assignMutation = useMutation({
+   858→    mutationFn: (workerId: string) =>
+   859→      apiPatch<Demand>(`/api/demands/${id}`, { assignedScmWorkerId: workerId }),
+   860→    onSuccess: () => {
+   861→      toast.success('Demand assigned.');
+   862→      invalidate();
+   863→      setAssignOpen(false);
+   864→      setAssignWorker('');
+   865→    },
+   866→    onError: (e: Error) => toast.error(e.message),
+   867→  });
+   868→
+   869→  const startReviewMutation = useMutation({
+   870→    mutationFn: () => apiPost<Demand>(`/api/demands/${id}/review`),
+   871→    onSuccess: () => {
+   872→      toast.success('Review started. Demand is now Under Review.');
+   873→      invalidate();
+   874→    },
+   875→    onError: (e: Error) => toast.error(e.message),
+   876→  });
+   877→
+   878→  const saveQuoteMutation = useMutation({
+   879→    mutationFn: (body: {
+   880→      estimatedEffortDays: number | null;
+   881→      estimatedCost: number | null;
+   882→      quoteNotes: string | null;
+   883→    }) => apiPatch<Demand>(`/api/demands/${id}`, body),
+   884→    onSuccess: () => {
+   885→      toast.success('Quote draft saved. CM Leader will be notified to approve.');
+   886→      invalidate();
+   887→    },
+   888→    onError: (e: Error) => toast.error(e.message),
+   889→  });
+   890→
+   891→  const approveQuoteMutation = useMutation({
+   892→    mutationFn: () => apiPost<Demand>(`/api/demands/${id}/approve-quote`),
+   893→    onSuccess: () => {
+   894→      toast.success('Quote approved by CM Leader. SCM Worker can now submit it.');
+   895→      invalidate();
+   896→    },
+   897→    onError: (e: Error) => toast.error(e.message),
+   898→  });
+   899→
+   900→  const submitQuoteMutation = useMutation({
+   901→    mutationFn: () => apiPost<Demand>(`/api/demands/${id}/quote`),
+   902→    onSuccess: () => {
+   903→      toast.success('Quote submitted to customer.');
+   904→      invalidate();
+   905→    },
+   906→    onError: (e: Error) => toast.error(e.message),
+   907→  });
+   908→
+   909→  const rejectMutation = useMutation({
+   910→    mutationFn: (body: { reason: string }) =>
+   911→      apiPost<Demand>(`/api/demands/${id}/reject`, body),
+   912→    onSuccess: () => {
+   913→      toast.success('Demand rejected.');
+   914→      invalidate();
+   915→      setRejectOpen(false);
+   916→      setRejectReason('');
+   917→    },
+   918→    onError: (e: Error) => toast.error(e.message),
+   919→  });
+   920→
+   921→  const redirectMutation = useMutation({
+   922→    mutationFn: (body: { offeringId: string; reason?: string }) =>
+   923→      apiPost<Demand>(`/api/demands/${id}/redirect`, body),
+   924→    onSuccess: () => {
+   925→      toast.success('Demand redirected to catalog offering.');
+   926→      invalidate();
+   927→      setRedirectOpen(false);
+   928→      setRedirectOffering('');
+   929→      setRedirectReason('');
+   930→    },
+   931→    onError: (e: Error) => toast.error(e.message),
+   932→  });
+   933→
+   934→  const handToCeMutation = useMutation({
+   935→    mutationFn: (body: { affectedServiceIds: string[]; implementationPlan?: string }) =>
+   936→      apiPost<Demand>(`/api/demands/${id}/hand-to-ce`, body),
+   937→    onSuccess: () => {
+   938→      toast.success('Change created and handed to Change Enablement.');
+   939→      invalidate();
+   940→      setHandToCeOpen(false);
+   941→      setCeImplementationPlan('');
+   942→    },
+   943→    onError: (e: Error) => toast.error(e.message),
+   944→  });
+   945→
+   946→  const fulfillMutation = useMutation({
+   947→    mutationFn: () => apiPost<Demand>(`/api/demands/${id}/fulfill`),
+   948→    onSuccess: () => {
+   949→      toast.success('Demand marked fulfilled.');
+   950→      invalidate();
+   951→    },
+   952→    onError: (e: Error) => toast.error(e.message),
+   953→  });
+   954→
+   955→  const closeMutation = useMutation({
+   956→    mutationFn: (body: { note?: string }) =>
+   957→      apiPost<Demand>(`/api/demands/${id}/close`, body),
+   958→    onSuccess: () => {
+   959→      toast.success('Demand closed.');
+   960→      invalidate();
+   961→      setCloseOpen(false);
+   962→      setCloseNote('');
+   963→    },
+   964→    onError: (e: Error) => toast.error(e.message),
+   965→  });
+   966→
+   967→  /* --- derived state --- */
+   968→  const back = () => navigate('demands');
+   969→  const isUnderReview = demand?.status === 'UNDER_REVIEW';
+   970→  const savedQuoteFieldsFilled =
+   971→    !!demand &&
+   972→    demand.estimatedEffortDays != null &&
+   973→    demand.estimatedEffortDays > 0 &&
+   974→    !!demand.quoteNotes?.trim();
+   975→  const changeClosed = demand?.change?.status === 'CLOSED';
+   976→
+   977→  /* --- loading --- */
+   978→  if (isLoading) {
+   979→    return (
+   980→      <div className="space-y-4">
+   981→        <Button variant="ghost" size="sm" onClick={back} className="-ml-2 text-muted-foreground">
+   982→          <ArrowLeft className="size-4" /> Back to demand queue
+   983→        </Button>
+   984→        <LoadingState rows={6} />
+   985→      </div>
+   986→    );
+   987→  }
+   988→
+   989→  /* --- error / not found --- */
+   990→  if (isError || !demand) {
+   991→    return (
+   992→      <div className="space-y-4">
+   993→        <Button variant="ghost" size="sm" onClick={back} className="-ml-2 text-muted-foreground">
+   994→          <ArrowLeft className="size-4" /> Back to demand queue
+   995→        </Button>
+   996→        <EmptyState
+   997→          icon={<AlertTriangle className="size-8" />}
+   998→          title="Demand not found"
+   999→          description="This demand may have been deleted, or you may not have access to it."
+  1000→          action={<Button onClick={back}>Back to demand queue</Button>}
+  1001→        />
+  1002→      </div>
+  1003→    );
+  1004→  }
+  1005→
+  1006→  const submittedDate = new Date(demand.createdAt);
+  1007→  const assignedWorkerName = demand.assignedScmWorkerName ?? 'Unassigned';
+  1008→
+  1009→  /* --- show quote section in QUOTED+ (read-only) --- */
+  1010→  const showQuoteSection =
+  1011→    demand.status === 'QUOTED' ||
+  1012→    demand.status === 'ACCEPTED' ||
+  1013→    demand.status === 'IN_CHANGE' ||
+  1014→    demand.status === 'FULFILLED' ||
+  1015→    demand.status === 'CLOSED';
+  1016→
+  1017→  /* --- show commitment in ACCEPTED+ if commitmentNotes exists --- */
+  1018→  const showCommitment =
+  1019→    (demand.status === 'ACCEPTED' ||
+  1020→      demand.status === 'IN_CHANGE' ||
+  1021→      demand.status === 'FULFILLED' ||
+  1022→      demand.status === 'CLOSED') &&
+  1023→    !!demand.commitmentNotes;
+  1024→
+  1025→  // helper to reset and open dialogs
+  1026→  const openReject = () => {
+  1027→    setRejectReason('');
+  1028→    setRejectOpen(true);
+  1029→  };
+  1030→  const openRedirect = () => {
+  1031→    setRedirectOffering('');
+  1032→    setRedirectReason('');
+  1033→    setRedirectOpen(true);
+  1034→  };
+  1035→  const openHandToCe = () => {
+  1036→    setCeImplementationPlan('');
+  1037→    setHandToCeOpen(true);
+  1038→  };
+  1039→  const openAssign = () => {
+  1040→    setAssignWorker('');
+  1041→    setAssignOpen(true);
+  1042→  };
+  1043→  const openClose = () => {
+  1044→    setCloseNote('');
+  1045→    setCloseOpen(true);
+  1046→  };
+  1047→
+  1048→  return (
+  1049→    <div className="space-y-6">
+  1050→      {/* Back */}
+  1051→      <div>
+  1052→        <Button
+  1053→          variant="ghost"
+  1054→          size="sm"
+  1055→          onClick={back}
+  1056→          className="-ml-2 text-muted-foreground"
+  1057→        >
+  1058→          <ArrowLeft className="size-4" /> Back to demand queue
+  1059→        </Button>
+  1060→      </div>
+  1061→
+  1062→      {/* Header */}
+  1063→      <PageHeader
+  1064→        title={demand.title}
+  1065→        description={`${demand.serviceCustomerName ?? 'Unknown customer'}  ·  Submitted ${submittedDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}  ·  SCM: ${assignedWorkerName}`}
+  1066→        actions={<DemandStatusBadge status={demand.status} />}
+  1067→      />
+  1068→
+  1069→      {/* Status Timeline */}
+  1070→      <SectionCard>
+  1071→        <DemandPipelineTimeline status={demand.status} />
+  1072→      </SectionCard>
+  1073→
+  1074→      {/* Two-column layout */}
+  1075→      <div className="grid lg:grid-cols-3 gap-6 items-start">
+  1076→        {/* Main column */}
+  1077→        <div className="lg:col-span-2 space-y-6">
+  1078→          {/* Terminal state callout */}
+  1079→          {(demand.status === 'REJECTED' || demand.status === 'REDIRECTED') && (
+  1080→            <SectionCard title="Outcome">
+  1081→              <Callout
+  1082→                tone="danger"
+  1083→                icon={<Ban className="size-4" />}
+  1084→                title={demand.status === 'REJECTED' ? 'Demand rejected' : 'Demand redirected'}
+  1085→              >
+  1086→                {demand.status === 'REJECTED'
+  1087→                  ? demand.rejectionReason ?? 'No reason recorded.'
+  1088→                  : 'This demand was redirected to an existing catalog offering. No further action is required.'}
+  1089→              </Callout>
+  1090→            </SectionCard>
+  1091→          )}
+  1092→
+  1093→          {/* Customer Input */}
+  1094→          <SectionCard title="Customer Input" description="As submitted by the Service Customer.">
+  1095→            <div className="space-y-4">
+  1096→              <div>
+  1097→                <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">
+  1098→                  Description
+  1099→                </h4>
+  1100→                <p className="text-sm whitespace-pre-wrap leading-relaxed">{demand.description}</p>
+  1101→              </div>
+  1102→              {demand.businessJustification && (
+  1103→                <div>
+  1104→                  <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">
+  1105→                    Business Justification
+  1106→                  </h4>
+  1107→                  <p className="text-sm whitespace-pre-wrap leading-relaxed">
+  1108→                    {demand.businessJustification}
+  1109→                  </p>
+  1110→                </div>
+  1111→              )}
+  1112→              {demand.desiredTimeline && (
+  1113→                <div className="flex items-center gap-2 text-sm text-muted-foreground pt-1">
+  1114→                  <Calendar className="size-4" />
+  1115→                  <span>
+  1116→                    Desired timeline: <span className="text-foreground">{demand.desiredTimeline}</span>
+  1117→                  </span>
+  1118→                </div>
+  1119→              )}
+  1120→            </div>
+  1121→          </SectionCard>
+  1122→
+  1123→          {/* Catalog Check Panel — UNDER_REVIEW */}
+  1124→          {isUnderReview && (
+  1125→            <SectionCard
+  1126→              title="Catalog Check"
+  1127→              description="Verify whether the customer need is already covered by a catalog offering."
+  1128→            >
+  1129→              <Callout
+  1130→                tone="info"
+  1131→                icon={<Info className="size-4" />}
+  1132→                title="Catalog verification step"
+  1133→              >
+  1134→                Check whether the service catalog already covers this need. If it does, redirect the demand
+  1135→                to the relevant offering. If not, proceed to prepare a quote in the assessment fields below.
+  1136→              </Callout>
+  1137→              {isScm(role) && (
+  1138→                <div className="mt-4 flex flex-wrap gap-2">
+  1139→                  <Button variant="outline" size="sm" onClick={openRedirect}>
+  1140→                    <CornerUpRight className="size-4" /> Mark as Covered — Redirect
+  1141→                  </Button>
+  1142→                  <Button
+  1143→                    variant="ghost"
+  1144→                    size="sm"
+  1145→                    onClick={() => {
+  1146→                      const el = document.getElementById('assessment-section');
+  1147→                      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  1148→                    }}
+  1149→                  >
+  1150→                    <ArrowRightLeft className="size-4" /> Proceed to Quote
+  1151→                  </Button>
+  1152→                </div>
+  1153→              )}
+  1154→            </SectionCard>
+  1155→          )}
+  1156→
+  1157→          {/* Assessment Fields — UNDER_REVIEW (sub-component, remounts on demand.id) */}
+  1158→          {isUnderReview && (
+  1159→            <AssessmentFieldsSection
+  1160→              key={demand.id}
+  1161→              demand={demand}
+  1162→              role={role}
+  1163→              onSave={saveQuoteMutation.mutate}
+  1164→              savePending={saveQuoteMutation.isPending}
+  1165→            />
+  1166→          )}
+  1167→
+  1168→          {/* Quote section — QUOTED+ (read-only) */}
+  1169→          {showQuoteSection && (
+  1170→            <SectionCard
+  1171→              title="Quote"
+  1172→              description="The quote submitted to the Service Customer."
+  1173→              actions={
+  1174→                demand.quoteApprovedByCmLeader ? (
+  1175→                  <Badge
+  1176→                    variant="outline"
+  1177→                    className="border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+  1178→                  >
+  1179→                    <ShieldCheck className="size-3.5" /> CM Approved
+  1180→                  </Badge>
+  1181→                ) : undefined
+  1182→              }
+  1183→            >
+  1184→              <dl className="space-y-4">
+  1185→                <div className="grid sm:grid-cols-2 gap-4">
+  1186→                  <KeyValue
+  1187→                    label="Estimated Effort"
+  1188→                    value={<Days value={demand.estimatedEffortDays} />}
+  1189→                  />
+  1190→                  <KeyValue
+  1191→                    label="Estimated Cost"
+  1192→                    value={<Money value={demand.estimatedCost} />}
+  1193→                  />
+  1194→                </div>
+  1195→                <KeyValue
+  1196→                  label="Quote Notes"
+  1197→                  value={
+  1198→                    demand.quoteNotes ? (
+  1199→                      <p className="text-sm whitespace-pre-wrap leading-relaxed">{demand.quoteNotes}</p>
+  1200→                    ) : null
+  1201→                  }
+  1202→                />
+  1203→                <div className="grid sm:grid-cols-2 gap-4">
+  1204→                  <KeyValue
+  1205→                    label="CM Leader Approval"
+  1206→                    value={
+  1207→                      demand.quoteApprovedByCmLeader ? (
+  1208→                        <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+  1209→                          <CheckCircle2 className="size-3.5" /> Approved
+  1210→                        </span>
+  1211→                      ) : (
+  1212→                        <span className="text-muted-foreground">Not approved</span>
+  1213→                      )
+  1214→                    }
+  1215→                  />
+  1216→                  <KeyValue
+  1217→                    label="Approved At"
+  1218→                    value={
+  1219→                      demand.quoteApprovedAt ? <FormattedDate date={demand.quoteApprovedAt} /> : null
+  1220→                    }
+  1221→                  />
+  1222→                </div>
+  1223→                <div className="grid sm:grid-cols-2 gap-4">
+  1224→                  <KeyValue
+  1225→                    label="Quoted At"
+  1226→                    value={demand.quotedAt ? <FormattedDate date={demand.quotedAt} /> : null}
+  1227→                  />
+  1228→                  <KeyValue
+  1229→                    label="Accepted At"
+  1230→                    value={demand.acceptedAt ? <FormattedDate date={demand.acceptedAt} /> : null}
+  1231→                  />
+  1232→                </div>
+  1233→              </dl>
+  1234→            </SectionCard>
+  1235→          )}
+  1236→
+  1237→          {/* Commitment — ACCEPTED+ */}
+  1238→          {showCommitment && (
+  1239→            <SectionCard
+  1240→              title="Commitment"
+  1241→              description="The commitment given to the customer upon acceptance."
+  1242→            >
+  1243→              <p className="text-sm whitespace-pre-wrap leading-relaxed">{demand.commitmentNotes}</p>
+  1244→            </SectionCard>
+  1245→          )}
+  1246→
+  1247→          {/* Linked Change — IN_CHANGE / FULFILLED */}
+  1248→          {(demand.status === 'IN_CHANGE' || demand.status === 'FULFILLED') && (
+  1249→            <SectionCard
+  1250→              title="Linked Change Request"
+  1251→              description="The change raised in Change Enablement to fulfill this demand."
+  1252→            >
+  1253→              {demand.change ? (
+  1254→                <div className="space-y-3">
+  1255→                  <div className="flex items-start justify-between gap-3">
+  1256→                    <div className="min-w-0">
+  1257→                      <p className="text-sm font-medium leading-tight">{demand.change.title}</p>
+  1258→                      <p className="text-xs text-muted-foreground mt-1">
+  1259→                        {demand.change.type} · {demand.change.complexity ?? '—'} complexity
+  1260→                      </p>
+  1261→                    </div>
+  1262→                    <ChangeStatusBadge status={demand.change.status} />
+  1263→                  </div>
+  1264→                  {demand.change.implementationPlan && (
+  1265→                    <div>
+  1266→                      <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">
+  1267→                        Implementation Plan
+  1268→                      </h4>
+  1269→                      <p className="text-sm whitespace-pre-wrap rounded-md border bg-muted/30 p-3 max-h-48 overflow-y-auto scrollbar-thin leading-relaxed">
+  1270→                        {demand.change.implementationPlan}
+  1271→                      </p>
+  1272→                    </div>
+  1273→                  )}
+  1274→                  <Button
+  1275→                    variant="outline"
+  1276→                    size="sm"
+  1277→                    onClick={() => navigate('change-detail', { id: demand.change!.id })}
+  1278→                  >
+  1279→                    <GitBranch className="size-4" /> Open Change Record
+  1280→                  </Button>
+  1281→                </div>
+  1282→              ) : (
+  1283→                <EmptyState
+  1284→                  icon={<GitBranch className="size-6" />}
+  1285→                  title="No linked change"
+  1286→                  description="The change request is not yet linked to this demand."
+  1287→                />
+  1288→              )}
+  1289→            </SectionCard>
+  1290→          )}
+  1291→
+  1292→          {/* Activity Log */}
+  1293→          <SectionCard title="Activity Log" description="Full audit trail of this demand.">
+  1294→            {demand.events && demand.events.length > 0 ? (
+  1295→              <ActivityLog events={demand.events} />
+  1296→            ) : (
+  1297→              <EmptyState icon={<MessageSquare className="size-6" />} title="No activity yet" />
+  1298→            )}
+  1299→          </SectionCard>
+  1300→        </div>
+  1301→
+  1302→        {/* Side column */}
+  1303→        <div className="space-y-6">
+  1304→          {/* Demand Meta */}
+  1305→          <SectionCard title="Demand Meta">
+  1306→            <dl className="space-y-3.5">
+  1307→              <KeyValue
+  1308→                label="Customer"
+  1309→                value={
+  1310→                  <span className="inline-flex items-center gap-1.5">
+  1311→                    <Building2 className="size-3.5 text-muted-foreground" />
+  1312→                    {demand.serviceCustomerName ?? '—'}
+  1313→                  </span>
+  1314→                }
+  1315→              />
+  1316→              <KeyValue label="Submitted By" value={demand.submittedByName ?? '—'} />
+  1317→              <KeyValue
+  1318→                label="Assigned SCM Worker"
+  1319→                value={
+  1320→                  demand.assignedScmWorkerName ? (
+  1321→                    <div>
+  1322→                      <div className="inline-flex items-center gap-2">
+  1323→                        <UserAvatar name={demand.assignedScmWorkerName} size="sm" />
+  1324→                        <span>{demand.assignedScmWorkerName}</span>
+  1325→                      </div>
+  1326→                      {isCm(role) && assignedWorkerHint && (
+  1327→                        <p className="text-xs text-muted-foreground mt-1.5 ml-9">
+  1328→                          {assignedWorkerHint.openDemandCount} open{' '}
+  1329→                          {assignedWorkerHint.openDemandCount === 1 ? 'demand' : 'demands'} in queue
+  1330→                        </p>
+  1331→                      )}
+  1332→                      {isCm(role) && !assignedWorkerHint && scmWorkers && (
+  1333→                        <p className="text-xs text-muted-foreground mt-1.5 ml-9">
+  1334→                          Workload data unavailable
+  1335→                        </p>
+  1336→                      )}
+  1337→                    </div>
+  1338→                  ) : (
+  1339→                    <Badge
+  1340→                      variant="outline"
+  1341→                      className="text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-900 dark:bg-amber-950"
+  1342→                    >
+  1343→                      Unassigned
+  1344→                    </Badge>
+  1345→                  )
+  1346→                }
+  1347→              />
+  1348→              <Separator />
+  1349→              <KeyValue label="Submitted" value={<FormattedDate date={demand.createdAt} />} />
+  1350→              <KeyValue
+  1351→                label="Last Updated"
+  1352→                value={<RelativeTime date={demand.updatedAt} />}
+  1353→              />
+  1354→            </dl>
+  1355→          </SectionCard>
+  1356→
+  1357→          {/* Related Services */}
+  1358→          <SectionCard
+  1359→            title="Related Services"
+  1360→            description="Services referenced by the customer in the demand."
+  1361→          >
+  1362→            {demand.relatedServiceIds.length === 0 ? (
+  1363→              <EmptyState
+  1364→                icon={<Wrench className="size-6" />}
+  1365→                title="No related services"
+  1366→                description="This demand did not reference any existing service."
+  1367→              />
+  1368→            ) : relatedServices.length === 0 ? (
+  1369→              <LoadingState rows={Math.min(3, demand.relatedServiceIds.length)} />
+  1370→            ) : (
+  1371→              <ul className="space-y-2">
+  1372→                {relatedServices.map((s) => (
+  1373→                  <li
+  1374→                    key={s.id}
+  1375→                    className="flex items-start justify-between gap-2 rounded-md border p-2.5 hover:bg-muted/30 transition-colors"
+  1376→                  >
+  1377→                    <div className="min-w-0">
+  1378→                      <p className="text-sm font-medium leading-tight">{s.name}</p>
+  1379→                      <p className="text-xs text-muted-foreground mt-1 capitalize">
+  1380→                        {s.chapter.replace(/_/g, ' ').toLowerCase()} · {s.layer.toLowerCase()}
+  1381→                      </p>
+  1382→                    </div>
+  1383→                    <SlaClassBadge slaClass={s.slaClass} />
+  1384→                  </li>
+  1385→                ))}
+  1386→              </ul>
+  1387→            )}
+  1388→          </SectionCard>
+  1389→
+  1390→          {/* Governance Actions (sticky on lg) */}
+  1391→          <div className="lg:sticky lg:top-4">
+  1392→            <SectionCard
+  1393→              title="Governance Actions"
+  1394→              description={isScm(role) ? 'SCM Worker actions' : 'CM Leader actions'}
+  1395→            >
+  1396→              <div className="space-y-3">
+  1397→                {/* Context callout */}
+  1398→                <StatusCallout demand={demand} role={role} changeClosed={!!changeClosed} />
+  1399→
+  1400→                {/* Action buttons */}
+  1401→                <div className="space-y-2">
+  1402→                  {/* NEW */}
+  1403→                  {demand.status === 'NEW' && (
+  1404→                    <>
+  1405→                      {isScm(role) && (
+  1406→                        <ActionButton
+  1407→                          onClick={() => session && assignMutation.mutate(session.id)}
+  1408→                          pending={assignMutation.isPending}
+  1409→                        >
+  1410→                          <UserPlus className="size-4" /> Assign to Me
+  1411→                        </ActionButton>
+  1412→                      )}
+  1413→                      {isCm(role) && (
+  1414→                        <ActionButton onClick={openAssign}>
+  1415→                          <UserPlus className="size-4" /> Assign Worker…
+  1416→                        </ActionButton>
+  1417→                      )}
+  1418→                      <ActionButton
+  1419→                        variant="secondary"
+  1420→                        onClick={() => startReviewMutation.mutate()}
+  1421→                        pending={startReviewMutation.isPending}
+  1422→                      >
+  1423→                        <Play className="size-4" /> Start Review
+  1424→                      </ActionButton>
+  1425→                    </>
+  1426→                  )}
+  1427→
+  1428→                  {/* UNDER_REVIEW — SCM_WORKER */}
+  1429→                  {demand.status === 'UNDER_REVIEW' && isScm(role) && (
+  1430→                    <>
+  1431→                      {demand.quoteApprovedByCmLeader ? (
+  1432→                        <ActionButton
+  1433→                          onClick={() => submitQuoteMutation.mutate()}
+  1434→                          pending={submitQuoteMutation.isPending}
+  1435→                        >
+  1436→                          <Send className="size-4" /> Submit Quote to Customer
+  1437→                        </ActionButton>
+  1438→                      ) : (
+  1439→                        <Callout tone="info" icon={<FileCheck2 className="size-4" />}>
+  1440→                          Fill the assessment fields and click <span className="font-semibold">Save Quote
+  1441→                          Draft</span> above. The CM Leader will then approve.
+  1442→                        </Callout>
+  1443→                      )}
+  1444→                      <ActionButton variant="outline" onClick={openRedirect}>
+  1445→                        <CornerUpRight className="size-4" /> Redirect to Offering…
+  1446→                      </ActionButton>
+  1447→                      <ActionButton variant="destructive" onClick={openReject}>
+  1448→                        <Ban className="size-4" /> Reject Demand…
+  1449→                      </ActionButton>
+  1450→                    </>
+  1451→                  )}
+  1452→
+  1453→                  {/* UNDER_REVIEW — CM_LEADER */}
+  1454→                  {demand.status === 'UNDER_REVIEW' && isCm(role) && (
+  1455→                    <>
+  1456→                      {demand.quoteApprovedByCmLeader ? (
+  1457→                        <Callout tone="success" icon={<CheckCircle2 className="size-4" />}>
+  1458→                          You approved this quote. The SCM Worker can now submit it to the customer.
+  1459→                        </Callout>
+  1460→                      ) : (
+  1461→                        <ActionButton
+  1462→                          onClick={() => approveQuoteMutation.mutate()}
+  1463→                          pending={approveQuoteMutation.isPending}
+  1464→                          disabled={!savedQuoteFieldsFilled}
+  1465→                        >
+  1466→                          <ShieldCheck className="size-4" /> Approve Quote
+  1467→                        </ActionButton>
+  1468→                      )}
+  1469→                      <ActionButton variant="destructive" onClick={openReject}>
+  1470→                        <Ban className="size-4" /> Reject Demand…
+  1471→                      </ActionButton>
+  1472→                    </>
+  1473→                  )}
+  1474→
+  1475→                  {/* QUOTED — waiting on customer */}
+  1476→                  {demand.status === 'QUOTED' && (
+  1477→                    <Callout tone="info" icon={<Clock className="size-4" />}>
+  1478→                      Awaiting customer decision — the customer will accept or decline the quote.
+  1479→                    </Callout>
+  1480→                  )}
+  1481→
+  1482→                  {/* ACCEPTED — SCM creates change */}
+  1483→                  {demand.status === 'ACCEPTED' && isScm(role) && (
+  1484→                    <ActionButton
+  1485→                      onClick={openHandToCe}
+  1486→                      pending={handToCeMutation.isPending}
+  1487→                    >
+  1488→                      <GitBranch className="size-4" /> Create Change &amp; Hand to CE…
+  1489→                    </ActionButton>
+  1490→                  )}
+  1491→                  {demand.status === 'ACCEPTED' && isCm(role) && (
+  1492→                    <Callout tone="info" icon={<Info className="size-4" />}>
+  1493→                      Awaiting SCM Worker to create a Change Request and hand it to Change Enablement.
+  1494→                    </Callout>
+  1495→                  )}
+  1496→
+  1497→                  {/* IN_CHANGE — mark fulfilled when change CLOSED */}
+  1498→                  {demand.status === 'IN_CHANGE' && (
+  1499→                    <>
+  1500→                      <ActionButton
+  1501→                        onClick={() => fulfillMutation.mutate()}
+  1502→                        pending={fulfillMutation.isPending}
+  1503→                        disabled={!changeClosed}
+  1504→                      >
+  1505→                        <PackageCheck className="size-4" /> Mark Fulfilled
+  1506→                      </ActionButton>
+  1507→                      {!changeClosed && (
+  1508→                        <Callout tone="warning" icon={<Clock className="size-4" />}>
+  1509→                          The linked change must be CLOSED before this demand can be fulfilled.
+  1510→                        </Callout>
+  1511→                      )}
+  1512→                    </>
+  1513→                  )}
+  1514→
+  1515→                  {/* FULFILLED — close */}
+  1516→                  {demand.status === 'FULFILLED' && (
+  1517→                    <ActionButton onClick={openClose} pending={closeMutation.isPending}>
+  1518→                      <CheckCircle2 className="size-4" /> Close Demand…
+  1519→                    </ActionButton>
+  1520→                  )}
+  1521→
+  1522→                  {/* Terminal states */}
+  1523→                  {(demand.status === 'REJECTED' ||
+  1524→                    demand.status === 'REDIRECTED' ||
+  1525→                    demand.status === 'CLOSED') && (
+  1526→                    <Callout tone="info" icon={<Info className="size-4" />}>
+  1527→                      This demand is in a terminal state — no further governance actions are available.
+  1528→                    </Callout>
+  1529→                  )}
+  1530→                </div>
+  1531→              </div>
+  1532→            </SectionCard>
+  1533→          </div>
+  1534→        </div>
+  1535→      </div>
+  1536→
+  1537→      {/* Dialogs */}
+  1538→      <RejectDialog
+  1539→        open={rejectOpen}
+  1540→        onOpenChange={setRejectOpen}
+  1541→        reason={rejectReason}
+  1542→        setReason={setRejectReason}
+  1543→        onConfirm={() => rejectMutation.mutate({ reason: rejectReason.trim() })}
+  1544→        pending={rejectMutation.isPending}
+  1545→      />
+  1546→      <RedirectDialog
+  1547→        open={redirectOpen}
+  1548→        onOpenChange={setRedirectOpen}
+  1549→        offerings={offerings ?? []}
+  1550→        offeringsLoading={offeringsLoading}
+  1551→        offering={redirectOffering}
+  1552→        setOffering={setRedirectOffering}
+  1553→        reason={redirectReason}
+  1554→        setReason={setRedirectReason}
+  1555→        onConfirm={() =>
+  1556→          redirectMutation.mutate({
+  1557→            offeringId: redirectOffering,
+  1558→            reason: redirectReason.trim() || undefined,
+  1559→          })
+  1560→        }
+  1561→        pending={redirectMutation.isPending}
+  1562→      />
+  1563→      <HandToCeDialog
+  1564→        open={handToCeOpen}
+  1565→        onOpenChange={setHandToCeOpen}
+  1566→        relatedServices={relatedServices}
+  1567→        plan={ceImplementationPlan}
+  1568→        setPlan={setCeImplementationPlan}
+  1569→        onConfirm={() =>
+  1570→          handToCeMutation.mutate({
+  1571→            affectedServiceIds: demand.relatedServiceIds,
+  1572→            implementationPlan: ceImplementationPlan.trim() || undefined,
+  1573→          })
+  1574→        }
+  1575→        pending={handToCeMutation.isPending}
+  1576→      />
+  1577→      <AssignDialog
+  1578→        open={assignOpen}
+  1579→        onOpenChange={setAssignOpen}
+  1580→        workers={scmWorkers ?? []}
+  1581→        workersLoading={scmWorkersLoading}
+  1582→        selected={assignWorker}
+  1583→        setSelected={setAssignWorker}
+  1584→        onConfirm={() => assignWorker && assignMutation.mutate(assignWorker)}
+  1585→        pending={assignMutation.isPending}
+  1586→      />
+  1587→      <CloseDialog
+  1588→        open={closeOpen}
+  1589→        onOpenChange={setCloseOpen}
+  1590→        note={closeNote}
+  1591→        setNote={setCloseNote}
+  1592→        onConfirm={() => closeMutation.mutate({ note: closeNote.trim() || undefined })}
+  1593→        pending={closeMutation.isPending}
+  1594→      />
+  1595→    </div>
+  1596→  );
+  1597→}
+  1598→
