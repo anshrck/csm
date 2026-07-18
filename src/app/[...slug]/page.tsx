@@ -63,19 +63,22 @@ export default function CatchAllWorkspacePage({
 
   // ---- Hydrate session (same as /) ---------------------------------------
   useEffect(() => {
-    let active = true;
-    apiGet<{ user: SessionUser }>('/api/auth/me')
+    let cancelled = false;
+    apiGet<{ user: SessionUser | null }>('/api/auth/me')
       .then((res) => {
-        if (active) setSession(res.user);
+        if (!cancelled && res?.user) setSession(res.user);
       })
-      .catch(() => {})
+      .catch(() => {
+        /* not logged in — that's fine */
+      })
       .finally(() => {
-        if (active) setHydrated(true);
+        if (!cancelled) setHydrated(true);
       });
     return () => {
-      active = false;
+      cancelled = true;
     };
-  }, [setSession, setHydrated]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Auth + role-prefix guard -------------------------------------------
   // If unauthenticated → redirect to / (login).

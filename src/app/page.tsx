@@ -13,34 +13,34 @@ import { Loader2, ShieldCheck } from 'lucide-react';
  * Root entry.
  *
  * - While hydrating: full-screen loader.
- * - If unauthenticated: render the login screen (also at `/`).
- * - If authenticated: redirect to the role-prefixed dashboard
- *   (`/<role-prefix>/dashboard`) — the catch-all route under
- *   `/[...slug]` renders the actual workspace from there.
- *
- * After successful login (handled inside `LoginScreen`), this component re-
- * renders with a session and the redirect effect kicks in.
+ * - If unauthenticated: render the login screen.
+ * - If authenticated: redirect to the role-prefixed dashboard.
  */
 export default function Home() {
   const router = useRouter();
   const { session, hydrated, setSession, setHydrated } = useApp();
 
+  // Fetch session ONCE on mount. No cleanup cancellation — we always want the
+  // result to land so hydration never stalls.
   useEffect(() => {
-    let active = true;
-    apiGet<{ user: SessionUser }>('/api/auth/me')
+    let cancelled = false;
+    apiGet<{ user: SessionUser | null }>('/api/auth/me')
       .then((res) => {
-        if (active) setSession(res.user);
+        if (!cancelled && res?.user) setSession(res.user);
       })
-      .catch(() => {})
+      .catch(() => {
+        /* not logged in — that's fine, show login */
+      })
       .finally(() => {
-        if (active) setHydrated(true);
+        if (!cancelled) setHydrated(true);
       });
     return () => {
-      active = false;
+      cancelled = true;
     };
-  }, [setSession, setHydrated]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Once we have a session, hand off to the catch-all workspace route.
+  // Redirect to the workspace once hydrated + authenticated.
   useEffect(() => {
     if (hydrated && session) {
       router.replace(dashboardPath(session.role));
