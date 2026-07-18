@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
-import type { Role } from '@/lib/types';
 import {
   KNOWLEDGE_INCLUDE,
   serializeKnowledgeArticle,
@@ -21,9 +21,13 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole('CM_LEADER' as Role, 'SERVICE_OWNER' as Role);
-
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
+
+    const allowed = await authorize(session, { resource: 'knowledge', action: 'publish', recordId: id });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
     const article = await db.knowledgeArticle.findUnique({
       where: { id },
       include: KNOWLEDGE_INCLUDE,

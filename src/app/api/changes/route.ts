@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { serializeChange, authError } from './_serialize';
 import type { Change } from '@/lib/types';
 
@@ -11,14 +12,9 @@ const VALID_ORIGINS = new Set(['DEMAND', 'PROBLEM', 'STANDARD']);
 const VALID_COMPLEXITY = new Set(['SIMPLE', 'MEDIUM', 'COMPLEX']);
 
 // GET /api/changes — list changes with filters.
-// Query: status (comma multi), type, originDemandId, ceWorker=me
 export async function GET(req: NextRequest) {
-  let session;
-  try {
-    session = await requireRole('SCM_WORKER', 'CM_LEADER', 'SERVICE_OWNER');
-  } catch (e) {
-    return authError(e);
-  }
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const sp = req.nextUrl.searchParams;
   const where: any = {};
@@ -49,18 +45,23 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
-  return NextResponse.json(items.map(serializeChange) as Change[]);
+  // Scope filter: filter changes by authorize check
+  const filtered: any[] = [];
+  for (const item of items) {
+    const allowed = await authorize(session, { resource: 'change', action: 'read', recordId: item.id });
+    if (allowed) filtered.push(item);
+  }
+
+  return NextResponse.json(filtered.map(serializeChange) as Change[]);
 }
 
 // POST /api/changes — create a new change request.
-// Body: { title, type?, originType?, originDemandId?, affectedServiceIds, implementationPlan?, complexity? }
 export async function POST(req: NextRequest) {
-  let session;
-  try {
-    session = await requireRole('SCM_WORKER', 'CM_LEADER');
-  } catch (e) {
-    return authError(e);
-  }
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const allowed = await authorize(session, { resource: 'change', action: 'create' });
+  if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   let body: any;
   try {

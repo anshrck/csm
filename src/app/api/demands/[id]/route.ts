@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
-import type { Role } from '@/lib/types';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../_serialize';
 
 export const runtime = 'nodejs';
@@ -12,32 +12,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole(
-      'SERVICE_CUSTOMER' as Role,
-      'SCM_WORKER' as Role,
-      'CM_LEADER' as Role,
-      'SERVICE_OWNER' as Role,
-    );
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
     const demand = await db.demand.findUnique({ where: { id }, include: DEMAND_INCLUDE });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // Scoping enforcement.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (demand.serviceCustomerId !== session.orgNodeId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    } else if (session.role === 'SCM_WORKER') {
-      // SCM workers can see if assigned to them or unassigned.
-      if (
-        demand.assignedScmWorkerId !== null &&
-        demand.assignedScmWorkerId !== session.id
-      ) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    }
-    // CM_LEADER and SERVICE_OWNER: no scoping restriction.
+    // Scoping & permission enforcement.
+    const allowed = await authorize(session, { resource: 'demand', action: 'read', recordId: id });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     return NextResponse.json(serializeDemand(demand as DemandWithRelations));
   } catch (err) {
@@ -45,34 +29,33 @@ export async function GET(
   }
 }
 
-// PATCH /api/demands/[id] — update editable fields (assignedScmWorkerId,
-// estimatedEffortDays, estimatedCost, quoteNotes, commitmentNotes).
-// Role: SCM_WORKER or CM_LEADER.
+// PATCH /api/demands/[id] — update editable fields.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole('SCM_WORKER' as Role, 'CM_LEADER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
     const demand = await db.demand.findUnique({ where: { id } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // SCM scoping: must be assigned (or unassigned — allow claim via patch).
-    if (
-      session.role === 'SCM_WORKER' &&
-      demand.assignedScmWorkerId !== null &&
-      demand.assignedScmWorkerId !== session.id
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const body = await req.json().catch(() => ({}));
+
+    const allowed = await authorize(session, {
+      resource: 'demand',
+      action: 'update',
+      recordId: id,
+      requestedChanges: body,
+      workflowState: demand.status,
+    });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
     const data: Record<string, unknown> = {};
 
     if (body.assignedScmWorkerId !== undefined) {
-      // Allow null (unassign) or a valid user id with role SCM_WORKER/CM_LEADER.
       const v = body.assignedScmWorkerId;
       if (v === null) {
         data.assignedScmWorkerId = null;

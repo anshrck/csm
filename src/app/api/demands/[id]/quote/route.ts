@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
-import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
 export const runtime = 'nodejs';
@@ -17,11 +17,21 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole('SCM_WORKER' as Role, 'CM_LEADER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
     const demand = await db.demand.findUnique({ where: { id } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    const allowed = await authorize(session, {
+      resource: 'demand',
+      action: 'update',
+      recordId: id,
+      requestedChanges: { status: 'QUOTED' },
+      workflowState: demand.status,
+    });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'UNDER_REVIEW') {
       return NextResponse.json(
@@ -35,15 +45,6 @@ export async function POST(
         { error: 'Quote must be approved by a CM Leader before submission' },
         { status: 403 },
       );
-    }
-
-    // SCM scoping: must be assigned (or claim if unassigned).
-    if (
-      session.role === 'SCM_WORKER' &&
-      demand.assignedScmWorkerId !== null &&
-      demand.assignedScmWorkerId !== session.id
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));

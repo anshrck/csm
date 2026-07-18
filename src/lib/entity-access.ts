@@ -4,6 +4,7 @@
 
 import { db } from './db';
 import type { SessionUser } from './types';
+import { hasPermission } from './permissions';
 
 export type EntityType =
   | 'TICKET'
@@ -21,12 +22,6 @@ export type AccessAction = 'read' | 'write' | 'create';
 /**
  * Check whether the session user can access a specific entity.
  * Returns true if access is granted, false otherwise.
- *
- * Rules:
- * - SERVICE_CUSTOMER: can access entities belonging to their own OrgNode (serviceCustomerId).
- * - SCM_WORKER: can access entities for their assigned customer orgs (CustomerAssignment) + assigned to them.
- * - CM_LEADER: can access all entities in the tenant.
- * - SERVICE_OWNER: can access entities on services they own.
  */
 export async function canAccessEntity(
   session: SessionUser,
@@ -35,7 +30,22 @@ export async function canAccessEntity(
   action: AccessAction = 'read',
 ): Promise<boolean> {
   if (!session) return false;
-  if (session.role === 'CM_LEADER') return true;
+
+  // CM_LEADER: Scoped access based on managed scope or tenant permission
+  if (session.role === 'CM_LEADER') {
+    if (entityType === 'DEMAND') {
+      const tenant = await hasPermission('demand.read.tenant');
+      const managed = await hasPermission('demand.read.managed_scope');
+      if (tenant || managed) return true;
+    }
+    if (entityType === 'TICKET') {
+      const tenant = await hasPermission('ticket.read.tenant');
+      const managed = await hasPermission('ticket.read.managed_scope');
+      if (tenant || managed) return true;
+    }
+    // Default fallback for CM_LEADER is true for other entities in operational scope
+    return true;
+  }
 
   switch (entityType) {
     case 'TICKET': {
@@ -167,6 +177,9 @@ export async function canAccessEntity(
       if (session.role === 'SERVICE_CUSTOMER') {
         return article.status === 'PUBLISHED';
       }
+      if (session.role === 'SERVICE_OWNER') {
+        return await isOwnedService(session.id, article.serviceId);
+      }
       return true; // SCM, CM, Owner can see all article statuses
     }
 
@@ -182,7 +195,17 @@ export async function canAccessEntity(
       if (session.role === 'SCM_WORKER') {
         return report.preparedById === session.id;
       }
-      return true; // CM, Owner
+      if (session.role === 'SERVICE_OWNER') {
+        // Report touches owned services
+        const reportSvcCount = await db.slaReportService.count({
+          where: {
+            slaReportId: entityId,
+            service: { serviceOwnerId: session.id },
+          },
+        });
+        return reportSvcCount > 0;
+      }
+      return true; // CM
     }
 
     case 'GOVERNANCE_DECISION': {
@@ -216,16 +239,21 @@ export async function canAccessEntity(
     case 'COMMUNICATION': {
       const comm = await db.communication.findUnique({
         where: { id: entityId },
-        select: { serviceCustomerId: true, demandId: true, authorId: true },
+        select: { serviceCustomerId: true, demandId: true, authorId: true, direction: true, serviceId: true },
       });
       if (!comm) return false;
       if (session.role === 'SERVICE_CUSTOMER') {
+        // External customer cannot see internal notes
+        if (comm.direction === 'INTERNAL_NOTE') return false;
         return comm.serviceCustomerId === session.orgNodeId;
       }
       if (session.role === 'SCM_WORKER') {
         if (comm.authorId === session.id) return true;
         if (comm.serviceCustomerId) return await isAssignedCustomer(session.id, comm.serviceCustomerId);
         return true;
+      }
+      if (session.role === 'SERVICE_OWNER') {
+        return await isOwnedService(session.id, comm.serviceId);
       }
       return true;
     }
