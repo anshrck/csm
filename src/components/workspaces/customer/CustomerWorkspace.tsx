@@ -9,6 +9,7 @@ import SubmitDemand from './SubmitDemand';
 import Catalog from './Catalog';
 import SlaPerformance from './SlaPerformance';
 import Knowledge from './Knowledge';
+import SubmitTicket from './SubmitTicket';
 import TicketList from '@/components/workspaces/shared/TicketList';
 import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
@@ -22,6 +23,7 @@ const VALID_VIEWS: ViewKey[] = [
   'knowledge',
   'tickets',
   'ticket-detail',
+  'submit-ticket',
 ];
 
 export default function CustomerWorkspace() {
@@ -57,6 +59,8 @@ export default function CustomerWorkspace() {
           description="Tickets and incidents raised by your organisational unit. Track triage, progress, and resolution."
         />
       );
+    case 'submit-ticket':
+      return <SubmitTicket />;
     case 'ticket-detail':
       return <TicketDetail id={params.id} role="SERVICE_CUSTOMER" />;
     default:

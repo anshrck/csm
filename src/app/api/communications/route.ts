@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
+import { getAssignedCustomerOrgIds } from '@/lib/entity-access';
 import type { Role } from '@/lib/types';
 import { serializeCommunication, errorResponse } from './_serialize';
 
@@ -14,9 +15,8 @@ const VALID_CHANNELS = new Set(['PORTAL', 'EMAIL', 'MESSAGE']);
 // Role scoping:
 //   SERVICE_CUSTOMER → only TO_CUSTOMER communications where
 //                      serviceCustomerId === caller.orgNodeId.
-//   SCM_WORKER       → communications they authored + communications on
-//                      demands assigned to them + communications on
-//                      service customers referenced by their assigned demands.
+//   SCM_WORKER       → communications on their assigned customer orgs (via
+//                      CustomerAssignment) OR communications they authored.
 //   CM_LEADER        → all communications.
 //   SERVICE_OWNER    → all communications (read-only governance visibility).
 export async function GET(req: NextRequest) {
@@ -46,25 +46,13 @@ export async function GET(req: NextRequest) {
       }
       and.push({ direction: 'TO_CUSTOMER', serviceCustomerId: session.orgNodeId });
     } else if (session.role === 'SCM_WORKER') {
-      // SCM sees comms they authored OR comms on demands assigned to them OR
-      // comms on service customers referenced by their assigned demands.
-      const assignedDemands = await db.demand.findMany({
-        where: { assignedScmWorkerId: session.id },
-        select: { id: true, serviceCustomerId: true },
-      });
-      const assignedDemandIds = assignedDemands.map((d) => d.id);
-      const assignedCustomerIds = Array.from(
-        new Set(assignedDemands.map((d) => d.serviceCustomerId).filter(Boolean)),
-      );
-      and.push({
-        OR: [
-          { authorId: session.id },
-          ...(assignedDemandIds.length ? [{ demandId: { in: assignedDemandIds } }] : []),
-          ...(assignedCustomerIds.length
-            ? [{ serviceCustomerId: { in: assignedCustomerIds } }]
-            : []),
-        ],
-      });
+      // SCM sees comms on their assigned customer orgs OR comms they authored.
+      const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(session.id);
+      const orClauses: Record<string, unknown>[] = [{ authorId: session.id }];
+      if (assignedCustomerOrgIds.length > 0) {
+        orClauses.push({ serviceCustomerId: { in: assignedCustomerOrgIds } });
+      }
+      and.push({ OR: orClauses });
     }
     // CM_LEADER + SERVICE_OWNER: no extra scoping.
 

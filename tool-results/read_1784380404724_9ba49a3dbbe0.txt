@@ -1,0 +1,798 @@
+     1→// CereBree uSMS — Universal Service Management System
+     2→// Prisma schema (SQLite)
+     3→
+     4→generator client {
+     5→  provider = "prisma-client-js"
+     6→}
+     7→
+     8→datasource db {
+     9→  provider = "sqlite"
+    10→  url      = env("DATABASE_URL")
+    11→}
+    12→
+    13→model User {
+    14→  id           String   @id @default(cuid())
+    15→  email        String   @unique
+    16→  name         String
+    17→  passwordHash String
+    18→  role         String   // SERVICE_CUSTOMER | SCM_WORKER | CM_LEADER | SERVICE_OWNER
+    19→  orgNodeId    String?
+    20→  avatarColor  String   @default("#0d9488")
+    21→  title        String?  // job title for display
+    22→  createdAt    DateTime @default(now())
+    23→  updatedAt    DateTime @updatedAt
+    24→
+    25→  orgNode            OrgNode?          @relation(fields: [orgNodeId], references: [id])
+    26→  assignedDemands    Demand[]          @relation("ScmWorkerDemands")
+    27→  submittedDemands   Demand[]          @relation("DemandSubmitter")
+    28→  ceWorkerChanges    Change[]          @relation("CeWorkerChanges")
+    29→  events             DemandEvent[]     @relation("DemandEventActor")
+    30→  notifications      Notification[]
+    31→  // Phase 2-6 relations
+    32→  assignedTickets    Ticket[]          @relation("TicketAssignee")
+    33→  requestedTickets   Ticket[]          @relation("TicketRequester")
+    34→  ticketEvents       TicketEvent[]
+    35→  comments           Comment[]
+    36→  attachments        Attachment[]
+    37→  auditLogs          AuditLog[]
+    38→  knowledgeArticles  KnowledgeArticle[] @relation("KnowledgeAuthor")
+    39→  reviewedArticles   KnowledgeArticle[] @relation("KnowledgeReviewer")
+    40→  surveys            SatisfactionSurvey[]
+    41→  customerAssignments CustomerAssignment[]
+    42→  knowledgeVersions   KnowledgeArticleVersion[] @relation("KnowledgeVersionCreator")
+    43→
+    44→  @@index([role])
+    45→}
+    46→
+    47→model OrgNode {
+    48→  id        String   @id @default(cuid())
+    49→  name      String
+    50→  type      String   // CUSTOMER_ORG | INTERNAL
+    51→  parentId  String?
+    52→  createdAt DateTime @default(now())
+    53→
+    54→  parent    OrgNode?  @relation("OrgNodeTree", fields: [parentId], references: [id])
+    55→  children  OrgNode[] @relation("OrgNodeTree")
+    56→  users     User[]
+    57→  demands   Demand[]  @relation("DemandCustomer")
+    58→  tickets   Ticket[]  @relation("TicketCustomer")
+    59→  slaReportCustomers SlaReportCustomer[]
+    60→  customerAssignments CustomerAssignment[]
+    61→}
+    62→
+    63→model Service {
+    64→  id              String   @id @default(cuid())
+    65→  name            String
+    66→  description     String
+    67→  domain          String   // INTERACTION | SUPPORT | DELIVERY | MANAGEMENT
+    68→  chapter         String   // e.g. IDENTITY_ACCESS, COLLABORATION, END_USER_COMPUTE
+    69→  layer           String   // BUSINESS | APPLICATION | PLATFORM | INFRASTRUCTURE
+    70→  slaClass        String   // A | B | C | D
+    71→  status          String   // ACTIVE | RETIRED | PLANNED
+    72→  customerValue   String?
+    73→  commodityType   String?  // UTILITY | DIFFERENTIATED | STRATEGIC
+    74→  supportLevels   String?  // free text
+    75→  serviceOwnerId  String
+    76→  technicalOwnerId String?
+    77→  createdAt       DateTime @default(now())
+    78→  updatedAt       DateTime @updatedAt
+    79→
+    80→  offerings    ServiceOffering[]
+    81→  slaProfiles  SlaProfile[]
+    82→  slaEvents    SlaEvent[]
+    83→  problems     Problem[]
+    84→  // Phase 2-6 relations
+    85→  demandServices    DemandService[]
+    86→  changeServices    ChangeService[]
+    87→  tickets           Ticket[]
+    88→  slaPolicies       SlaPolicy[]
+    89→  knowledgeArticles KnowledgeArticle[]
+    90→  slaReportServices SlaReportService[]
+    91→  technicalOwnerTasks TechnicalOwnerTask[]
+    92→
+    93→  @@index([domain])
+    94→  @@index([slaClass])
+    95→  @@index([status])
+    96→}
+    97→
+    98→model ServiceOffering {
+    99→  id              String   @id @default(cuid())
+   100→  serviceId       String
+   101→  name            String
+   102→  description     String
+   103→  requestType     String   // ACCESS | INCIDENT | SERVICE_REQUEST | DEMAND
+   104→  fulfillmentDays Int      @default(5)
+   105→  active          Boolean  @default(true)
+   106→  createdAt       DateTime @default(now())
+   107→
+   108→  service      Service      @relation(fields: [serviceId], references: [id])
+   109→  entitlements Entitlement[]
+   110→
+   111→  @@index([serviceId])
+   112→}
+   113→
+   114→model SlaProfile {
+   115→  id               String   @id @default(cuid())
+   116→  serviceId        String
+   117→  slaClass         String   // A | B | C | D
+   118→  availabilityTarget Float  // e.g. 99.9
+   119→  p1ResponseMins   Int
+   120→  p1ResolutionMins Int
+   121→  p2ResponseMins   Int
+   122→  p2ResolutionMins Int
+   123→  createdAt        DateTime @default(now())
+   124→
+   125→  service Service @relation(fields: [serviceId], references: [id])
+   126→
+   127→  @@index([serviceId])
+   128→}
+   129→
+   130→model Entitlement {
+   131→  id                String    @id @default(cuid())
+   132→  orgNodeId         String
+   133→  serviceOfferingId String
+   134→  scope             String    // DIRECT | INHERITED
+   135→  validUntil        DateTime?
+   136→  createdAt         DateTime  @default(now())
+   137→
+   138→  offering ServiceOffering @relation(fields: [serviceOfferingId], references: [id])
+   139→
+   140→  @@index([orgNodeId])
+   141→}
+   142→
+   143→model Demand {
+   144→  id                    String    @id @default(cuid())
+   145→  title                 String
+   146→  description           String
+   147→  businessJustification String?
+   148→  desiredTimeline       String?
+   149→  relatedServiceIds     String    // JSON array of service ids
+   150→  serviceCustomerId     String    // OrgNode id of the customer
+   151→  submittedById         String
+   152→  assignedScmWorkerId   String?
+   153→  status                String    // NEW | UNDER_REVIEW | QUOTED | ACCEPTED | IN_CHANGE | FULFILLED | CLOSED | REJECTED | REDIRECTED
+   154→  estimatedEffortDays   Float?
+   155→  estimatedCost         Float?
+   156→  quoteNotes            String?
+   157→  quoteApprovedByCmLeader Boolean @default(false)
+   158→  quoteApprovedAt       DateTime?
+   159→  commitmentNotes       String?
+   160→  rejectionReason       String?
+   161→  redirectedToOfferingId String?
+   162→  changeRequestId       String?
+   163→  quotedAt              DateTime?
+   164→  acceptedAt            DateTime?
+   165→  handedToCeAt          DateTime?
+   166→  fulfilledAt           DateTime?
+   167→  closedAt              DateTime?
+   168→  createdAt             DateTime  @default(now())
+   169→  updatedAt             DateTime  @updatedAt
+   170→
+   171→  customer     OrgNode       @relation("DemandCustomer", fields: [serviceCustomerId], references: [id])
+   172→  submitter    User          @relation("DemandSubmitter", fields: [submittedById], references: [id])
+   173→  scmWorker    User?         @relation("ScmWorkerDemands", fields: [assignedScmWorkerId], references: [id])
+   174→  events       DemandEvent[]
+   175→  change       Change?       @relation("ChangeOriginDemand")
+   176→  handovers    ProcessHandover[] @relation("HandoverDemand")
+   177→  // Phase 2-6 relations
+   178→  demandServices DemandService[]
+   179→
+   180→  @@index([status])
+   181→  @@index([serviceCustomerId])
+   182→  @@index([assignedScmWorkerId])
+   183→}
+   184→
+   185→model DemandEvent {
+   186→  id        String   @id @default(cuid())
+   187→  demandId  String
+   188→  eventType String   // CREATED | REVIEW_STARTED | QUOTED | QUOTE_APPROVED | ACCEPTED | REJECTED | REDIRECTED | HANDED_TO_CE | FULFILLED | CLOSED | COMMENT
+   189→  actorId   String?
+   190→  actorName String
+   191→  notes     String?
+   192→  createdAt DateTime @default(now())
+   193→
+   194→  demand Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+   195→  actor  User?  @relation("DemandEventActor", fields: [actorId], references: [id])
+   196→
+   197→  @@index([demandId])
+   198→}
+   199→
+   200→model SlaEvent {
+   201→  id                String    @id @default(cuid())
+   202→  serviceId         String
+   203→  serviceCustomerId String?
+   204→  eventType         String    // WARNING | BREACHED | CLOSED_IN_TIME
+   205→  message           String
+   206→  createdAt         DateTime  @default(now())
+   207→  resolvedAt        DateTime?
+   208→
+   209→  service Service @relation(fields: [serviceId], references: [id])
+   210→
+   211→  @@index([serviceId])
+   212→  @@index([eventType])
+   213→}
+   214→
+   215→model Change {
+   216→  id                       String    @id @default(cuid())
+   217→  title                    String
+   218→  type                     String    // STANDARD | NORMAL | EMERGENCY
+   219→  status                   String    // REQUESTED | ASSESSMENT | PLANNING | APPROVED | IMPLEMENTATION | VERIFICATION | CLOSED | REJECTED
+   220→  complexity               String?   // SIMPLE | MEDIUM | COMPLEX
+   221→  originType               String    // DEMAND | PROBLEM | STANDARD
+   222→  originDemandId           String?   @unique
+   223→  originProblemId          String?
+   224→  affectedServiceIds       String    // JSON array
+   225→  implementationPlan       String?
+   226→  technicalOwnerTasksJson  String    // JSON array of tasks
+   227→  assignedCeWorkerId       String?
+   228→  assignedCeLeaderId       String?
+   229→  rejectionReason          String?
+   230→  verificationNotes        String?
+   231→  catalogUpdatedAt         DateTime?
+   232→  isEmergencyPostReviewDue Boolean   @default(false)
+   233→  postImplementationReview String?
+   234→  approvalNotes            String?
+   235→  createdAt                DateTime  @default(now())
+   236→  updatedAt                DateTime  @updatedAt
+   237→  closedAt                 DateTime?
+   238→
+   239→  ceWorker      User?  @relation("CeWorkerChanges", fields: [assignedCeWorkerId], references: [id])
+   240→  originDemand  Demand? @relation("ChangeOriginDemand", fields: [originDemandId], references: [id])
+   241→  handovers     ProcessHandover[] @relation("HandoverChange")
+   242→  // Phase 2-6 relations
+   243→  changeServices    ChangeService[]
+   244→  technicalOwnerTasks TechnicalOwnerTask[]
+   245→
+   246→  @@index([status])
+   247→  @@index([originDemandId])
+   248→}
+   249→
+   250→model ProcessHandover {
+   251→  id                String    @id @default(cuid())
+   252→  type              String    // CM_TO_CE | PM_TO_CE | PM_TO_SD_KE | SD_TO_CE_STD
+   253→  sourceDemandId    String?
+   254→  sourceProblemId   String?
+   255→  targetChangeId    String?
+   256→  acknowledgedById  String?
+   257→  acknowledgedAt    DateTime?
+   258→  createdAt         DateTime  @default(now())
+   259→
+   260→  demand   Demand? @relation("HandoverDemand", fields: [sourceDemandId], references: [id])
+   261→  change   Change? @relation("HandoverChange", fields: [targetChangeId], references: [id])
+   262→
+   263→  @@index([type])
+   264→}
+   265→
+   266→model Problem {
+   267→  id                    String    @id @default(cuid())
+   268→  title                 String
+   269→  serviceId             String
+   270→  status                String    // NEW | UNDER_INVESTIGATION | ROOT_CAUSE_IDENTIFIED | DECISION | KNOWN_ERROR | LINKED_TO_CHANGE | CLOSED
+   271→  decision              String?   // KNOWN_ERROR | CHANGE_REQUIRED | FURTHER_ANALYSIS
+   272→  rootCauseDescription  String?
+   273→  impactAssessment      String?
+   274→  decisionRationale     String?
+   275→  workaroundDescription String?
+   276→  knownErrorId          String?
+   277→  assignedPmWorkerId    String?
+   278→  createdAt             DateTime  @default(now())
+   279→  updatedAt             DateTime  @updatedAt
+   280→
+   281→  service Service @relation(fields: [serviceId], references: [id])
+   282→
+   283→  @@index([status])
+   284→}
+   285→
+   286→model Notification {
+   287→  id        String   @id @default(cuid())
+   288→  userId    String
+   289→  type      String   // DemandQuoted | DemandFulfilled | DemandRejected | SlaWarning | SlaBreached | DemandAccepted | ChangeClosed | DemandCreated | QuoteApprovalRequested | SlaReportApproved | SlaReportReturned | CommitmentApproved | CommitmentEscalated | BreachCommunicated | BreachResponded
+   290→  title     String
+   291→  message   String
+   292→  entityRef String?  // e.g. demand:<id>
+   293→  read      Boolean  @default(false)
+   294→  createdAt DateTime @default(now())
+   295→
+   296→  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+   297→  deliveries NotificationDelivery[]
+   298→
+   299→  @@index([userId])
+   300→  @@index([read])
+   301→}
+   302→
+   303→// SLA performance report prepared by SCM Worker, reviewed/approved by CM Leader
+   304→model SlaReport {
+   305→  id              String    @id @default(cuid())
+   306→  title           String
+   307→  periodStart     DateTime
+   308→  periodEnd       DateTime
+   309→  serviceIds      String    // JSON array (legacy, kept for migration compat)
+   310→  serviceCustomerIds String  // JSON array (legacy, kept for migration compat)
+   311→  preparedById    String
+   312→  reviewedByCmLeaderId String?
+   313→  status          String    // DRAFT | PENDING_REVIEW | APPROVED | RETURNED | ISSUED
+   314→  summary         String    // compliance summary text
+   315→  metricsJson     String    // JSON: per-service compliance, breaches, warnings
+   316→  reviewNotes     String?   // CM Leader feedback on return
+   317→  approvedAt      DateTime?
+   318→  issuedAt        DateTime?
+   319→  createdAt       DateTime  @default(now())
+   320→  updatedAt       DateTime  @updatedAt
+   321→
+   322→  // Phase 2 relations
+   323→  reportServices  SlaReportService[]
+   324→  reportCustomers SlaReportCustomer[]
+   325→
+   326→  @@index([status])
+   327→  @@index([preparedById])
+   328→}
+   329→
+   330→// Customer communication record — the governed thread owned by SCM Worker
+   331→model Communication {
+   332→  id           String    @id @default(cuid())
+   333→  demandId     String?
+   334→  serviceId    String?
+   335→  serviceCustomerId String?
+   336→  slaEventId   String?
+   337→  direction    String    // TO_CUSTOMER | INTERNAL_NOTE
+   338→  channel      String    // PORTAL | EMAIL | MESSAGE
+   339→  subject      String
+   340→  body         String
+   341→  authorId     String
+   342→  authorName   String
+   343→  createdAt    DateTime  @default(now())
+   344→
+   345→  @@index([demandId])
+   346→  @@index([serviceCustomerId])
+   347→}
+   348→
+   349→// Service Owner governance decision (commitment approval, escalation, breach response)
+   350→model GovernanceDecision {
+   351→  id              String    @id @default(cuid())
+   352→  serviceId       String
+   353→  demandId        String?
+   354→  slaEventId      String?
+   355→  problemId       String?
+   356→  decisionType    String    // COMMITMENT_APPROVAL | COMMITMENT_ESCALATION | BREACH_RESPONSE | LIFECYCLE_DIRECTION | CATALOG_ACCURACY
+   357→  decision        String    // APPROVED | REJECTED | ESCALATED | REMEDIATION_AUTHORIZED | RESOURCES_AUTHORIZED | EMERGENCY_CHANGE_DIRECTED
+   358→  rationale       String
+   359→  resourcesAuthorized String?
+   360→  followUpOwner   String?
+   361→  followUpDate    DateTime?
+   362→  decidedById     String
+   363→  decidedByName   String
+   364→  createdAt       DateTime  @default(now())
+   365→
+   366→  @@index([serviceId])
+   367→  @@index([demandId])
+   368→  @@index([decisionType])
+   369→}
+   370→
+   371→// ============================================================================
+   372→// Phase 2: Join tables (replace JSON string relation fields)
+   373→// ============================================================================
+   374→
+   375→model DemandService {
+   376→  id        String   @id @default(cuid())
+   377→  demandId  String
+   378→  serviceId String
+   379→  demand    Demand   @relation(fields: [demandId], references: [id], onDelete: Cascade)
+   380→  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+   381→
+   382→  @@unique([demandId, serviceId])
+   383→  @@index([serviceId])
+   384→}
+   385→
+   386→model ChangeService {
+   387→  id        String   @id @default(cuid())
+   388→  changeId  String
+   389→  serviceId String
+   390→  change    Change   @relation(fields: [changeId], references: [id], onDelete: Cascade)
+   391→  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+   392→
+   393→  @@unique([changeId, serviceId])
+   394→  @@index([serviceId])
+   395→}
+   396→
+   397→model SlaReportService {
+   398→  id          String @id @default(cuid())
+   399→  slaReportId String
+   400→  serviceId   String
+   401→  slaReport   SlaReport @relation(fields: [slaReportId], references: [id], onDelete: Cascade)
+   402→  service     Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+   403→
+   404→  @@unique([slaReportId, serviceId])
+   405→  @@index([serviceId])
+   406→}
+   407→
+   408→model SlaReportCustomer {
+   409→  id          String @id @default(cuid())
+   410→  slaReportId String
+   411→  orgNodeId   String
+   412→  slaReport   SlaReport @relation(fields: [slaReportId], references: [id], onDelete: Cascade)
+   413→  orgNode     OrgNode   @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
+   414→
+   415→  @@unique([slaReportId, orgNodeId])
+   416→  @@index([orgNodeId])
+   417→}
+   418→
+   419→model TechnicalOwnerTask {
+   420→  id          String   @id @default(cuid())
+   421→  changeId    String
+   422→  assigneeId  String?  // User id of the technical owner
+   423→  assigneeName String?
+   424→  chapter     String?  // ServiceChapter
+   425→  ciScope     String?  // CI description
+   426→  task        String   // task description
+   427→  status      String   @default("PENDING")  // PENDING | IN_PROGRESS | DONE | BLOCKED
+   428→  dueAt       DateTime?
+   429→  completedAt DateTime?
+   430→  createdAt   DateTime @default(now())
+   431→  updatedAt   DateTime @updatedAt
+   432→
+   433→  change  Change  @relation(fields: [changeId], references: [id], onDelete: Cascade)
+   434→  service Service? @relation(fields: [serviceId], references: [id])
+   435→  serviceId String?
+   436→
+   437→  @@index([changeId])
+   438→  @@index([assigneeId])
+   439→}
+   440→
+   441→// ============================================================================
+   442→// Phase 2: Ticket / Case / Incident domain
+   443→// ============================================================================
+   444→
+   445→model Ticket {
+   446→  id                String    @id @default(cuid())
+   447→  number            String    @unique  // human-readable, e.g. TKT-0001
+   448→  title             String
+   449→  description       String
+   450→  type              String    // INCIDENT | SERVICE_REQUEST | QUESTION | COMPLAINT
+   451→  priority          String    // P1 | P2 | P3 | P4
+   452→  impact            String?   // LOW | MEDIUM | HIGH
+   453→  urgency           String?   // LOW | MEDIUM | HIGH
+   454→  status            String    @default("NEW")  // NEW | TRIAGED | ASSIGNED | IN_PROGRESS | WAITING_CUSTOMER | RESOLVED | CLOSED | CANCELED
+   455→  serviceId         String?
+   456→  serviceCustomerId String    // OrgNode id
+   457→  requesterId       String
+   458→  assignedUserId    String?
+   459→  assignmentGroupId String?
+   460→  resolutionCode    String?   // FIXED | WORKAROUND | DUPLICATE | NOT_REPRODUCIBLE | OUT_OF_SCOPE
+   461→  resolutionNotes   String?
+   462→  createdAt         DateTime  @default(now())
+   463→  updatedAt         DateTime  @updatedAt
+   464→  resolvedAt        DateTime?
+   465→  closedAt          DateTime?
+   466→
+   467→  service       Service?       @relation(fields: [serviceId], references: [id])
+   468→  customer      OrgNode        @relation("TicketCustomer", fields: [serviceCustomerId], references: [id])
+   469→  requester     User           @relation("TicketRequester", fields: [requesterId], references: [id])
+   470→  assignee      User?          @relation("TicketAssignee", fields: [assignedUserId], references: [id])
+   471→  assignmentGroup AssignmentGroup? @relation(fields: [assignmentGroupId], references: [id])
+   472→  events        TicketEvent[]
+   473→  slaClocks     SlaClock[]
+   474→
+   475→  @@index([status])
+   476→  @@index([serviceCustomerId])
+   477→  @@index([assignedUserId])
+   478→  @@index([priority])
+   479→}
+   480→
+   481→model AssignmentGroup {
+   482→  id        String   @id @default(cuid())
+   483→  name      String
+   484→  type      String   // SCM | SERVICE_DESK | TECHNICAL | GOVERNANCE
+   485→  active    Boolean  @default(true)
+   486→  createdAt DateTime @default(now())
+   487→
+   488→  tickets Ticket[]
+   489→}
+   490→
+   491→model TicketEvent {
+   492→  id        String   @id @default(cuid())
+   493→  ticketId  String
+   494→  eventType String   // CREATED | ASSIGNED | TRIAGED | IN_PROGRESS | WAITING | RESUMED | RESOLVED | CLOSED | REOPENED | CANCELED | COMMENT
+   495→  actorId   String?
+   496→  actorName String
+   497→  notes     String?
+   498→  createdAt DateTime @default(now())
+   499→
+   500→  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+   501→  actor  User?  @relation(fields: [actorId], references: [id])
+   502→
+   503→  @@index([ticketId])
+   504→}
+   505→
+   506→// ============================================================================
+   507→// Phase 3: SLA Engine
+   508→// ============================================================================
+   509→
+   510→model SlaPolicy {
+   511→  id                 String   @id @default(cuid())
+   512→  name               String
+   513→  serviceId          String?
+   514→  ticketType         String   // INCIDENT | SERVICE_REQUEST | QUESTION | COMPLAINT | ALL
+   515→  priority           String   // P1 | P2 | P3 | P4 | ALL
+   516→  responseMins       Int
+   517→  resolutionMins     Int
+   518→  businessCalendarId String?
+   519→  active             Boolean  @default(true)
+   520→  createdAt          DateTime @default(now())
+   521→
+   522→  service          Service?         @relation(fields: [serviceId], references: [id])
+   523→  businessCalendar BusinessCalendar? @relation(fields: [businessCalendarId], references: [id])
+   524→  slaClocks        SlaClock[]
+   525→  escalationPolicies SlaEscalationPolicy[]
+   526→
+   527→  @@index([serviceId])
+   528→  @@index([priority])
+   529→}
+   530→
+   531→model SlaClock {
+   532→  id               String    @id @default(cuid())
+   533→  ticketId         String
+   534→  policyId         String
+   535→  type             String    // RESPONSE | RESOLUTION
+   536→  status           String    @default("RUNNING")  // RUNNING | PAUSED | MET | BREACHED | CANCELED
+   537→  startedAt        DateTime  @default(now())
+   538→  dueAt            DateTime
+   539→  pausedAt         DateTime?
+   540→  totalPausedMins  Int       @default(0)
+   541→  metAt            DateTime?
+   542→  breachedAt       DateTime?
+   543→
+   544→  ticket Ticket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+   545→  policy SlaPolicy  @relation(fields: [policyId], references: [id])
+   546→
+   547→  @@index([ticketId])
+   548→  @@index([status])
+   549→}
+   550→
+   551→model BusinessCalendar {
+   552→  id        String   @id @default(cuid())
+   553→  name      String
+   554→  timezone  String   @default("UTC")
+   555→  rulesJson String   // JSON: work hours, holidays, etc.
+   556→  createdAt DateTime @default(now())
+   557→
+   558→  policies SlaPolicy[]
+   559→}
+   560→
+   561→// ============================================================================
+   562→// Phase 4: Threaded comments, attachments, CSAT
+   563→// ============================================================================
+   564→
+   565→model Conversation {
+   566→  id                String   @id @default(cuid())
+   567→  entityType        String   // TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
+   568→  entityId          String
+   569→  serviceCustomerId String?
+   570→  createdAt         DateTime @default(now())
+   571→  updatedAt         DateTime @updatedAt
+   572→
+   573→  comments Comment[]
+   574→
+   575→  @@index([entityType, entityId])
+   576→}
+   577→
+   578→model Comment {
+   579→  id             String   @id @default(cuid())
+   580→  conversationId String
+   581→  authorId       String
+   582→  authorName     String
+   583→  visibility     String   @default("CUSTOMER_VISIBLE")  // CUSTOMER_VISIBLE | INTERNAL
+   584→  body           String
+   585→  createdAt      DateTime @default(now())
+   586→  editedAt       DateTime?
+   587→
+   588→  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+   589→  author       User         @relation(fields: [authorId], references: [id])
+   590→
+   591→  @@index([conversationId])
+   592→}
+   593→
+   594→model Attachment {
+   595→  id           String   @id @default(cuid())
+   596→  entityType   String   // TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT | COMMENT
+   597→  entityId     String
+   598→  fileName     String
+   599→  mimeType     String
+   600→  sizeBytes    Int
+   601→  storageKey   String   // local path or object storage key
+   602→  uploadedById String
+   603→  createdAt    DateTime @default(now())
+   604→
+   605→  uploader User @relation(fields: [uploadedById], references: [id])
+   606→
+   607→  @@index([entityType, entityId])
+   608→}
+   609→
+   610→model SatisfactionSurvey {
+   611→  id          String   @id @default(cuid())
+   612→  entityType  String   // TICKET | DEMAND
+   613→  entityId    String
+   614→  customerId  String
+   615→  rating      Int      // 1-5
+   616→  comment     String?
+   617→  createdAt   DateTime @default(now())
+   618→
+   619→  customer User @relation(fields: [customerId], references: [id])
+   620→
+   621→  @@unique([entityType, entityId, customerId])
+   622→  @@index([entityType, entityId])
+   623→}
+   624→
+   625→// ============================================================================
+   626→// Phase 5: Knowledge Base
+   627→// ============================================================================
+   628→
+   629→model KnowledgeArticle {
+   630→  id          String    @id @default(cuid())
+   631→  title       String
+   632→  body        String
+   633→  type        String    // HOW_TO | KNOWN_ERROR | FAQ | RUNBOOK
+   634→  status      String    @default("DRAFT")  // DRAFT | REVIEW | PUBLISHED | RETIRED
+   635→  serviceId   String?
+   636→  authorId    String
+   637→  reviewerId  String?
+   638→  createdAt   DateTime  @default(now())
+   639→  updatedAt   DateTime  @updatedAt
+   640→  publishedAt DateTime?
+   641→
+   642→  service   Service? @relation(fields: [serviceId], references: [id])
+   643→  author    User     @relation("KnowledgeAuthor", fields: [authorId], references: [id])
+   644→  reviewer  User?    @relation("KnowledgeReviewer", fields: [reviewerId], references: [id])
+   645→  versions  KnowledgeArticleVersion[]
+   646→
+   647→  @@index([status])
+   648→  @@index([type])
+   649→  @@index([serviceId])
+   650→}
+   651→
+   652→// ============================================================================
+   653→// Phase 6: Permissions and Audit
+   654→// ============================================================================
+   655→
+   656→model Permission {
+   657→  id          String @id @default(cuid())
+   658→  key         String @unique
+   659→  description String
+   660→
+   661→  rolePermissions RolePermission[]
+   662→}
+   663→
+   664→model RolePermission {
+   665→  id           String @id @default(cuid())
+   666→  role         String
+   667→  permissionId String
+   668→
+   669→  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+   670→
+   671→  @@unique([role, permissionId])
+   672→  @@index([role])
+   673→}
+   674→
+   675→model AuditLog {
+   676→  id         String   @id @default(cuid())
+   677→  actorId    String?
+   678→  actorName  String
+   679→  action     String
+   680→  entityType String
+   681→  entityId   String
+   682→  beforeJson String?
+   683→  afterJson  String?
+   684→  ipAddress  String?
+   685→  userAgent  String?
+   686→  createdAt  DateTime @default(now())
+   687→
+   688→  actor User? @relation(fields: [actorId], references: [id])
+   689→
+   690→  @@index([entityType, entityId])
+   691→  @@index([action])
+   692→  @@index([actorId])
+   693→}
+   694→
+   695→// ============================================================================
+   696→// Phase 9: Notification delivery
+   697→// ============================================================================
+   698→
+   699→model NotificationDelivery {
+   700→  id             String   @id @default(cuid())
+   701→  notificationId String
+   702→  channel        String   // EMAIL | TEAMS | SLACK | PORTAL
+   703→  status         String   @default("PENDING")  // PENDING | SENT | FAILED
+   704→  error          String?
+   705→  sentAt         DateTime?
+   706→  createdAt      DateTime @default(now())
+   707→
+   708→  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+   709→
+   710→  @@index([notificationId])
+   711→  @@index([status])
+   712→}
+   713→
+   714→// ============================================================================
+   715→// Enterprise Workflow Review: Customer Assignment (SCM scoping)
+   716→// ============================================================================
+   717→
+   718→model CustomerAssignment {
+   719→  id        String   @id @default(cuid())
+   720→  orgNodeId String
+   721→  userId    String
+   722→  role      String   // SCM_OWNER | BACKUP | ESCALATION_MANAGER
+   723→  active    Boolean  @default(true)
+   724→  createdAt DateTime @default(now())
+   725→
+   726→  orgNode OrgNode @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
+   727→  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+   728→
+   729→  @@unique([orgNodeId, userId, role])
+   730→  @@index([userId])
+   731→  @@index([orgNodeId])
+   732→}
+   733→
+   734→// ============================================================================
+   735→// Enterprise Workflow Review: Sequence Counter (race-prone ticket numbers)
+   736→// ============================================================================
+   737→
+   738→model SequenceCounter {
+   739→  key   String @id
+   740→  value Int    @default(0)
+   741→}
+   742→
+   743→// ============================================================================
+   744→// Enterprise Workflow Review: SLA Escalation Policy
+   745→// ============================================================================
+   746→
+   747→model SlaEscalationPolicy {
+   748→  id           String  @id @default(cuid())
+   749→  policyId     String
+   750→  thresholdPct Int     // e.g. 50, 70, 90
+   751→  notifyRole   String  // SCM_WORKER | CM_LEADER | SERVICE_OWNER
+   752→  notifyUserId String?
+   753→  active       Boolean @default(true)
+   754→  createdAt    DateTime @default(now())
+   755→
+   756→  policy SlaPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+   757→
+   758→  @@index([policyId])
+   759→}
+   760→
+   761→// ============================================================================
+   762→// Enterprise Workflow Review: Knowledge Article Version History
+   763→// ============================================================================
+   764→
+   765→model KnowledgeArticleVersion {
+   766→  id          String   @id @default(cuid())
+   767→  articleId   String
+   768→  title       String
+   769→  body        String
+   770→  version     Int
+   771→  createdById String
+   772→  createdAt   DateTime @default(now())
+   773→
+   774→  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+   775→  creator User             @relation("KnowledgeVersionCreator", fields: [createdById], references: [id])
+   776→
+   777→  @@index([articleId])
+   778→}
+   779→
+   780→// ============================================================================
+   781→// Enterprise Workflow Review: Entity Links (unify demands/tickets/problems)
+   782→// ============================================================================
+   783→
+   784→model EntityLink {
+   785→  id        String   @id @default(cuid())
+   786→  fromType  String   // TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
+   787→  fromId    String
+   788→  toType    String
+   789→  toId      String
+   790→  linkType  String   // CAUSED_BY | RELATES_TO | CONVERTED_TO | FULFILLED_BY
+   791→  createdBy String?
+   792→  createdAt DateTime @default(now())
+   793→
+   794→  @@unique([fromType, fromId, toType, toId, linkType])
+   795→  @@index([fromType, fromId])
+   796→  @@index([toType, toId])
+   797→}
+   798→

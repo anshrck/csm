@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
 export const runtime = 'nodejs';
@@ -52,6 +53,15 @@ export async function POST(
         actorName: session.name,
         notes: `Quote accepted by customer (${session.name}).`,
       },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_ACCEPTED',
+      entityType: 'Demand',
+      entityId: id,
+      before: { status: 'QUOTED' },
+      after: { status: 'ACCEPTED', acceptedAt: updated.acceptedAt },
     });
 
     // Notify the assigned SCM worker (if any). Fallback to all SCM workers if

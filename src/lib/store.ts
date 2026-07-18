@@ -27,7 +27,15 @@ export type ViewKey =
   | 'knowledge'
   // tickets (Phase 2 — shared workspace)
   | 'tickets'
-  | 'ticket-detail';
+  | 'ticket-detail'
+  // Enterprise Workflow Review — ticket UI + CSAT follow-up + customer assignment
+  | 'submit-ticket'
+  | 'ticket-ops'
+  | 'service-incidents'
+  | 'csat-followup'
+  // Enterprise Workflow Review — CM Leader oversight views
+  | 'audit'
+  | 'delivery-failures';
 
 interface AppState {
   session: SessionUser | null;
@@ -89,6 +97,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { key: 'demands', label: 'My Demands', icon: 'FileText' },
     { key: 'submit-demand', label: 'Submit Demand', icon: 'PlusCircle' },
     { key: 'tickets', label: 'My Tickets', icon: 'Ticket' },
+    { key: 'submit-ticket', label: 'Submit Ticket', icon: 'PlusCircle' },
     { key: 'catalog', label: 'Service Catalog', icon: 'Library' },
     { key: 'sla', label: 'SLA Performance', icon: 'Gauge' },
     { key: 'knowledge', label: 'Knowledge Base', icon: 'BookOpen' },
@@ -107,18 +116,23 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { key: 'demands', label: 'Demand Queue', icon: 'FileText' },
     { key: 'tickets', label: 'Ticket Queue', icon: 'Ticket' },
+    { key: 'ticket-ops', label: 'Ticket Operations', icon: 'ClipboardList' },
     { key: 'workers', label: 'SCM Workers', icon: 'Users' },
     { key: 'sla', label: 'SLM Governance', icon: 'Gauge' },
+    { key: 'csat-followup', label: 'CSAT Follow-up', icon: 'HeartHandshake' },
     { key: 'catalog', label: 'Service Catalog', icon: 'Library' },
     { key: 'changes', label: 'Changes', icon: 'GitBranch' },
     { key: 'reports', label: 'Reports', icon: 'BarChart3' },
     { key: 'analytics', label: 'Analytics', icon: 'TrendingUp' },
+    { key: 'audit', label: 'Audit Log', icon: 'ScrollText' },
+    { key: 'delivery-failures', label: 'Delivery Admin', icon: 'MailCheck' },
     { key: 'knowledge', label: 'Knowledge Base', icon: 'BookOpen' },
   ],
   SERVICE_OWNER: [
     { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { key: 'portfolio', label: 'Service Portfolio', icon: 'Briefcase' },
     { key: 'tickets', label: 'Service Tickets', icon: 'Ticket' },
+    { key: 'service-incidents', label: 'Service Incidents', icon: 'Siren' },
     { key: 'sla', label: 'SLA Performance', icon: 'Gauge' },
     { key: 'governance', label: 'Governance Approvals', icon: 'ShieldCheck' },
     { key: 'problems', label: 'Problem Records', icon: 'Bug' },

@@ -53,7 +53,7 @@ export async function POST(
 
     await auditLog({
       actor: session,
-      action: 'KNOWLEDGE_ARTICLE_PUBLISHED',
+      action: 'KNOWLEDGE_PUBLISHED',
       entityType: 'KnowledgeArticle',
       entityId: id,
       before: { status: 'REVIEW' },

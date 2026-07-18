@@ -6,7 +6,6 @@ import {
   buildTicketScope,
   resolveSlaPolicy,
   createSlaClocksForTicket,
-  generateTicketNumber,
 } from './_helpers';
 import {
   TICKET_LIST_INCLUDE,
@@ -288,7 +287,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Customer org node not found' }, { status: 400 });
     }
 
-    const number = await generateTicketNumber();
+    // SequenceCounter-based ticket number — race-free increment under a single
+    // atomic upsert. Format: <prefix>-<year>-<6-digit-seq> (e.g. INC-2024-000001).
+    // The prefix encodes the ticket type so the number is human-readable.
+    const prefix =
+      type === 'INCIDENT'
+        ? 'INC'
+        : type === 'SERVICE_REQUEST'
+          ? 'REQ'
+          : type === 'COMPLAINT'
+            ? 'CMP'
+            : 'CSM'; // QUESTION + fallback
+    const year = new Date().getFullYear();
+    const counter = await db.sequenceCounter.upsert({
+      where: { key: prefix },
+      update: { value: { increment: 1 } },
+      create: { key: prefix, value: 1 },
+    });
+    const number = `${prefix}-${year}-${String(counter.value).padStart(6, '0')}`;
 
     const created = await db.ticket.create({
       data: {
@@ -337,7 +353,7 @@ export async function POST(req: NextRequest) {
 
     await auditLog({
       actor: session,
-      action: 'TICKET_CREATE',
+      action: 'TICKET_CREATED',
       entityType: 'Ticket',
       entityId: created.id,
       after: {

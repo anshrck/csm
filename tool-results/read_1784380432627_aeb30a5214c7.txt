@@ -1,0 +1,711 @@
+     1→'use client';
+     2→
+     3→/**
+     4→ * KnowledgeManager — full CRUD knowledge base UI for SCM_WORKER, CM_LEADER,
+     5→ * and SERVICE_OWNER roles.
+     6→ *
+     7→ * Capabilities per role:
+     8→ *   - SCM_WORKER  → create DRAFT, edit own DRAFT/REVIEW articles, submit for review.
+     9→ *   - CM_LEADER   → all of the above + edit any DRAFT/REVIEW article, PUBLISH / RETIRE.
+    10→ *   - SERVICE_OWNER → same as CM_LEADER + initial filter to articles on owned services
+    11→ *     (the user can still clear the filter to see all).
+    12→ *
+    13→ * Layout:
+    14→ *   - Top: stat row (total, drafts, in-review, published, retired) + [New Article] button.
+    15→ *   - Filter bar: free-text search, type filter, status filter, optional "my services only".
+    16→ *   - List: DataTable of articles with type/status badges, author, last updated, and an
+    17→ *     actions dropdown (Edit / Submit for review / Publish / Retire).
+    18→ *   - Dialogs: New/Edit article (title, type, service, markdown body), View article (full
+    19→ *     markdown render), and confirmation flows for the lifecycle transitions.
+    20→ */
+    21→
+    22→import * as React from 'react';
+    23→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+    24→import { apiGet, apiPost, apiPatch } from '@/lib/api';
+    25→import { useApp } from '@/lib/store';
+    26→import { toast } from 'sonner';
+    27→import { cn } from '@/lib/utils';
+    28→
+    29→import {
+    30→  PageHeader,
+    31→  SectionCard,
+    32→  StatCard,
+    33→  EmptyState,
+    34→  LoadingState,
+    35→  DataTable,
+    36→  type Column,
+    37→  Badge,
+    38→  Button,
+    39→} from '@/components/shared';
+    40→import { Input } from '@/components/ui/input';
+    41→import { Label } from '@/components/ui/label';
+    42→import { Textarea } from '@/components/ui/textarea';
+    43→import {
+    44→  Select,
+    45→  SelectContent,
+    46→  SelectItem,
+    47→  SelectTrigger,
+    48→  SelectValue,
+    49→} from '@/components/ui/select';
+    50→import {
+    51→  Dialog,
+    52→  DialogContent,
+    53→  DialogDescription,
+    54→  DialogFooter,
+    55→  DialogHeader,
+    56→  DialogTitle,
+    57→} from '@/components/ui/dialog';
+    58→import {
+    59→  DropdownMenu,
+    60→  DropdownMenuContent,
+    61→  DropdownMenuItem,
+    62→  DropdownMenuSeparator,
+    63→  DropdownMenuTrigger,
+    64→} from '@/components/ui/dropdown-menu';
+    65→import { ScrollArea } from '@/components/ui/scroll-area';
+    66→import {
+    67→  BookOpen,
+    68→  Plus,
+    69→  MoreHorizontal,
+    70→  Pencil,
+    71→  Send,
+    72→  CheckCircle2,
+    73→  Archive,
+    74→  Eye,
+    75→  FileText,
+    76→  HelpCircle,
+    77→  AlertOctagon,
+    78→  Wrench,
+    79→  Loader2,
+    80→} from 'lucide-react';
+    81→import ReactMarkdown from 'react-markdown';
+    82→import {
+    83→  KnowledgeSearch,
+    84→  KnowledgeTypeBadge,
+    85→  KNOWLEDGE_TYPE_META,
+    86→  type KnowledgeArticleSummary,
+    87→} from './KnowledgeSearch';
+    88→
+    89→// ---- Types ----
+    90→// Reuse the summary shape from the search component for the management list,
+    91→// plus the full article (with body) fetched when editing/viewing.
+    92→interface KnowledgeArticleFull extends KnowledgeArticleSummary {
+    93→  body: string;
+    94→  reviewerId: string | null;
+    95→  reviewerName: string | null;
+    96→  authorId: string;
+    97→  createdAt: string;
+    98→}
+    99→
+   100→interface ServiceOption {
+   101→  id: string;
+   102→  name: string;
+   103→}
+   104→
+   105→type ManagerRole = 'SCM_WORKER' | 'CM_LEADER' | 'SERVICE_OWNER';
+   106→
+   107→// ---- Component ----
+   108→export interface KnowledgeManagerProps {
+   109→  role: ManagerRole;
+   110→  /** When true (Service Owner), default the filter to articles on owned services. */
+   111→  defaultFilterOwnedServices?: boolean;
+   112→}
+   113→
+   114→const STATUS_BADGE_CLS: Record<string, string> = {
+   115→  DRAFT: 'bg-muted text-muted-foreground border-border',
+   116→  REVIEW: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900',
+   117→  PUBLISHED: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900',
+   118→  RETIRED: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900',
+   119→};
+   120→
+   121→const STATUS_LABELS: Record<string, string> = {
+   122→  DRAFT: 'Draft',
+   123→  REVIEW: 'In Review',
+   124→  PUBLISHED: 'Published',
+   125→  RETIRED: 'Retired',
+   126→};
+   127→
+   128→export function KnowledgeManager({ role, defaultFilterOwnedServices = false }: KnowledgeManagerProps) {
+   129→  const { session } = useApp();
+   130→  const qc = useQueryClient();
+   131→
+   132→  // ---- Filters ----
+   133→  const [search, setSearch] = React.useState('');
+   134→  const [typeFilter, setTypeFilter] = React.useState<string>('ALL');
+   135→  const [statusFilter, setStatusFilter] = React.useState<string>('ALL');
+   136→  const [ownedOnly, setOwnedOnly] = React.useState<boolean>(!!defaultFilterOwnedServices);
+   137→
+   138→  // ---- Article list ----
+   139→  // Always fetch with `summary=1` — the management list doesn't need the full
+   140→  // markdown body. We refetch the full article when the user opens the editor
+   141→  // or viewer dialog.
+   142→  const listParams = new URLSearchParams({ summary: '1' });
+   143→  if (search.trim()) listParams.set('q', search.trim());
+   144→  if (typeFilter !== 'ALL') listParams.set('type', typeFilter);
+   145→  if (statusFilter !== 'ALL') listParams.set('status', statusFilter);
+   146→
+   147→  // Service Owner "owned services" filter — we need the list of owned service
+   148→  // ids first, then pass one to the API. Since the API only accepts a single
+   149→  // serviceId, we fetch all and filter client-side (the article count is small
+   150→  // enough that this is fine).
+   151→  const { data: ownedServices = [] } = useQuery<ServiceOption[]>({
+   152→    queryKey: ['services', 'owned', session?.id],
+   153→    queryFn: () => apiGet('/api/services?owner=me'),
+   154→    enabled: role === 'SERVICE_OWNER' && ownedOnly,
+   155→  });
+   156→  const ownedServiceIds = React.useMemo(() => new Set(ownedServices.map((s) => s.id)), [ownedServices]);
+   157→
+   158→  const { data: articles = [], isLoading } = useQuery<KnowledgeArticleSummary[]>({
+   159→    queryKey: ['knowledge', 'manage', search, typeFilter, statusFilter, ownedOnly, session?.id],
+   160→    queryFn: () => apiGet(`/api/knowledge?${listParams.toString()}`),
+   161→  });
+   162→
+   163→  // Apply the owned-services filter client-side if needed.
+   164→  const filteredArticles = React.useMemo(() => {
+   165→    if (role !== 'SERVICE_OWNER' || !ownedOnly || ownedServiceIds.size === 0) return articles;
+   166→    return articles.filter((a) => a.serviceId && ownedServiceIds.has(a.serviceId));
+   167→  }, [articles, role, ownedOnly, ownedServiceIds]);
+   168→
+   169→  // ---- Services dropdown options (for the article editor) ----
+   170→  const { data: allServices = [] } = useQuery<ServiceOption[]>({
+   171→    queryKey: ['services', 'all-status'],
+   172→    queryFn: () => apiGet('/api/services?status=ALL'),
+   173→  });
+   174→
+   175→  // ---- Editor / viewer dialog state ----
+   176→  const [editorOpen, setEditorOpen] = React.useState(false);
+   177→  const [editingId, setEditingId] = React.useState<string | null>(null);
+   178→  const [viewingId, setViewingId] = React.useState<string | null>(null);
+   179→
+   180→  // ---- Stats ----
+   181→  const stats = React.useMemo(() => {
+   182→    const byStatus: Record<string, number> = { DRAFT: 0, REVIEW: 0, PUBLISHED: 0, RETIRED: 0 };
+   183→    for (const a of filteredArticles) {
+   184→      if (byStatus[a.status] !== undefined) byStatus[a.status]++;
+   185→    }
+   186→    return {
+   187→      total: filteredArticles.length,
+   188→      drafts: byStatus.DRAFT,
+   189→      review: byStatus.REVIEW,
+   190→      published: byStatus.PUBLISHED,
+   191→      retired: byStatus.RETIRED,
+   192→    };
+   193→  }, [filteredArticles]);
+   194→
+   195→  // ---- Mutations ----
+   196→  // The mutations below call the dedicated lifecycle endpoints (submit-review,
+   197→  // publish, retire) rather than poking status via PATCH. This keeps the audit
+   198→  // trail clean and routes every transition through its proper gate.
+   199→  const submitReview = useMutation({
+   200→    mutationFn: (id: string) => apiPost(`/api/knowledge/${id}/submit-review`),
+   201→    onSuccess: () => {
+   202→      toast.success('Article submitted for review');
+   203→      qc.invalidateQueries({ queryKey: ['knowledge'] });
+   204→    },
+   205→    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to submit'),
+   206→  });
+   207→
+   208→  const publish = useMutation({
+   209→    mutationFn: (id: string) => apiPost(`/api/knowledge/${id}/publish`),
+   210→    onSuccess: () => {
+   211→      toast.success('Article published');
+   212→      qc.invalidateQueries({ queryKey: ['knowledge'] });
+   213→    },
+   214→    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to publish'),
+   215→  });
+   216→
+   217→  const retire = useMutation({
+   218→    mutationFn: (id: string) => apiPost(`/api/knowledge/${id}/retire`),
+   219→    onSuccess: () => {
+   220→      toast.success('Article retired');
+   221→      qc.invalidateQueries({ queryKey: ['knowledge'] });
+   222→    },
+   223→    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to retire'),
+   224→  });
+   225→
+   226→  // ---- Row actions visibility ----
+   227→  // Returns the set of lifecycle actions available for a given article + caller.
+   228→  function actionsFor(a: KnowledgeArticleSummary) {
+   229→    const isAuthor = a.authorName === session?.name; // best-effort match by name; API enforces authorId
+   230→    const canEdit = role === 'CM_LEADER' || role === 'SERVICE_OWNER' || isAuthor;
+   231→    const canSubmit = canEdit && (a.status === 'DRAFT' || a.status === 'REVIEW');
+   232→    const canPublish = (role === 'CM_LEADER' || role === 'SERVICE_OWNER') && a.status === 'REVIEW';
+   233→    const canRetire = (role === 'CM_LEADER' || role === 'SERVICE_OWNER') && a.status === 'PUBLISHED';
+   234→    return { canEdit, canSubmit, canPublish, canRetire };
+   235→  }
+   236→
+   237→  // ---- Table columns ----
+   238→  const columns: Column<KnowledgeArticleSummary>[] = [
+   239→    {
+   240→      key: 'title',
+   241→      header: 'Title',
+   242→      render: (a) => (
+   243→        <div className="min-w-0">
+   244→          <div className="flex items-center gap-2">
+   245→            <KnowledgeTypeBadge type={a.type} />
+   246→            <button
+   247→              type="button"
+   248→              onClick={() => setViewingId(a.id)}
+   249→              className="text-sm font-medium hover:underline truncate text-left"
+   250→            >
+   251→              {a.title}
+   252→            </button>
+   253→          </div>
+   254→          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{a.snippet}</p>
+   255→        </div>
+   256→      ),
+   257→    },
+   258→    {
+   259→      key: 'service',
+   260→      header: 'Service',
+   261→      render: (a) => (a.serviceName ? <span className="text-xs">{a.serviceName}</span> : <span className="text-xs text-muted-foreground">—</span>),
+   262→      headerClassName: 'hidden md:table-cell',
+   263→      className: 'hidden md:table-cell',
+   264→    },
+   265→    {
+   266→      key: 'author',
+   267→      header: 'Author',
+   268→      render: (a) => <span className="text-xs">{a.authorName}</span>,
+   269→      headerClassName: 'hidden lg:table-cell',
+   270→      className: 'hidden lg:table-cell',
+   271→    },
+   272→    {
+   273→      key: 'status',
+   274→      header: 'Status',
+   275→      render: (a) => (
+   276→        <Badge variant="outline" className={cn('border font-medium', STATUS_BADGE_CLS[a.status])}>
+   277→          {STATUS_LABELS[a.status] ?? a.status}
+   278→        </Badge>
+   279→      ),
+   280→    },
+   281→    {
+   282→      key: 'updated',
+   283→      header: 'Updated',
+   284→      render: (a) => <span className="text-xs text-muted-foreground tabular-nums">{new Date(a.updatedAt).toLocaleDateString()}</span>,
+   285→      headerClassName: 'hidden sm:table-cell',
+   286→      className: 'hidden sm:table-cell',
+   287→    },
+   288→    {
+   289→      key: 'actions',
+   290→      header: '',
+   291→      render: (a) => {
+   292→        const actions = actionsFor(a);
+   293→        if (!actions.canEdit && !actions.canSubmit && !actions.canPublish && !actions.canRetire) {
+   294→          return (
+   295→            <Button variant="ghost" size="sm" onClick={() => setViewingId(a.id)}>
+   296→              <Eye className="h-3.5 w-3.5 mr-1" /> View
+   297→            </Button>
+   298→          );
+   299→        }
+   300→        return (
+   301→          <DropdownMenu>
+   302→            <DropdownMenuTrigger asChild>
+   303→              <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+   304→                <MoreHorizontal className="h-4 w-4" />
+   305→              </Button>
+   306→            </DropdownMenuTrigger>
+   307→            <DropdownMenuContent align="end" className="w-44">
+   308→              <DropdownMenuItem onClick={() => setViewingId(a.id)}>
+   309→                <Eye className="h-3.5 w-3.5 mr-2" /> View
+   310→              </DropdownMenuItem>
+   311→              {actions.canEdit && (a.status === 'DRAFT' || a.status === 'REVIEW') && (
+   312→                <DropdownMenuItem
+   313→                  onClick={() => {
+   314→                    setEditingId(a.id);
+   315→                    setEditorOpen(true);
+   316→                  }}
+   317→                >
+   318→                  <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
+   319→                </DropdownMenuItem>
+   320→              )}
+   321→              {actions.canSubmit && (
+   322→                <DropdownMenuItem
+   323→                  onClick={() => submitReview.mutate(a.id)}
+   324→                  disabled={submitReview.isPending}
+   325→                >
+   326→                  <Send className="h-3.5 w-3.5 mr-2" /> Submit for review
+   327→                </DropdownMenuItem>
+   328→              )}
+   329→              {actions.canPublish && (
+   330→                <DropdownMenuItem
+   331→                  onClick={() => publish.mutate(a.id)}
+   332→                  disabled={publish.isPending}
+   333→                >
+   334→                  <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Publish
+   335→                </DropdownMenuItem>
+   336→              )}
+   337→              {actions.canRetire && (
+   338→                <>
+   339→                  <DropdownMenuSeparator />
+   340→                  <DropdownMenuItem
+   341→                    onClick={() => retire.mutate(a.id)}
+   342→                    disabled={retire.isPending}
+   343→                    className="text-rose-600 focus:text-rose-700"
+   344→                  >
+   345→                    <Archive className="h-3.5 w-3.5 mr-2" /> Retire
+   346→                  </DropdownMenuItem>
+   347→                </>
+   348→              )}
+   349→            </DropdownMenuContent>
+   350→          </DropdownMenu>
+   351→        );
+   352→      },
+   353→    },
+   354→  ];
+   355→
+   356→  return (
+   357→    <div className="space-y-5">
+   358→      <PageHeader
+   359→        title="Knowledge Base"
+   360→        description={
+   361→          role === 'SERVICE_OWNER'
+   362→            ? 'Curate how-to guides, known errors, FAQs, and runbooks for the services you own. Service Owners hold the publish/retire gate alongside the CM Leader.'
+   363→            : 'Author and curate how-to guides, known errors, FAQs, and runbooks. Articles flow DRAFT → REVIEW → PUBLISHED → RETIRED through dedicated governance gates.'
+   364→        }
+   365→        icon={<BookOpen className="h-5 w-5" />}
+   366→        actions={
+   367→          <Button
+   368→            onClick={() => {
+   369→              setEditingId(null);
+   370→              setEditorOpen(true);
+   371→            }}
+   372→          >
+   373→            <Plus className="h-4 w-4 mr-1" /> New Article
+   374→          </Button>
+   375→        }
+   376→      />
+   377→
+   378→      {/* Stats */}
+   379→      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+   380→        <StatCard label="Total" value={stats.total} icon={<BookOpen className="h-4 w-4" />} />
+   381→        <StatCard label="Drafts" value={stats.drafts} icon={<Pencil className="h-4 w-4" />} />
+   382→        <StatCard label="In Review" value={stats.review} icon={<Send className="h-4 w-4" />} />
+   383→        <StatCard label="Published" value={stats.published} icon={<CheckCircle2 className="h-4 w-4" />} tone="success" />
+   384→        <StatCard label="Retired" value={stats.retired} icon={<Archive className="h-4 w-4" />} />
+   385→      </div>
+   386→
+   387→      {/* Customer-facing search embedded — lets the SCM/CM preview the customer view */}
+   388→      <SectionCard
+   389→        title="Customer view preview"
+   390→        description="What your customers see when they search the published knowledge base."
+   391→      >
+   392→        <KnowledgeSearch
+   393→          placeholder="Preview the customer search experience…"
+   394→          emptyLabel="No published articles yet."
+   395→        />
+   396→      </SectionCard>
+   397→
+   398→      {/* Management list */}
+   399→      <SectionCard
+   400→        title="All articles"
+   401→        description="Manage drafts, articles in review, published articles, and retired articles."
+   402→      >
+   403→        {/* Filter bar */}
+   404→        <div className="flex flex-col sm:flex-row gap-2 mb-4">
+   405→          <Input
+   406→            type="search"
+   407→            placeholder="Search by title or body…"
+   408→            value={search}
+   409→            onChange={(e) => setSearch(e.target.value)}
+   410→            className="sm:max-w-xs"
+   411→          />
+   412→          <Select value={typeFilter} onValueChange={setTypeFilter}>
+   413→            <SelectTrigger className="sm:w-40">
+   414→              <SelectValue placeholder="Type" />
+   415→            </SelectTrigger>
+   416→            <SelectContent>
+   417→              <SelectItem value="ALL">All types</SelectItem>
+   418→              <SelectItem value="HOW_TO">How To</SelectItem>
+   419→              <SelectItem value="KNOWN_ERROR">Known Error</SelectItem>
+   420→              <SelectItem value="FAQ">FAQ</SelectItem>
+   421→              <SelectItem value="RUNBOOK">Runbook</SelectItem>
+   422→            </SelectContent>
+   423→          </Select>
+   424→          <Select value={statusFilter} onValueChange={setStatusFilter}>
+   425→            <SelectTrigger className="sm:w-40">
+   426→              <SelectValue placeholder="Status" />
+   427→            </SelectTrigger>
+   428→            <SelectContent>
+   429→              <SelectItem value="ALL">All statuses</SelectItem>
+   430→              <SelectItem value="DRAFT">Draft</SelectItem>
+   431→              <SelectItem value="REVIEW">In Review</SelectItem>
+   432→              <SelectItem value="PUBLISHED">Published</SelectItem>
+   433→              <SelectItem value="RETIRED">Retired</SelectItem>
+   434→            </SelectContent>
+   435→          </Select>
+   436→          {role === 'SERVICE_OWNER' && (
+   437→            <label className="flex items-center gap-2 text-xs text-muted-foreground ml-auto cursor-pointer">
+   438→              <input
+   439→                type="checkbox"
+   440→                checked={ownedOnly}
+   441→                onChange={(e) => setOwnedOnly(e.target.checked)}
+   442→                className="h-3.5 w-3.5"
+   443→              />
+   444→              My services only
+   445→            </label>
+   446→          )}
+   447→        </div>
+   448→
+   449→        {isLoading ? (
+   450→          <LoadingState rows={5} />
+   451→        ) : filteredArticles.length === 0 ? (
+   452→          <EmptyState
+   453→            icon={<BookOpen className="h-8 w-8" />}
+   454→            title="No articles"
+   455→            description="Create your first knowledge article with the New Article button."
+   456→          />
+   457→        ) : (
+   458→          <DataTable
+   459→            columns={columns}
+   460→            rows={filteredArticles}
+   461→            empty={<EmptyState title="No articles match your filters." />}
+   462→          />
+   463→        )}
+   464→      </SectionCard>
+   465→
+   466→      {/* Editor dialog */}
+   467→      <ArticleEditorDialog
+   468→        open={editorOpen}
+   469→        onOpenChange={(o) => {
+   470→          setEditorOpen(o);
+   471→          if (!o) setEditingId(null);
+   472→        }}
+   473→        articleId={editingId}
+   474→        services={allServices}
+   475→        canSelectService={true}
+   476→      />
+   477→
+   478→      {/* Viewer dialog (read-only markdown render) */}
+   479→      <ArticleViewerDialog articleId={viewingId} onOpenChange={(o) => !o && setViewingId(null)} />
+   480→    </div>
+   481→  );
+   482→}
+   483→
+   484→// ---- Article editor dialog (create + edit) ----
+   485→function ArticleEditorDialog({
+   486→  open,
+   487→  onOpenChange,
+   488→  articleId,
+   489→  services,
+   490→  canSelectService,
+   491→}: {
+   492→  open: boolean;
+   493→  onOpenChange: (v: boolean) => void;
+   494→  articleId: string | null;
+   495→  services: ServiceOption[];
+   496→  canSelectService: boolean;
+   497→}) {
+   498→  const qc = useQueryClient();
+   499→  const isEdit = !!articleId;
+   500→
+   501→  // Fetch the full article when editing.
+   502→  const { data: existing, isLoading } = useQuery<KnowledgeArticleFull | null>({
+   503→    queryKey: ['knowledge', 'article', articleId],
+   504→    queryFn: () => (articleId ? apiGet(`/api/knowledge/${articleId}`) : Promise.resolve(null)),
+   505→    enabled: !!articleId && open,
+   506→  });
+   507→
+   508→  // Local form state — initialises from the fetched article on edit, or
+   509→  // sensible defaults on create. We use a key-driven reset so opening the
+   510→  // dialog for a different article doesn't carry over stale state.
+   511→  const [title, setTitle] = React.useState('');
+   512→  const [type, setType] = React.useState<'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK'>('HOW_TO');
+   513→  const [serviceId, setServiceId] = React.useState<string>('');
+   514→  const [body, setBody] = React.useState('');
+   515→  const [submitting, setSubmitting] = React.useState(false);
+   516→
+   517→  React.useEffect(() => {
+   518→    if (!open) return;
+   519→    if (isEdit && existing) {
+   520→      setTitle(existing.title);
+   521→      setType(existing.type as 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK');
+   522→      setServiceId(existing.serviceId ?? '');
+   523→      setBody(existing.body);
+   524→    } else if (!isEdit) {
+   525→      setTitle('');
+   526→      setType('HOW_TO');
+   527→      setServiceId('');
+   528→      setBody('');
+   529→    }
+   530→  }, [open, isEdit, existing]);
+   531→
+   532→  async function handleSubmit() {
+   533→    if (!title.trim() || !body.trim()) {
+   534→      toast.error('Title and body are required');
+   535→      return;
+   536→    }
+   537→    setSubmitting(true);
+   538→    try {
+   539→      const payload = {
+   540→        title: title.trim(),
+   541→        body,
+   542→        type,
+   543→        serviceId: serviceId || undefined,
+   544→      };
+   545→      if (isEdit && articleId) {
+   546→        await apiPatch(`/api/knowledge/${articleId}`, payload);
+   547→        toast.success('Article updated');
+   548→      } else {
+   549→        await apiPost('/api/knowledge', payload);
+   550→        toast.success('Draft article created');
+   551→      }
+   552→      qc.invalidateQueries({ queryKey: ['knowledge'] });
+   553→      onOpenChange(false);
+   554→    } catch (e) {
+   555→      toast.error(e instanceof Error ? e.message : 'Failed to save');
+   556→    } finally {
+   557→      setSubmitting(false);
+   558→    }
+   559→  }
+   560→
+   561→  return (
+   562→    <Dialog open={open} onOpenChange={onOpenChange}>
+   563→      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+   564→        <DialogHeader>
+   565→          <DialogTitle>{isEdit ? 'Edit article' : 'New knowledge article'}</DialogTitle>
+   566→          <DialogDescription>
+   567→            {isEdit
+   568→              ? 'Edit the draft or in-review article. Use the lifecycle actions in the list to publish or retire.'
+   569→              : 'Create a DRAFT article. You can submit it for review from the article list.'}
+   570→          </DialogDescription>
+   571→        </DialogHeader>
+   572→        {isEdit && isLoading ? (
+   573→          <div className="py-12 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+   574→            <Loader2 className="h-4 w-4 animate-spin" /> Loading article…
+   575→          </div>
+   576→        ) : (
+   577→          <ScrollArea className="flex-1 -mx-1 px-1">
+   578→            <div className="grid gap-4 py-2">
+   579→              <div className="grid gap-1.5">
+   580→                <Label htmlFor="kb-title">Title</Label>
+   581→                <Input
+   582→                  id="kb-title"
+   583→                  value={title}
+   584→                  onChange={(e) => setTitle(e.target.value)}
+   585→                  placeholder="e.g. How to reset your SSO password"
+   586→                  maxLength={200}
+   587→                />
+   588→              </div>
+   589→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   590→                <div className="grid gap-1.5">
+   591→                  <Label htmlFor="kb-type">Type</Label>
+   592→                  <Select value={type} onValueChange={(v) => setType(v as 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK')}>
+   593→                    <SelectTrigger id="kb-type">
+   594→                      <SelectValue placeholder="Type" />
+   595→                    </SelectTrigger>
+   596→                    <SelectContent>
+   597→                      <SelectItem value="HOW_TO">How To</SelectItem>
+   598→                      <SelectItem value="KNOWN_ERROR">Known Error</SelectItem>
+   599→                      <SelectItem value="FAQ">FAQ</SelectItem>
+   600→                      <SelectItem value="RUNBOOK">Runbook</SelectItem>
+   601→                    </SelectContent>
+   602→                  </Select>
+   603→                </div>
+   604→                {canSelectService && (
+   605→                  <div className="grid gap-1.5">
+   606→                    <Label htmlFor="kb-service">Service (optional)</Label>
+   607→                    <Select value={serviceId} onValueChange={setServiceId}>
+   608→                      <SelectTrigger id="kb-service">
+   609→                        <SelectValue placeholder="None" />
+   610→                      </SelectTrigger>
+   611→                      <SelectContent>
+   612→                        <SelectItem value="">None</SelectItem>
+   613→                        {services.map((s) => (
+   614→                          <SelectItem key={s.id} value={s.id}>
+   615→                            {s.name}
+   616→                          </SelectItem>
+   617→                        ))}
+   618→                      </SelectContent>
+   619→                    </Select>
+   620→                  </div>
+   621→                )}
+   622→              </div>
+   623→              <div className="grid gap-1.5">
+   624→                <Label htmlFor="kb-body">Body (Markdown)</Label>
+   625→                <Textarea
+   626→                  id="kb-body"
+   627→                  value={body}
+   628→                  onChange={(e) => setBody(e.target.value)}
+   629→                  placeholder={'# Title\n\nWrite the article in **Markdown**. Supports headings, lists, code blocks, links, and tables.'}
+   630→                  className="min-h-[320px] font-mono text-xs"
+   631→                />
+   632→                <p className="text-[11px] text-muted-foreground">
+   633→                  Tip: use <code className="font-mono">#</code> for headings, <code className="font-mono">-</code> for lists, <code className="font-mono">```</code> for code blocks.
+   634→                </p>
+   635→              </div>
+   636→            </div>
+   637→          </ScrollArea>
+   638→        )}
+   639→        <DialogFooter>
+   640→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+   641→            Cancel
+   642→          </Button>
+   643→          <Button onClick={handleSubmit} disabled={submitting || isLoading}>
+   644→            {submitting && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+   645→            {isEdit ? 'Save changes' : 'Create draft'}
+   646→          </Button>
+   647→        </DialogFooter>
+   648→      </DialogContent>
+   649→    </Dialog>
+   650→  );
+   651→}
+   652→
+   653→// ---- Article viewer dialog (read-only) ----
+   654→function ArticleViewerDialog({
+   655→  articleId,
+   656→  onOpenChange,
+   657→}: {
+   658→  articleId: string | null;
+   659→  onOpenChange: (v: boolean) => void;
+   660→}) {
+   661→  const { data: article, isLoading } = useQuery<KnowledgeArticleFull | null>({
+   662→    queryKey: ['knowledge', 'article', articleId],
+   663→    queryFn: () => (articleId ? apiGet(`/api/knowledge/${articleId}`) : Promise.resolve(null)),
+   664→    enabled: !!articleId,
+   665→    staleTime: 60_000,
+   666→  });
+   667→
+   668→  return (
+   669→    <Dialog open={!!articleId} onOpenChange={onOpenChange}>
+   670→      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+   671→        {isLoading || !article ? (
+   672→          <div className="py-16 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+   673→            <Loader2 className="h-4 w-4 animate-spin" /> Loading article…
+   674→          </div>
+   675→        ) : (
+   676→          <>
+   677→            <DialogHeader>
+   678→              <div className="flex items-center gap-2 mb-1">
+   679→                <KnowledgeTypeBadge type={article.type} />
+   680→                <Badge variant="outline" className={cn('border font-medium', STATUS_BADGE_CLS[article.status])}>
+   681→                  {STATUS_LABELS[article.status] ?? article.status}
+   682→                </Badge>
+   683→                {article.serviceName && (
+   684→                  <Badge variant="outline" className="text-[11px]">
+   685→                    {article.serviceName}
+   686→                  </Badge>
+   687→                )}
+   688→              </div>
+   689→              <DialogTitle className="text-xl">{article.title}</DialogTitle>
+   690→              <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+   691→                <span>By {article.authorName}</span>
+   692→                {article.reviewerName && <span>Reviewed by {article.reviewerName}</span>}
+   693→                {article.publishedAt && (
+   694→                  <span>Published {new Date(article.publishedAt).toLocaleDateString()}</span>
+   695→                )}
+   696→              </DialogDescription>
+   697→            </DialogHeader>
+   698→            <ScrollArea className="flex-1 -mx-1 px-1">
+   699→              <article className="text-sm leading-relaxed [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h1]:mt-5 [&_h1]:mb-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:font-mono [&_pre]:bg-muted [&_pre]:text-foreground [&_pre]:p-3 [&_pre]:rounded-md [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_blockquote]:border-l-2 [&_blockquote]:border-primary [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_hr]:my-4 [&_hr]:border-border [&_strong]:font-semibold [&_em]:italic [&_table]:w-full [&_table]:my-3 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:bg-muted/50 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1">
+   700→                <ReactMarkdown>{article.body}</ReactMarkdown>
+   701→              </article>
+   702→            </ScrollArea>
+   703→          </>
+   704→        )}
+   705→      </DialogContent>
+   706→    </Dialog>
+   707→  );
+   708→}
+   709→
+   710→export default KnowledgeManager;
+   711→

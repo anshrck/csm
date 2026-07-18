@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -83,6 +84,15 @@ export async function POST(
         actorName: session.name,
         notes,
       },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_FULFILLED',
+      entityType: 'Demand',
+      entityId: id,
+      before: { status: 'IN_CHANGE', fulfilledAt: demand.fulfilledAt },
+      after: { status: 'FULFILLED', fulfilledAt: updated.fulfilledAt, changeId: change.id },
     });
 
     // Notify the customer.

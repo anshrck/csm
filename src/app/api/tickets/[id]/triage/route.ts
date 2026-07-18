@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
@@ -15,7 +17,8 @@ export const runtime = 'nodejs';
 // POST /api/tickets/[id]/triage
 // Body: { priority?, impact?, urgency?, serviceId? }
 //
-// Transition: NEW → TRIAGED (idempotent if already TRIAGED/ASSIGNED/IN_PROGRESS).
+// Transition: NEW → TRIAGED.
+// The ticket-state machine validates that the transition is allowed.
 // Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
   req: NextRequest,
@@ -32,12 +35,28 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // State-machine validation.
+    const currentStatus = ticket.status as TicketStatus;
+    const targetStatus = ACTION_TO_STATUS.triage;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
+    }
+
     const data: Record<string, unknown> = {};
     const changes: string[] = [];
 
@@ -90,57 +109,38 @@ export async function POST(
 
     const before = { priority: ticket.priority, impact: ticket.impact, urgency: ticket.urgency, serviceId: ticket.serviceId, status: ticket.status };
 
-    // Transition status if appropriate
-    let nextStatus = ticket.status;
-    if (ticket.status === 'NEW') {
-      nextStatus = 'TRIAGED';
-      data.status = nextStatus;
-    }
+    // Apply the state-machine transition (status flip).
+    data.status = targetStatus;
 
-    if (Object.keys(data).length === 0) {
-      // No-op triage — still emit a COMMENT event so the audit trail records
-      // that triage was attempted.
-      await db.ticketEvent.create({
-        data: {
-          ticketId: id,
-          eventType: 'TRIAGED',
-          actorId: session.id,
-          actorName: session.name,
-          notes: `Triage reviewed by ${session.name} (no field changes).`,
-        },
-      });
-    } else {
-      const updated = await db.ticket.update({
-        where: { id },
-        data,
-        include: TICKET_INCLUDE,
-      });
-      await db.ticketEvent.create({
-        data: {
-          ticketId: id,
-          eventType: 'TRIAGED',
-          actorId: session.id,
-          actorName: session.name,
-          notes:
-            changes.length > 0
-              ? `Triage updated by ${session.name}: ${changes.join('; ')}.`
-              : `Triage reviewed by ${session.name}.`,
-        },
-      });
-      await auditLog({
-        actor: session,
-        action: 'TICKET_TRIAGE',
-        entityType: 'Ticket',
-        entityId: id,
-        before,
-        after: data,
-      });
-      return NextResponse.json(serializeTicket(updated as TicketWithRelations));
-    }
+    const updated = await db.ticket.update({
+      where: { id },
+      data,
+      include: TICKET_INCLUDE,
+    });
 
-    // Re-fetch with relations to return the consistent shape
-    const fresh = await db.ticket.findUnique({ where: { id }, include: TICKET_INCLUDE });
-    return NextResponse.json(serializeTicket(fresh as TicketWithRelations));
+    await db.ticketEvent.create({
+      data: {
+        ticketId: id,
+        eventType: 'TRIAGED',
+        actorId: session.id,
+        actorName: session.name,
+        notes:
+          changes.length > 0
+            ? `Triage updated by ${session.name}: ${changes.join('; ')}.`
+            : `Triage reviewed by ${session.name}.`,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'TICKET_TRIAGED',
+      entityType: 'Ticket',
+      entityId: id,
+      before: { ...before, status: currentStatus },
+      after: { ...data, status: targetStatus },
+    });
+
+    return NextResponse.json(serializeTicket(updated as TicketWithRelations));
   } catch (err) {
     return errorResponse(err);
   }

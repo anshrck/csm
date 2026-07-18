@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -57,6 +58,11 @@ export async function POST(
         ? body.notes.trim()
         : `Review started by ${session.name}.`;
 
+    const before = {
+      status: demand.status,
+      assignedScmWorkerId: demand.assignedScmWorkerId,
+    };
+
     const updated = await db.demand.update({
       where: { id },
       data: {
@@ -74,6 +80,15 @@ export async function POST(
         actorName: session.name,
         notes,
       },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_REVIEW_STARTED',
+      entityType: 'Demand',
+      entityId: id,
+      before,
+      after: { status: 'UNDER_REVIEW', assignedScmWorkerId: assignedId },
     });
 
     // Re-fetch so the response includes the new event.

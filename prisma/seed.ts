@@ -510,3 +510,60 @@ async function seedTickets() {
   console.log('  Tickets, SLA clocks, and knowledge articles seeded.');
 }
 
+
+// ---- Enterprise Workflow: Seed Customer Assignments ----
+async function seedCustomerAssignments() {
+  const scmWorker = await db.user.findFirst({ where: { email: 'scm@cerebree.io' } });
+  const scmWorker2 = await db.user.findFirst({ where: { email: 'scm2@cerebree.io' } });
+  const financeOrg = await db.orgNode.findFirst({ where: { name: 'Finance Division' } });
+  const hrOrg = await db.orgNode.findFirst({ where: { name: 'HR Department' } });
+  const opsOrg = await db.orgNode.findFirst({ where: { name: 'Operations Unit' } });
+
+  if (!scmWorker || !financeOrg || !hrOrg) return;
+
+  // Priya (scm) owns Finance + HR
+  await db.customerAssignment.upsert({
+    where: { orgNodeId_userId_role: { orgNodeId: financeOrg.id, userId: scmWorker.id, role: 'SCM_OWNER' } },
+    update: {},
+    create: { orgNodeId: financeOrg.id, userId: scmWorker.id, role: 'SCM_OWNER' },
+  });
+  await db.customerAssignment.upsert({
+    where: { orgNodeId_userId_role: { orgNodeId: hrOrg.id, userId: scmWorker.id, role: 'SCM_OWNER' } },
+    update: {},
+    create: { orgNodeId: hrOrg.id, userId: scmWorker.id, role: 'SCM_OWNER' },
+  });
+
+  // Tomas (scm2) owns Operations + backup on Finance
+  if (scmWorker2 && opsOrg) {
+    await db.customerAssignment.upsert({
+      where: { orgNodeId_userId_role: { orgNodeId: opsOrg.id, userId: scmWorker2.id, role: 'SCM_OWNER' } },
+      update: {},
+      create: { orgNodeId: opsOrg.id, userId: scmWorker2.id, role: 'SCM_OWNER' },
+    });
+    await db.customerAssignment.upsert({
+      where: { orgNodeId_userId_role: { orgNodeId: financeOrg.id, userId: scmWorker2.id, role: 'BACKUP' } },
+      update: {},
+      create: { orgNodeId: financeOrg.id, userId: scmWorker2.id, role: 'BACKUP' },
+    });
+  }
+
+  // Seed SLA escalation policies
+  const policies = await db.slaPolicy.findMany({ take: 5 });
+  for (const p of policies) {
+    await db.slaEscalationPolicy.create({
+      data: { policyId: p.id, thresholdPct: 70, notifyRole: 'SCM_WORKER' },
+    }).catch(() => {});
+    await db.slaEscalationPolicy.create({
+      data: { policyId: p.id, thresholdPct: 90, notifyRole: 'CM_LEADER' },
+    }).catch(() => {});
+  }
+
+  // Initialize sequence counters
+  await db.sequenceCounter.upsert({ where: { key: 'INC' }, update: {}, create: { key: 'INC', value: 0 } });
+  await db.sequenceCounter.upsert({ where: { key: 'REQ' }, update: {}, create: { key: 'REQ', value: 0 } });
+  await db.sequenceCounter.upsert({ where: { key: 'CSM' }, update: {}, create: { key: 'CSM', value: 0 } });
+
+  console.log('  Customer assignments, SLA escalation policies, and sequence counters seeded.');
+}
+
+await seedCustomerAssignments();

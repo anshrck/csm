@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
 export const runtime = 'nodejs';
@@ -95,6 +96,19 @@ export async function POST(
         actorId: session.id,
         actorName: session.name,
         notes: noteText,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_CLOSED',
+      entityType: 'Demand',
+      entityId: id,
+      before: { status: demand.status, closedAt: demand.closedAt },
+      after: {
+        status: 'CLOSED',
+        closedAt: updated.closedAt,
+        declineReason: demand.status === 'QUOTED' ? reason : null,
       },
     });
 

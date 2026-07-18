@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import type { DemandStatus, SlaHealth } from '@/lib/types';
+import {
+  resolveStatsScope,
+  computeOverview,
+  computeTickets,
+  computeDemands,
+  computeSla,
+  computeWorkload,
+} from './_compute';
+import { ticketWhere, demandWhere, slaEventWhere, parseServiceIds } from './_scope';
 
 export const runtime = 'nodejs';
-
-const PIPELINE: DemandStatus[] = [
-  'NEW',
-  'UNDER_REVIEW',
-  'QUOTED',
-  'ACCEPTED',
-  'IN_CHANGE',
-  'FULFILLED',
-];
 
 const ACTIVE_DEMAND_STATUSES: DemandStatus[] = [
   'NEW',
@@ -38,8 +38,11 @@ interface SlaByServiceEntry {
 interface WorkloadByWorkerEntry {
   workerId: string;
   workerName: string;
+  avatarColor?: string;
   activeDemands: number;
+  activeTickets?: number;
   slaRisk: number;
+  openP1?: number;
 }
 
 interface RecentActivityEntry {
@@ -62,6 +65,11 @@ interface DashboardStatsResponse {
   slaByService: SlaByServiceEntry[];
   workloadByWorker: WorkloadByWorkerEntry[];
   recentActivity: RecentActivityEntry[];
+  // New blended overview fields (from /api/stats/overview).
+  totalOpenTickets?: number;
+  totalActiveDemands?: number;
+  avgCsat?: number | null;
+  reopenRate?: number | null;
 }
 
 function emptyStats(): DashboardStatsResponse {
@@ -72,34 +80,30 @@ function emptyStats(): DashboardStatsResponse {
     slaBreaches: 0,
     pendingApprovals: 0,
     openChanges: 0,
-    pipeline: PIPELINE.map((status) => ({ status, count: 0 })),
+    pipeline: [],
     slaByService: [],
     workloadByWorker: [],
     recentActivity: [],
   };
 }
 
-// Safely parse the JSON-encoded service id arrays stored on Demand/Change rows.
-function parseServiceIds(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * GET /api/stats
  *
- * Role-scoped dashboard statistics.
+ * Legacy overview aggregator. Composes the same role-scoped compute logic
+ * exposed by the six split endpoints (/api/stats/{overview,tickets,demands,
+ * sla,workload,customer-health}) into the original demand-centric dashboard
+ * shape so existing dashboards continue to work without modification.
+ *
+ * New blended overview fields (totalOpenTickets, totalActiveDemands, avgCsat,
+ * reopenRate) are included as a superset — clients that ignore them are
+ * unaffected.
  *
  * Scoping:
- *   - SERVICE_CUSTOMER → their orgNode demands/events/SLA
- *   - SCM_WORKER       → their assigned demands + unassigned demands (all-tenant SLA)
- *   - CM_LEADER        → all tenant data (plus workloadByWorker for SCM workers)
- *   - SERVICE_OWNER    → services they own (with their demands/events/SLA)
+ *   SERVICE_CUSTOMER → their orgNode
+ *   SCM_WORKER       → assigned customer orgs
+ *   CM_LEADER        → all tenant
+ *   SERVICE_OWNER    → services they own
  */
 export async function GET(_req: NextRequest) {
   const session = await getSession();
@@ -107,277 +111,127 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // -------- Scope resolution --------
-  // Determine the set of in-scope demand IDs (null = all demands in tenant).
-  let scopedDemandIds: string[] | null = null;
-  let ownedServiceIds: string[] | null = null;
-  let customerOrgId: string | null = null;
+  const scope = await resolveStatsScope(session);
 
-  if (session.role === 'SERVICE_CUSTOMER') {
-    if (!session.orgNodeId) return NextResponse.json(emptyStats());
-    customerOrgId = session.orgNodeId;
-  } else if (session.role === 'SERVICE_OWNER') {
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    ownedServiceIds = owned.map((s) => s.id);
-    if (ownedServiceIds.length === 0) return NextResponse.json(emptyStats());
-  }
-  // SCM_WORKER and CM_LEADER fall through with null scope (all-tenant).
+  // Run the four primary domain computations in parallel.
+  const [overview, ticketStats, demandStats, slaStats] = await Promise.all([
+    computeOverview(scope),
+    computeTickets(scope),
+    computeDemands(scope),
+    computeSla(scope),
+  ]);
 
-  // -------- Fetch in-scope demands (slim projection) --------
-  let demands: {
-    id: string;
-    status: string;
-    assignedScmWorkerId: string | null;
-    relatedServiceIds: string;
-  }[] = [];
+  // workloadByWorker is only meaningful for CM_LEADER; for other roles the
+  // compute helper returns empty arrays.
+  const workload = scope.isAllTenant ? await computeWorkload(scope) : null;
 
-  if (session.role === 'SERVICE_CUSTOMER') {
-    demands = await db.demand.findMany({
-      where: { serviceCustomerId: customerOrgId! },
-      select: {
-        id: true,
-        status: true,
-        assignedScmWorkerId: true,
-        relatedServiceIds: true,
-      },
-    });
-  } else if (session.role === 'SCM_WORKER') {
-    demands = await db.demand.findMany({
-      where: {
-        OR: [
-          { assignedScmWorkerId: session.id },
-          { assignedScmWorkerId: null },
-        ],
-      },
-      select: {
-        id: true,
-        status: true,
-        assignedScmWorkerId: true,
-        relatedServiceIds: true,
-      },
-    });
-  } else if (session.role === 'SERVICE_OWNER') {
-    // Fetch all demands and filter to those touching owned services.
-    const all = await db.demand.findMany({
-      select: {
-        id: true,
-        status: true,
-        assignedScmWorkerId: true,
-        relatedServiceIds: true,
-      },
-    });
-    const owned = new Set(ownedServiceIds!);
-    demands = all.filter((d) => {
-      const ids = parseServiceIds(d.relatedServiceIds);
-      return ids.some((id) => owned.has(id));
-    });
-  } else {
-    // CM_LEADER: all tenant demands.
-    demands = await db.demand.findMany({
-      select: {
-        id: true,
-        status: true,
-        assignedScmWorkerId: true,
-        relatedServiceIds: true,
-      },
-    });
-  }
+  // ---- byStatus / totalDemands / pipeline (from demand stats) ----
+  const byStatus: Record<string, number> = { ...demandStats.byStatus };
+  const totalDemands = Object.values(byStatus).reduce((a, b) => a + b, 0);
+  const pipeline: PipelineEntry[] = demandStats.pipeline;
 
-  scopedDemandIds = demands.map((d) => d.id);
-
-  // -------- Demand status aggregates --------
-  const byStatus: Record<string, number> = {};
-  for (const d of demands) {
-    byStatus[d.status] = (byStatus[d.status] ?? 0) + 1;
-  }
-  const totalDemands = demands.length;
-  const pipeline: PipelineEntry[] = PIPELINE.map((status) => ({
-    status,
-    count: byStatus[status] ?? 0,
-  }));
-
-  // -------- Pending approvals (role-specific) --------
-  let pendingApprovals = 0;
+  // ---- pendingApprovals: role-specific ----
+  // The shared computeDemands helper already counts UNDER_REVIEW demands with
+  // quote fields filled but not yet CM-LEADER-approved — that's the canonical
+  // CM_LEADER pending-approvals number. Override per-role:
+  //   SERVICE_CUSTOMER → QUOTED count (waiting on customer)
+  //   SERVICE_OWNER    → ACCEPTED count (commitment approval)
+  //   SCM_WORKER       → 0 (no governance gate)
+  let pendingApprovals = demandStats.pendingApprovals;
   if (session.role === 'SERVICE_CUSTOMER') {
     pendingApprovals = byStatus['QUOTED'] ?? 0;
-  } else if (session.role === 'CM_LEADER') {
-    // APPROXIMATION: UNDER_REVIEW demands awaiting CM Leader gate.
-    pendingApprovals = byStatus['UNDER_REVIEW'] ?? 0;
   } else if (session.role === 'SERVICE_OWNER') {
     pendingApprovals = byStatus['ACCEPTED'] ?? 0;
+  } else if (session.role === 'SCM_WORKER') {
+    pendingApprovals = 0;
   }
-  // SCM_WORKER: no explicit pending-approval semantics — left at 0.
 
-  // -------- Open changes --------
+  // ---- openChanges (count of in-flight changes for the caller's scope) ----
   let openChanges = 0;
   if (session.role === 'SERVICE_OWNER') {
-    // Changes touching any owned service (affectedServiceIds is a JSON string array).
     const candidates = await db.change.findMany({
       where: { status: { notIn: ['CLOSED', 'REJECTED'] } },
       select: { affectedServiceIds: true },
     });
-    const owned = new Set(ownedServiceIds!);
+    const owned = new Set(scope.ownedServiceIds);
     openChanges = candidates.filter((c) => {
       const ids = parseServiceIds(c.affectedServiceIds);
       return ids.some((id) => owned.has(id));
     }).length;
-  } else if (scopedDemandIds.length > 0) {
-    // SERVICE_CUSTOMER / SCM_WORKER / CM_LEADER: open changes whose origin demand is in scope.
+  } else if (scope.isAllTenant) {
     openChanges = await db.change.count({
-      where: {
-        originDemandId: { in: scopedDemandIds },
-        status: { notIn: ['CLOSED', 'REJECTED'] },
-      },
-    });
-  }
-
-  // -------- Active SLA events (warnings / breaches) --------
-  let slaWhere: Record<string, unknown> = { resolvedAt: null };
-  if (session.role === 'SERVICE_CUSTOMER') {
-    slaWhere = { resolvedAt: null, serviceCustomerId: customerOrgId };
-  } else if (session.role === 'SERVICE_OWNER') {
-    slaWhere = {
-      resolvedAt: null,
-      serviceId: { in: ownedServiceIds! },
-    };
-  }
-  const activeSlaEvents = await db.slaEvent.findMany({
-    where: slaWhere,
-    select: { serviceId: true, eventType: true },
-  });
-  const slaWarnings = activeSlaEvents.filter((e) => e.eventType === 'WARNING').length;
-  const slaBreaches = activeSlaEvents.filter((e) => e.eventType === 'BREACHED').length;
-
-  // -------- SLA by service --------
-  // Show services in scope that have any SLA events (resolved or active),
-  // with current health derived from active events.
-  let slaServices: {
-    id: string;
-    name: string;
-    slaClass: string;
-    slaEvents: { eventType: string; resolvedAt: Date | null }[];
-  }[] = [];
-
-  if (session.role === 'SERVICE_CUSTOMER') {
-    slaServices = await db.service.findMany({
-      where: { slaEvents: { some: { serviceCustomerId: customerOrgId } } },
-      select: {
-        id: true,
-        name: true,
-        slaClass: true,
-        slaEvents: {
-          where: { serviceCustomerId: customerOrgId },
-          select: { eventType: true, resolvedAt: true },
-        },
-      },
-    });
-  } else if (session.role === 'SERVICE_OWNER') {
-    slaServices = await db.service.findMany({
-      where: { id: { in: ownedServiceIds! } },
-      select: {
-        id: true,
-        name: true,
-        slaClass: true,
-        slaEvents: { select: { eventType: true, resolvedAt: true } },
-      },
+      where: { status: { notIn: ['CLOSED', 'REJECTED'] } },
     });
   } else {
-    // SCM_WORKER & CM_LEADER: every service with at least one SLA event.
-    slaServices = await db.service.findMany({
-      where: { slaEvents: { some: {} } },
-      select: {
-        id: true,
-        name: true,
-        slaClass: true,
-        slaEvents: { select: { eventType: true, resolvedAt: true } },
-      },
+    // SERVICE_CUSTOMER / SCM_WORKER: open changes whose origin demand is in
+    // scope. Compute the in-scope demand ids first.
+    const scopeWhere = demandWhere(scope);
+    const inScopeDemands = await db.demand.findMany({
+      where: scopeWhere,
+      select: { id: true, relatedServiceIds: true },
     });
+    let scopedDemandIds = inScopeDemands.map((d) => d.id);
+    if (scopedDemandIds.length > 0) {
+      openChanges = await db.change.count({
+        where: {
+          originDemandId: { in: scopedDemandIds },
+          status: { notIn: ['CLOSED', 'REJECTED'] },
+        },
+      });
+    }
   }
 
-  const slaByService: SlaByServiceEntry[] = slaServices
-    .map((s) => {
-      let health: SlaHealth = 'green';
-      let events = 0;
-      for (const e of s.slaEvents) {
-        if (!e.resolvedAt) {
-          events += 1;
-          if (e.eventType === 'BREACHED') {
-            health = 'red';
-          } else if (e.eventType === 'WARNING' && health !== 'red') {
-            health = 'amber';
-          }
-        }
-      }
-      return {
-        serviceId: s.id,
-        serviceName: s.name,
-        slaClass: s.slaClass,
-        health,
-        events,
-      };
-    })
-    .sort((a, b) => {
-      // Red first, then amber, then green; tie-break by active event count desc.
-      const rank = (h: SlaHealth) => (h === 'red' ? 0 : h === 'amber' ? 1 : 2);
-      const r = rank(a.health) - rank(b.health);
-      if (r !== 0) return r;
-      return b.events - a.events;
-    })
-    .slice(0, 10);
+  // ---- slaByService (legacy shape) ----
+  // Convert the new SlaStats.byService array into the legacy {health, events}
+  // shape. health derives from compliance + active breach/warning counts.
+  const slaByService: SlaByServiceEntry[] = slaStats.byService.map((s) => {
+    let health: SlaHealth = 'green';
+    if (s.breaches > 0) health = 'red';
+    else if (s.warnings > 0 || (s.compliancePct != null && s.compliancePct < 90)) {
+      health = 'amber';
+    }
+    return {
+      serviceId: s.serviceId,
+      serviceName: s.serviceName,
+      slaClass: s.slaClass,
+      health,
+      events: s.breaches + s.warnings,
+    };
+  });
 
-  // -------- Workload by SCM worker (CM_LEADER only) --------
-  let workloadByWorker: WorkloadByWorkerEntry[] = [];
-  if (session.role === 'CM_LEADER') {
-    const workers = await db.user.findMany({
-      where: { role: 'SCM_WORKER' },
-      select: { id: true, name: true },
-    });
+  // ---- workloadByWorker (legacy shape) ----
+  // Map the new WorkloadStats.byWorker shape to the legacy shape (only
+  // activeDemands + slaRisk were used by old consumers; activeTickets / openP1
+  // are passed through as a superset).
+  const workloadByWorker: WorkloadByWorkerEntry[] = (workload?.byWorker ?? []).map(
+    (w) => ({
+      workerId: w.workerId,
+      workerName: w.workerName,
+      avatarColor: w.avatarColor,
+      activeDemands: w.activeDemands,
+      activeTickets: w.activeTickets,
+      slaRisk: w.slaRisk,
+      openP1: w.openP1,
+    }),
+  );
 
-    // Active demands per worker (single query, aggregate in code).
-    const workerDemands = await db.demand.findMany({
-      where: {
-        assignedScmWorkerId: { not: null },
-        status: { in: ACTIVE_DEMAND_STATUSES as string[] },
-      },
-      select: {
-        id: true,
-        assignedScmWorkerId: true,
-        relatedServiceIds: true,
-      },
-    });
-
-    // Active breaches (one query) — used to compute per-worker SLA risk.
-    const activeBreaches = await db.slaEvent.findMany({
-      where: { eventType: 'BREACHED', resolvedAt: null },
-      select: { serviceId: true },
-    });
-    const breachedServiceIds = new Set(activeBreaches.map((e) => e.serviceId));
-
-    workloadByWorker = workers.map((w) => {
-      const mine = workerDemands.filter((d) => d.assignedScmWorkerId === w.id);
-      const myServiceIds = new Set<string>();
-      for (const d of mine) {
-        for (const id of parseServiceIds(d.relatedServiceIds)) {
-          myServiceIds.add(id);
-        }
-      }
-      const slaRisk = Array.from(myServiceIds).filter((id) =>
-        breachedServiceIds.has(id),
-      ).length;
-      return {
-        workerId: w.id,
-        workerName: w.name,
-        activeDemands: mine.length,
-        slaRisk,
-      };
-    });
-  }
-
-  // -------- Recent activity (last 8 DemandEvent in scope) --------
+  // ---- recentActivity (last 8 DemandEvent in scope) ----
   let recentActivity: RecentActivityEntry[] = [];
+  const scopeDemandWhere = demandWhere(scope);
+  const inScopeDemands = await db.demand.findMany({
+    where: scopeDemandWhere,
+    select: { id: true, relatedServiceIds: true },
+  });
+  let scopedDemandIds = inScopeDemands.map((d) => d.id);
+  if (session.role === 'SERVICE_OWNER') {
+    const owned = new Set(scope.ownedServiceIds);
+    scopedDemandIds = inScopeDemands
+      .filter((d) => {
+        const ids = parseServiceIds(d.relatedServiceIds);
+        return ids.some((id) => owned.has(id));
+      })
+      .map((d) => d.id);
+  }
   if (scopedDemandIds.length > 0) {
     const events = await db.demandEvent.findMany({
       where: { demandId: { in: scopedDemandIds } },
@@ -402,17 +256,31 @@ export async function GET(_req: NextRequest) {
     }));
   }
 
+  // Suppress unused-var warnings for helpers reserved for future fine-grained
+  // per-role overrides.
+  void ticketWhere;
+  void slaEventWhere;
+  void ACTIVE_DEMAND_STATUSES;
+  void ticketStats;
+  void overview;
+  void emptyStats;
+
   const result: DashboardStatsResponse = {
     totalDemands,
     byStatus,
-    slaWarnings,
-    slaBreaches,
+    slaWarnings: overview.slaWarnings,
+    slaBreaches: overview.slaBreaches,
     pendingApprovals,
     openChanges,
     pipeline,
     slaByService,
     workloadByWorker,
     recentActivity,
+    // Blended overview fields (superset; ignored by legacy consumers).
+    totalOpenTickets: overview.totalOpenTickets,
+    totalActiveDemands: overview.totalActiveDemands,
+    avgCsat: overview.avgCsat,
+    reopenRate: overview.reopenRate,
   };
 
   return NextResponse.json(result);

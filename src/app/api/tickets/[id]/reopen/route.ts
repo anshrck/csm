@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { isAgent } from '../../_helpers';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import {
   TICKET_INCLUDE,
   serializeTicket,
@@ -13,9 +14,13 @@ import {
 export const runtime = 'nodejs';
 
 // POST /api/tickets/[id]/reopen
-// Body: { notes? }
+// Body: { notes?, reopenReason? }
 //
-// Transition: RESOLVED | CLOSED → IN_PROGRESS.
+// Transition:
+//   - RESOLVED → IN_PROGRESS (anyone with entity access — customers included).
+//   - CLOSED   → IN_PROGRESS (state machine requires reopenReason; only
+//                CM_LEADER or SERVICE_CUSTOMER may reopen from CLOSED).
+//
 // Restarts SLA clocks: clocks that were MET/BREACHED/PAUSED get a fresh
 // `startedAt = now`, `dueAt = now + policy.{response|resolution}Mins`, and
 // status RUNNING.
@@ -37,39 +42,44 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    // Scope: SERVICE_CUSTOMER may reopen only their own org's tickets.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (session.orgNodeId !== ticket.serviceCustomerId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    } else if (session.role === 'SCM_WORKER') {
-      const allowed =
-        ticket.assignedUserId === session.id ||
-        ticket.assignedUserId === null ||
-        (await db.demand.findFirst({
-          where: { assignedScmWorkerId: session.id, serviceCustomerId: ticket.serviceCustomerId },
-          select: { id: true },
-        })) !== null;
-      if (!allowed) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    }
-
-    if (ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED') {
-      return NextResponse.json(
-        { error: `Ticket must be RESOLVED or CLOSED to reopen (current: ${ticket.status})` },
-        { status: 409 },
-      );
-    }
-
     const body = await req.json().catch(() => ({}));
+
+    // Reopening from CLOSED requires CM_LEADER or SERVICE_CUSTOMER role.
+    const currentStatus = ticket.status as TicketStatus;
+    if (currentStatus === 'CLOSED') {
+      if (session.role !== 'CM_LEADER' && session.role !== 'SERVICE_CUSTOMER') {
+        return NextResponse.json(
+          { error: 'Only CM Leaders or Service Customers may reopen a CLOSED ticket' },
+          { status: 403 },
+        );
+      }
+    }
+
+    // State-machine validation — reopen from CLOSED requires reopenReason.
+    const targetStatus = ACTION_TO_STATUS.reopen;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
+    }
+
     const notes =
       typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim() : null;
+    const reopenReason =
+      typeof body.reopenReason === 'string' && body.reopenReason.trim()
+        ? body.reopenReason.trim()
+        : null;
 
     const before = {
       status: ticket.status,
@@ -108,7 +118,7 @@ export async function POST(
     const updated = await db.ticket.update({
       where: { id },
       data: {
-        status: 'IN_PROGRESS',
+        status: targetStatus,
         // Keep resolutionCode/Notes as a historical record — the ticket is
         // being reopened because the resolution didn't stick.
         resolvedAt: null,
@@ -117,13 +127,17 @@ export async function POST(
       include: TICKET_INCLUDE,
     });
 
+    const eventNotes = reopenReason
+      ? `Ticket reopened by ${session.name}. Reason: ${reopenReason}. ${restartedCount} SLA clock(s) restarted.`
+      : notes ?? `Ticket reopened by ${session.name}. ${restartedCount} SLA clock(s) restarted.`;
+
     await db.ticketEvent.create({
       data: {
         ticketId: id,
         eventType: 'REOPENED',
         actorId: session.id,
         actorName: session.name,
-        notes: notes ?? `Ticket reopened by ${session.name}. ${restartedCount} SLA clock(s) restarted.`,
+        notes: eventNotes,
       },
     });
 
@@ -142,11 +156,15 @@ export async function POST(
 
     await auditLog({
       actor: session,
-      action: 'TICKET_REOPEN',
+      action: 'TICKET_REOPENED',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: { status: 'IN_PROGRESS', restartedClocks: restartedCount },
+      before: { ...before, status: currentStatus },
+      after: {
+        status: targetStatus,
+        restartedClocks: restartedCount,
+        reopenReason,
+      },
     });
 
     return NextResponse.json(serializeTicket(updated as TicketWithRelations));

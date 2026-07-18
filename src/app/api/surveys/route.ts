@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { canAccessEntity, type EntityType } from '@/lib/entity-access';
 import type { Role } from '@/lib/types';
 import {
   SURVEY_INCLUDE,
   asSurveyEntityType,
   errorResponse,
   serializeSurvey,
+  type SurveyEntityType,
 } from './_serialize';
 
 export const runtime = 'nodejs';
@@ -17,8 +19,12 @@ export const runtime = 'nodejs';
 //   SERVICE_CUSTOMER → only their own surveys (customerId = session.id).
 //   CM_LEADER        → all surveys.
 //   SERVICE_OWNER    → surveys for entities tied to services they own.
-//   SCM_WORKER       → surveys for demands assigned to them (read-only
-//                       visibility into customer sentiment).
+//   SCM_WORKER       → surveys for demands/tickets in their assigned scope.
+//
+// When an `entityId` is supplied, the caller must also pass the
+// entity-access gate (read) on the underlying entity before the survey is
+// returned — survey results reveal customer sentiment and must be gated the
+// same way as the entity itself.
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -28,6 +34,14 @@ export async function GET(req: NextRequest) {
     const entityType = asSurveyEntityType(sp.get('entityType'));
     const entityId = sp.get('entityId') ?? undefined;
     const customerId = sp.get('customerId') ?? undefined;
+
+    // Per-entity gate — verify the caller can read the underlying entity.
+    if (entityType && entityId) {
+      const ok = await canAccessEntity(session, entityType as EntityType, entityId, 'read');
+      if (!ok) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
 
     const where: Record<string, unknown> = { AND: [] };
     const and = where.AND as Array<Record<string, unknown>>;
@@ -117,7 +131,8 @@ export async function GET(req: NextRequest) {
 // POST /api/surveys — create a CSAT survey.
 // Body: { entityType, entityId, rating: 1-5, comment? }
 // SERVICE_CUSTOMER only. Validates the entity is owned by the customer's
-// orgNode. Unique on [entityType, entityId, customerId] — returns 409 if a
+// orgNode (entity-access helper verifies this on the underlying entity).
+// Unique on [entityType, entityId, customerId] — returns 409 if a
 // survey already exists.
 //
 // Side effects:
@@ -153,11 +168,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Ownership check — the customer's orgNode must own the entity.
+    // The entity-access helper already encodes this for SERVICE_CUSTOMER.
     if (!session.orgNodeId) {
       return NextResponse.json({ error: 'Forbidden — no customer org on session' }, { status: 403 });
     }
-    const owns = await customerOwnsEntity(session.orgNodeId, entityType, entityId);
-    if (!owns) {
+    const canAccess = await canAccessEntity(
+      session,
+      entityType as EntityType,
+      entityId,
+      'write',
+    );
+    if (!canAccess) {
       return NextResponse.json(
         { error: 'Forbidden — you can only survey entities owned by your organization' },
         { status: 403 },
@@ -183,7 +204,7 @@ export async function POST(req: NextRequest) {
 
     const created = await db.satisfactionSurvey.create({
       data: {
-        entityType,
+        entityType: entityType as SurveyEntityType,
         entityId,
         customerId: session.id,
         rating,
@@ -228,28 +249,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(serializeSurvey(created), { status: 201 });
   } catch (err) {
     return errorResponse(err);
-  }
-}
-
-async function customerOwnsEntity(
-  orgNodeId: string,
-  entityType: 'TICKET' | 'DEMAND',
-  entityId: string,
-): Promise<boolean> {
-  try {
-    if (entityType === 'TICKET') {
-      const t = await db.ticket.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(t && t.serviceCustomerId === orgNodeId);
-    }
-    const d = await db.demand.findUnique({
-      where: { id: entityId },
-      select: { serviceCustomerId: true },
-    });
-    return Boolean(d && d.serviceCustomerId === orgNodeId);
-  } catch {
-    return false;
   }
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
@@ -13,9 +15,11 @@ import {
 export const runtime = 'nodejs';
 
 // POST /api/tickets/[id]/waiting
-// Body: { notes? }
+// Body: { comment: string (required, customer-visible), notes? }
 //
 // Transition: IN_PROGRESS | ASSIGNED | TRIAGED → WAITING_CUSTOMER.
+// Requires a customer-visible `comment` (state-machine enforced). The comment
+// is posted to the ticket's conversation thread + a TicketEvent is emitted.
 // Pauses all RUNNING SLA clocks.
 // Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
@@ -33,22 +37,29 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    if (ticket.status === 'WAITING_CUSTOMER') {
-      return NextResponse.json({ error: 'Ticket is already waiting on customer' }, { status: 409 });
-    }
-    if (ticket.status === 'RESOLVED' || ticket.status === 'CLOSED' || ticket.status === 'CANCELED') {
-      return NextResponse.json(
-        { error: `Cannot wait on a ${ticket.status} ticket` },
-        { status: 409 },
-      );
+    const body = await req.json().catch(() => ({}));
+
+    // State-machine validation — requires a customer-visible `comment`.
+    const currentStatus = ticket.status as TicketStatus;
+    const targetStatus = ACTION_TO_STATUS.waiting;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
     }
 
-    const body = await req.json().catch(() => ({}));
+    const commentText = String(body.comment).trim();
     const notes =
       typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim() : null;
 
@@ -68,7 +79,7 @@ export async function POST(
 
     const updated = await db.ticket.update({
       where: { id },
-      data: { status: 'WAITING_CUSTOMER' },
+      data: { status: targetStatus },
       include: TICKET_INCLUDE,
     });
 
@@ -82,13 +93,45 @@ export async function POST(
       },
     });
 
+    // Post the customer-visible comment to the ticket's conversation thread.
+    try {
+      let conv = await db.conversation.findFirst({
+        where: { entityType: 'TICKET', entityId: id },
+      });
+      if (!conv) {
+        conv = await db.conversation.create({
+          data: {
+            entityType: 'TICKET',
+            entityId: id,
+            serviceCustomerId: ticket.serviceCustomerId,
+          },
+        });
+      }
+      await db.comment.create({
+        data: {
+          conversationId: conv.id,
+          authorId: session.id,
+          authorName: session.name,
+          visibility: 'CUSTOMER_VISIBLE',
+          body: commentText,
+        },
+      });
+      await db.conversation.update({
+        where: { id: conv.id },
+        data: { updatedAt: new Date() },
+      });
+    } catch (e) {
+      // Best-effort — the comment thread is secondary to the status transition.
+      console.error('[tickets/waiting] failed to post comment to conversation:', e);
+    }
+
     await auditLog({
       actor: session,
       action: 'TICKET_WAITING',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: { status: 'WAITING_CUSTOMER', pausedClocks: clocks.length },
+      before: { status: currentStatus },
+      after: { status: targetStatus, pausedClocks: clocks.length, comment: commentText.slice(0, 200) },
     });
 
     return NextResponse.json(serializeTicket(updated as TicketWithRelations));

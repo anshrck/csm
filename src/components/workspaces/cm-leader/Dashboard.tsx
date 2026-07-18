@@ -19,8 +19,6 @@ import {
   Days,
   Button,
   Badge,
-  Card,
-  CardContent,
 } from '@/components/shared';
 import { WorkloadBars } from '@/components/widgets';
 import {
@@ -36,6 +34,9 @@ import {
   CheckCircle2,
   AlertOctagon,
   Activity,
+  Hourglass,
+  Star,
+  Scale,
 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import {
@@ -46,6 +47,83 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { Demand, Change, SlaEvent, Service } from '@/lib/types';
+import type { Ticket } from '@/lib/tickets';
+import type { SatisfactionSurvey } from '@/app/api/surveys/_serialize';
+
+/* ----------------------------- Stats response types ----------------------------- */
+
+interface OverviewResponse {
+  totalOpenTickets: number;
+  totalActiveDemands: number;
+  slaBreaches: number;
+  slaWarnings: number;
+  avgCsat: number | null;
+  reopenRate: number | null;
+  workloadByWorker: {
+    workerId: string;
+    workerName: string;
+    avatarColor?: string;
+    activeTickets: number;
+    activeDemands: number;
+    slaRisk: number;
+    openP1: number;
+  }[];
+}
+
+interface TicketsStatsResponse {
+  byStatus: Record<string, number>;
+  unassigned: number;
+  waitingCustomer: number;
+  reopened: number;
+  slaBreached: number;
+  aging: {
+    '0-1d': number;
+    '1-3d': number;
+    '3-7d': number;
+    '7-14d': number;
+    '14d+': number;
+  };
+}
+
+interface DemandsStatsResponse {
+  byStatus: Record<string, number>;
+  pendingApprovals: number;
+  awaitingCustomer: number;
+  inChange: number;
+}
+
+interface WorkloadStatsResponse {
+  byWorker: {
+    workerId: string;
+    workerName: string;
+    avatarColor: string;
+    activeTickets: number;
+    activeDemands: number;
+    slaRisk: number;
+    openP1: number;
+  }[];
+  byGroup: { groupId: string; groupName: string; activeTickets: number }[];
+  unassignedCount: number;
+  overdueCount: number;
+}
+
+interface SlaClockRow {
+  id: string;
+  ticketId: string;
+  ticketNumber: string;
+  ticketTitle: string;
+  ticketStatus: string;
+  ticketPriority: string;
+  ticketType: string;
+  serviceName: string | null;
+  serviceCustomerName: string | null;
+  type: string;
+  status: string;
+  startedAt: string;
+  dueAt: string;
+  remainingMins: number | null;
+  percentRemaining: number | null;
+}
 
 /* ----------------------------- Shared types ----------------------------- */
 
@@ -54,7 +132,6 @@ interface WorkloadItem {
   workerName: string;
   avatarColor?: string;
   activeDemands: number;
-  // The /api/stats response uses `slaRisk`; `riskCount` is kept for resilience.
   slaRisk?: number;
   riskCount?: number;
   byStatus?: Record<string, number>;
@@ -133,6 +210,7 @@ export function useApproveQuote() {
     mutationFn: (id: string) => apiPost(`/api/demands/${id}/approve-quote`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cm-leader'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
       toast.success('Quote approved — issued to customer');
     },
     onError: (e: Error) => toast.error(e.message || 'Failed to approve quote'),
@@ -155,25 +233,66 @@ export function daysSince(dateStr: string | null): number | null {
 export default function Dashboard() {
   const { navigate } = useApp();
   const demandsQ = useDemands();
-  const statsQ = useLeaderStats();
   const slaQ = useSlaEvents();
   const changesQ = useChanges();
 
-  // Open tickets across the tenant (CM Leader sees all).
-  const openTicketsQ = useQuery<Array<{ id: string; status: string }>>({
-    queryKey: ['tickets', 'cm-leader-dashboard', 'open'],
-    queryFn: () =>
-      apiGet('/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER'),
+  // New split-endpoint stats.
+  const overviewQ = useQuery<OverviewResponse>({
+    queryKey: ['stats', 'overview'],
+    queryFn: () => apiGet<OverviewResponse>('/api/stats/overview'),
     staleTime: 30_000,
   });
-  const openTicketCount = openTicketsQ.data?.length ?? 0;
-  const newTicketCount =
-    openTicketsQ.data?.filter((t) => t.status === 'NEW').length ?? 0;
+  const ticketStatsQ = useQuery<TicketsStatsResponse>({
+    queryKey: ['stats', 'tickets'],
+    queryFn: () => apiGet<TicketsStatsResponse>('/api/stats/tickets'),
+    staleTime: 30_000,
+  });
+  const demandStatsQ = useQuery<DemandsStatsResponse>({
+    queryKey: ['stats', 'demands'],
+    queryFn: () => apiGet<DemandsStatsResponse>('/api/stats/demands'),
+    staleTime: 30_000,
+  });
+  const workloadQ = useQuery<WorkloadStatsResponse>({
+    queryKey: ['stats', 'workload'],
+    queryFn: () => apiGet<WorkloadStatsResponse>('/api/stats/workload'),
+    staleTime: 30_000,
+  });
+
+  // Breach-risk SLA clocks (BREACHED + RUNNING with low percent remaining).
+  const breachClocksQ = useQuery<SlaClockRow[]>({
+    queryKey: ['sla-clocks', 'cm-leader', 'breach-risk'],
+    queryFn: () =>
+      apiGet<SlaClockRow[]>('/api/sla-clocks?status=BREACHED,RUNNING&overdue=1'),
+    staleTime: 30_000,
+  });
+
+  // Aging backlog — open tickets older than 3 days.
+  const agingTicketsQ = useQuery<Ticket[]>({
+    queryKey: ['tickets', 'cm-leader', 'aging'],
+    queryFn: () =>
+      apiGet<Ticket[]>(
+        '/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER&sort=age&limit=300',
+      ),
+    staleTime: 30_000,
+  });
+
+  // CSAT follow-ups — surveys with rating <= 3 (detractors).
+  const surveysQ = useQuery<SatisfactionSurvey[]>({
+    queryKey: ['surveys', 'cm-leader', 'all'],
+    queryFn: () => apiGet<SatisfactionSurvey[]>('/api/surveys'),
+    staleTime: 60_000,
+  });
 
   const demands = demandsQ.data ?? [];
-  const stats = statsQ.data;
   const slaEvents = slaQ.data ?? [];
   const changes = changesQ.data ?? [];
+  const overview = overviewQ.data;
+  const ticketStats = ticketStatsQ.data;
+  const demandStats = demandStatsQ.data;
+  const workload = workloadQ.data;
+  const breachClocks = breachClocksQ.data ?? [];
+  const agingTickets = agingTicketsQ.data ?? [];
+  const surveys = surveysQ.data ?? [];
 
   const unassigned = useMemo(
     () => demands.filter((d) => !d.assignedScmWorkerId && d.status === 'NEW'),
@@ -204,7 +323,38 @@ export default function Dashboard() {
   const breaches = slaEvents.filter((e) => e.eventType === 'BREACHED' && !e.resolvedAt);
   const openChanges = changes.filter((c) => c.status !== 'CLOSED' && c.status !== 'REJECTED');
 
-  const isLoading = demandsQ.isLoading || statsQ.isLoading;
+  // Aging buckets — from the new tickets stats endpoint (covers all scoped
+  // tickets, not just the first 300 fetched above).
+  const agingBuckets = ticketStats?.aging;
+  const agingBacklogTotal = agingBuckets
+    ? (agingBuckets['3-7d'] ?? 0) +
+      (agingBuckets['7-14d'] ?? 0) +
+      (agingBuckets['14d+'] ?? 0)
+    : 0;
+
+  // CSAT follow-ups — detractor surveys (rating <= 3).
+  const detractorSurveys = useMemo(
+    () => surveys.filter((s) => s.rating <= 3).slice(0, 10),
+    [surveys],
+  );
+
+  // Workload imbalance — workers with slaRisk > 0 OR activeTickets > 8.
+  const workloadImbalanceCount = useMemo(() => {
+    return (workload?.byWorker ?? []).filter(
+      (w) => w.slaRisk > 0 || w.activeTickets > 8,
+    ).length;
+  }, [workload]);
+
+  const isLoading = demandsQ.isLoading || overviewQ.isLoading;
+
+  // Workload items for the WorkloadBars widget.
+  const workloadItems = useMemo(() => {
+    return (workload?.byWorker ?? []).map((w) => ({
+      name: w.workerName,
+      count: w.activeTickets,
+      risk: w.slaRisk,
+    }));
+  }, [workload]);
 
   return (
     <div className="space-y-6">
@@ -219,52 +369,45 @@ export default function Dashboard() {
         }
       />
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* Operational stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
-          label="Active Demands"
-          value={stats?.totalDemands ?? activeDemands.length}
-          hint="Across all service customers"
-          icon={<FileText className="h-4 w-4" />}
-          onClick={() => navigate('demands')}
-        />
-        <StatCard
-          label="Open Tickets"
-          value={openTicketCount}
-          hint={`${newTicketCount} NEW — awaiting triage`}
-          icon={<Inbox className="h-4 w-4" />}
-          tone={newTicketCount > 0 ? 'warning' : 'default'}
-          onClick={() => navigate('tickets')}
-        />
-        <StatCard
-          label="Unassigned"
-          value={unassigned.length}
-          hint="Awaiting SCM assignment"
-          tone="warning"
-          icon={<Inbox className="h-4 w-4" />}
-          onClick={() => navigate('demands')}
-        />
-        <StatCard
-          label="Pending Quote Approval"
-          value={quoteQueue.length}
-          hint="Your governance gate"
-          tone="warning"
-          icon={<ClipboardCheck className="h-4 w-4" />}
-        />
-        <StatCard
-          label="SLA Breaches"
-          value={breaches.length}
-          hint="Unresolved breach events"
+          label="Breach Risk"
+          value={overviewQ.isLoading ? '—' : overview?.slaBreaches ?? breaches.length}
+          hint={`${overview?.slaWarnings ?? 0} active warnings`}
           tone="danger"
           icon={<AlertTriangle className="h-4 w-4" />}
           onClick={() => navigate('sla')}
         />
         <StatCard
-          label="Open Changes"
-          value={openChanges.length}
-          hint="In progress across tenant"
-          icon={<GitBranch className="h-4 w-4" />}
-          onClick={() => navigate('changes')}
+          label="Aging Backlog"
+          value={ticketStatsQ.isLoading ? '—' : agingBacklogTotal}
+          hint="Open tickets older than 3 days"
+          tone={agingBacklogTotal > 0 ? 'warning' : 'success'}
+          icon={<Hourglass className="h-4 w-4" />}
+          onClick={() => navigate('tickets')}
+        />
+        <StatCard
+          label="Workload Imbalance"
+          value={workloadQ.isLoading ? '—' : workloadImbalanceCount}
+          hint="Workers with SLA risk or >8 tickets"
+          tone={workloadImbalanceCount > 0 ? 'warning' : 'success'}
+          icon={<Scale className="h-4 w-4" />}
+          onClick={() => navigate('workers')}
+        />
+        <StatCard
+          label="Quote Approvals"
+          value={quoteQueue.length}
+          hint="Awaiting your governance gate"
+          tone="warning"
+          icon={<ClipboardCheck className="h-4 w-4" />}
+        />
+        <StatCard
+          label="CSAT Follow-ups"
+          value={detractorSurveys.length}
+          hint="Surveys rated ≤ 3 (detractors)"
+          tone={detractorSurveys.length > 0 ? 'danger' : 'success'}
+          icon={<Star className="h-4 w-4" />}
         />
       </div>
 
@@ -272,22 +415,295 @@ export default function Dashboard() {
         <LoadingState rows={4} />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Quote Approval Queue — governance gate */}
+          {/* Left column: governance queues */}
           <div className="lg:col-span-2 space-y-6">
-            <QuoteApprovalQueue demands={quoteQueue} onReview={(id) => navigate('demand-detail', { id })} />
-            <AwaitingCustomerPanel demands={awaitingCustomer} onOpen={(id) => navigate('demand-detail', { id })} />
+            <QuoteApprovalQueue
+              demands={quoteQueue}
+              onReview={(id) => navigate('demand-detail', { id })}
+            />
+
+            {/* Breach Risk panel */}
+            <SectionCard
+              title="Breach Risk"
+              description="Tickets with breached or near-breach SLA clocks. Steer remediation before customer escalation."
+              actions={
+                <Button variant="ghost" size="sm" onClick={() => navigate('sla')} className="gap-1.5 text-xs">
+                  Open SLM <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              }
+            >
+              {breachClocksQ.isLoading ? (
+                <LoadingState rows={3} />
+              ) : breachClocks.length === 0 ? (
+                <EmptyState
+                  icon={<CheckCircle2 className="h-8 w-8 text-emerald-500" />}
+                  title="No breach risk right now"
+                  description="No SLA clocks are breached or overdue."
+                />
+              ) : (
+                <ul className="divide-y -mx-2 max-h-96 overflow-y-auto scrollbar-thin">
+                  {breachClocks.slice(0, 8).map((c) => {
+                    const isBreached = c.status === 'BREACHED';
+                    return (
+                      <li
+                        key={c.id}
+                        className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors cursor-pointer"
+                        onClick={() => navigate('ticket-detail', { id: c.ticketId })}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-mono text-muted-foreground">
+                                {c.ticketNumber}
+                              </span>
+                              <PriorityDot priority={c.ticketPriority} />
+                              <span className="text-sm font-medium truncate">{c.ticketTitle}</span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                              {c.serviceCustomerName ?? '—'} · {c.serviceName ?? 'General'} ·{' '}
+                              {c.type.toLowerCase()}
+                            </div>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={
+                              isBreached
+                                ? 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 text-[10px] shrink-0'
+                                : 'border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 text-[10px] shrink-0'
+                            }
+                          >
+                            {isBreached ? 'Breached' : 'Overdue'}
+                          </Badge>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </SectionCard>
+
+            {/* Aging Backlog panel */}
+            <SectionCard
+              title="Aging Backlog"
+              description="Open tickets older than 3 days, grouped by age bucket."
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('tickets')}
+                  className="gap-1.5 text-xs"
+                >
+                  Open queue <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              }
+            >
+              {agingBuckets ? (
+                <div className="grid grid-cols-5 gap-2 mb-4">
+                  {(
+                    [
+                      { key: '0-1d', label: '0-1d', tone: 'emerald' },
+                      { key: '1-3d', label: '1-3d', tone: 'teal' },
+                      { key: '3-7d', label: '3-7d', tone: 'amber' },
+                      { key: '7-14d', label: '7-14d', tone: 'orange' },
+                      { key: '14d+', label: '14d+', tone: 'rose' },
+                    ] as const
+                  ).map((b) => {
+                    const count = agingBuckets[b.key as keyof typeof agingBuckets] ?? 0;
+                    const cls = {
+                      emerald: 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300',
+                      teal: 'border-teal-200 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300',
+                      amber: 'border-amber-200 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300',
+                      orange: 'border-orange-200 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300',
+                      rose: 'border-rose-200 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300',
+                    }[b.tone];
+                    return (
+                      <div key={b.key} className={`rounded-md border p-2 text-center ${cls}`}>
+                        <div className="text-lg font-semibold tabular-nums">{count}</div>
+                        <div className="text-[10px] uppercase tracking-wide opacity-80">{b.label}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <LoadingState rows={1} />
+              )}
+
+              {/* Oldest tickets beyond the 3-day threshold */}
+              {(() => {
+                const threeDaysAgo = Date.now() - 3 * 86_400_000;
+                const old = agingTickets
+                  .filter((t) => new Date(t.createdAt).getTime() < threeDaysAgo)
+                  .slice(0, 6);
+                if (old.length === 0) {
+                  return (
+                    <EmptyState
+                      icon={<CheckCircle2 className="h-7 w-7 text-emerald-500" />}
+                      title="No tickets older than 3 days"
+                      description="Backlog is well-managed."
+                    />
+                  );
+                }
+                return (
+                  <ul className="divide-y -mx-2">
+                    {old.map((t) => {
+                      const ageDays = Math.floor(
+                        (Date.now() - new Date(t.createdAt).getTime()) / 86_400_000,
+                      );
+                      return (
+                        <li
+                          key={t.id}
+                          className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors cursor-pointer"
+                          onClick={() => navigate('ticket-detail', { id: t.id })}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-mono text-muted-foreground">
+                                  {t.number}
+                                </span>
+                                <PriorityDot priority={t.priority} />
+                                <span className="text-sm font-medium truncate">{t.title}</span>
+                              </div>
+                              <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                                {t.serviceCustomerName ?? '—'} · {t.serviceName ?? 'General'}
+                              </div>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-900/50 shrink-0"
+                            >
+                              {ageDays}d old
+                            </Badge>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
+            </SectionCard>
+
+            <AwaitingCustomerPanel
+              demands={awaitingCustomer}
+              onOpen={(id) => navigate('demand-detail', { id })}
+            />
             <ChangeStatusFeed demands={inChange} changes={changes} onOpenChange={() => navigate('changes')} />
           </div>
 
-          {/* Right column: unassigned + workload */}
+          {/* Right column: workload + CSAT */}
           <div className="space-y-6">
             <UnassignedPanel
               demands={unassigned}
-              workers={stats?.workloadByWorker ?? []}
+              workers={workload?.byWorker ?? []}
               onOpen={(id) => navigate('demand-detail', { id })}
             />
-            <WorkloadSnapshot workers={stats?.workloadByWorker ?? []} onOpenWorker={() => navigate('workers')} />
-            <SlaHealthOverview slaEvents={slaEvents} services={[]} onOpenSla={() => navigate('sla')} breaches={breaches.length} />
+
+            {/* Workload by Worker — WorkloadBars widget */}
+            <SectionCard
+              title="Workload by Worker"
+              description="Active tickets per SCM worker (risk = SLA breaches on assigned tickets)."
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('workers')}
+                  className="gap-1.5 text-xs"
+                >
+                  Details <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              }
+            >
+              {workloadQ.isLoading ? (
+                <LoadingState rows={3} />
+              ) : workloadItems.length === 0 ? (
+                <EmptyState
+                  title="No workload data"
+                  description="Worker workload will appear here once tickets are assigned."
+                />
+              ) : (
+                <>
+                  <WorkloadBars items={workloadItems} />
+                  <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2 text-center text-xs">
+                    <div>
+                      <div className="text-base font-semibold tabular-nums">
+                        {workload?.unassignedCount ?? 0}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Unassigned
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-base font-semibold tabular-nums text-rose-700 dark:text-rose-300">
+                        {workload?.overdueCount ?? 0}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Overdue
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </SectionCard>
+
+            {/* CSAT Low-Score Follow-ups */}
+            <SectionCard
+              title="CSAT Low-Score Follow-ups"
+              description="Detractor surveys (rating ≤ 3). Reach out and recover the relationship."
+            >
+              {surveysQ.isLoading ? (
+                <LoadingState rows={3} />
+              ) : detractorSurveys.length === 0 ? (
+                <EmptyState
+                  icon={<CheckCircle2 className="h-8 w-8 text-emerald-500" />}
+                  title="No detractors"
+                  description="All recent CSAT ratings are 4★ or higher."
+                />
+              ) : (
+                <ul className="divide-y -mx-2 max-h-80 overflow-y-auto scrollbar-thin">
+                  {detractorSurveys.map((s) => (
+                    <li
+                      key={s.id}
+                      className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors cursor-pointer"
+                      onClick={() => {
+                        if (s.entityType === 'TICKET') {
+                          navigate('ticket-detail', { id: s.entityId });
+                        } else {
+                          navigate('demand-detail', { id: s.entityId });
+                        }
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Star className="h-3.5 w-3.5 text-rose-500 fill-rose-500 shrink-0" />
+                            <span className="text-sm font-medium">{s.rating}/5</span>
+                            <span className="text-xs text-muted-foreground">·</span>
+                            <span className="text-xs text-muted-foreground truncate">
+                              {s.customerName ?? 'Customer'}
+                            </span>
+                          </div>
+                          {s.comment && (
+                            <p className="mt-1 text-xs text-muted-foreground line-clamp-2 italic">
+                              “{s.comment}”
+                            </p>
+                          )}
+                          <div className="mt-0.5 text-[11px] text-muted-foreground">
+                            {s.entityType.toLowerCase()} · <RelativeTime date={s.createdAt} />
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SectionCard>
+
+            <SlaHealthOverview
+              slaEvents={slaEvents}
+              services={[]}
+              onOpenSla={() => navigate('sla')}
+              breaches={breaches.length}
+            />
           </div>
         </div>
       )}
@@ -389,7 +805,7 @@ function UnassignedPanel({
   onOpen,
 }: {
   demands: Demand[];
-  workers: WorkloadItem[];
+  workers: WorkloadStatsResponse['byWorker'];
   onOpen: (id: string) => void;
 }) {
   const assign = useAssignDemand();
@@ -444,10 +860,10 @@ function UnassignedPanel({
                       </SelectItem>
                     ) : (
                       workers
-                        .sort((a, b) => a.activeDemands - b.activeDemands)
+                        .sort((a, b) => a.activeTickets - b.activeTickets)
                         .map((w) => (
                           <SelectItem key={w.workerId} value={w.workerId}>
-                            {w.workerName} · {w.activeDemands} active
+                            {w.workerName} · {w.activeTickets} tickets · {w.activeDemands} demands
                           </SelectItem>
                         ))
                     )}
@@ -584,37 +1000,6 @@ function ChangeStatusFeed({
   );
 }
 
-function WorkloadSnapshot({
-  workers,
-  onOpenWorker,
-}: {
-  workers: WorkloadItem[];
-  onOpenWorker: () => void;
-}) {
-  const items = workers.map((w) => ({
-    name: w.workerName,
-    count: w.activeDemands,
-    risk: w.slaRisk ?? w.riskCount,
-  }));
-  return (
-    <SectionCard
-      title="SCM Workload Snapshot"
-      description="Active demands per SCM Worker."
-      actions={
-        <Button variant="ghost" size="sm" onClick={onOpenWorker}>
-          Details <ArrowRight className="h-3.5 w-3.5" />
-        </Button>
-      }
-    >
-      {workers.length === 0 ? (
-        <EmptyState title="No workload data" description="Workload metrics will appear here once demands are assigned." />
-      ) : (
-        <WorkloadBars items={items} />
-      )}
-    </SectionCard>
-  );
-}
-
 function SlaHealthOverview({
   slaEvents,
   services,
@@ -667,10 +1052,30 @@ function SlaHealthOverview({
         <div className="mt-3 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 dark:bg-rose-950/40 p-2.5">
           <AlertOctagon className="h-4 w-4 text-rose-600 dark:text-rose-400 mt-0.5 shrink-0" />
           <p className="text-xs text-rose-700 dark:text-rose-300">
-            {breaches} unresolved breach{breaches !== 1 ? 's' : ''} require your governance attention.
+            {breaches} unresolved breach{breaches !== 1 ? 'es' : ''} require your governance attention.
           </p>
         </div>
       )}
     </SectionCard>
+  );
+}
+
+/* ----------------------------- Inline helpers ----------------------------- */
+
+function PriorityDot({ priority }: { priority: string }) {
+  const cls =
+    priority === 'P1'
+      ? 'bg-rose-500'
+      : priority === 'P2'
+        ? 'bg-amber-500'
+        : priority === 'P3'
+          ? 'bg-teal-500'
+          : 'bg-sky-500';
+  return (
+    <span
+      className={`inline-block h-2 w-2 rounded-full shrink-0 ${cls}`}
+      title={priority}
+      aria-label={`Priority ${priority}`}
+    />
   );
 }

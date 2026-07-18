@@ -3,6 +3,11 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
 import {
+  canAccessEntity,
+  requireEntityAccess,
+  type EntityType,
+} from '@/lib/entity-access';
+import {
   CONVERSATION_INCLUDE,
   errorResponse,
   serializeComment,
@@ -17,8 +22,8 @@ const VALID_VISIBILITY = new Set(['CUSTOMER_VISIBLE', 'INTERNAL']);
 // Returns the comments on a conversation. SERVICE_CUSTOMER only sees
 // CUSTOMER_VISIBLE comments; all other roles see the full thread.
 //
-// Role scoping on the conversation itself mirrors the conversations GET
-// route: SERVICE_CUSTOMER may only read conversations tied to their orgNode.
+// Role scoping on the conversation itself: the caller must be able to read
+// the underlying entity (TICKET / DEMAND / etc.) referenced by the conversation.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -34,11 +39,14 @@ export async function GET(
     });
     if (!conv) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (!session.orgNodeId || !conv.serviceCustomerId || conv.serviceCustomerId !== session.orgNodeId) {
-        return NextResponse.json({ error: 'Not found' }, { status: 404 });
-      }
-    }
+    // Entity-access gate (read) on the underlying entity.
+    const ok = await canAccessEntity(
+      session,
+      conv.entityType as EntityType,
+      conv.entityId,
+      'read',
+    );
+    if (!ok) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     let comments = conv.comments;
     if (session.role === 'SERVICE_CUSTOMER') {
@@ -79,11 +87,16 @@ export async function POST(
     });
     if (!conv) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // SERVICE_CUSTOMER scope check (mirror GET /api/conversations).
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (!session.orgNodeId || !conv.serviceCustomerId || conv.serviceCustomerId !== session.orgNodeId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Entity-access gate (write) on the underlying entity.
+    try {
+      await requireEntityAccess(
+        session,
+        conv.entityType as EntityType,
+        conv.entityId,
+        'write',
+      );
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));

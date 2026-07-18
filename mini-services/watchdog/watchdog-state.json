@@ -1,15 +1,14 @@
 {
-  "ts": "2026-07-18T13:07:39.705Z",
-  "iteration": 3,
+  "ts": "2026-07-18T13:42:47.642Z",
+  "iteration": 117,
   "serverAlive": true,
+  "restarted": false,
+  "restartOk": false,
   "lintErrors": 0,
   "lintWarnings": 0,
   "lintClean": true,
-  "lintRan": false,
   "newDevErrors": 0,
   "http5xx": 0,
-  "health": "CLEAN",
-  "notificationsProcessed": 0,
-  "notificationsSent": 0,
-  "notificationsFailed": 0
+  "responseMs": 303,
+  "actions": []
 }

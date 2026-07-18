@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -80,6 +81,8 @@ export async function POST(
         : 'MEDIUM';
 
     // Run as a transaction so we never end up with a half-created handover.
+    let createdChangeId: string | null = null;
+    let createdHandoverId: string | null = null;
     await db.$transaction(async (tx) => {
       const change = await tx.change.create({
         data: {
@@ -121,6 +124,23 @@ export async function POST(
           notes: `Handed to CE. Change ${change.id} created (status REQUESTED). Handover ${handover.id} (CM_TO_CE).`,
         },
       });
+
+      createdChangeId = change.id;
+      createdHandoverId = handover.id;
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_HANDED_TO_CE',
+      entityType: 'Demand',
+      entityId: id,
+      before: { status: 'ACCEPTED', changeRequestId: demand.changeRequestId },
+      after: {
+        status: 'IN_CHANGE',
+        changeRequestId: createdChangeId,
+        handoverId: createdHandoverId,
+        affectedServiceIds,
+      },
     });
 
     // Re-fetch with all relations for the response.

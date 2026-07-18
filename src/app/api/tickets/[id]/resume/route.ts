@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
@@ -34,19 +36,28 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    if (ticket.status !== 'WAITING_CUSTOMER') {
-      return NextResponse.json(
-        { error: `Ticket must be WAITING_CUSTOMER to resume (current: ${ticket.status})` },
-        { status: 409 },
-      );
+    const body = await req.json().catch(() => ({}));
+
+    // State-machine validation.
+    const currentStatus = ticket.status as TicketStatus;
+    const targetStatus = ACTION_TO_STATUS.resume;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
     }
 
-    const body = await req.json().catch(() => ({}));
     const notes =
       typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim() : null;
 
@@ -79,7 +90,7 @@ export async function POST(
 
     const updated = await db.ticket.update({
       where: { id },
-      data: { status: 'IN_PROGRESS' },
+      data: { status: targetStatus },
       include: TICKET_INCLUDE,
     });
 
@@ -95,11 +106,11 @@ export async function POST(
 
     await auditLog({
       actor: session,
-      action: 'TICKET_RESUME',
+      action: 'TICKET_RESUMED',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: { status: 'IN_PROGRESS', resumedClocks: resumedCount },
+      before: { status: currentStatus },
+      after: { status: targetStatus, resumedClocks: resumedCount },
     });
 
     return NextResponse.json(serializeTicket(updated as TicketWithRelations));

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -60,6 +61,12 @@ export async function POST(
     const reason =
       typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim() : null;
 
+    const before = {
+      status: demand.status,
+      redirectedToOfferingId: demand.redirectedToOfferingId,
+      rejectionReason: demand.rejectionReason,
+    };
+
     const updated = await db.demand.update({
       where: { id },
       data: {
@@ -77,6 +84,20 @@ export async function POST(
         actorId: session.id,
         actorName: session.name,
         notes: `Redirected to offering "${offering.name}" (service: ${offering.service?.name ?? 'unknown'}).${reason ? ` Reason: ${reason}` : ''}`,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_REDIRECTED',
+      entityType: 'Demand',
+      entityId: id,
+      before,
+      after: {
+        status: 'REDIRECTED',
+        redirectedToOfferingId: offeringId,
+        offeringName: offering.name,
+        reason,
       },
     });
 

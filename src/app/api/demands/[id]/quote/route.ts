@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -82,6 +83,14 @@ export async function POST(
         ? body.quoteNotes.trim()
         : demand.quoteNotes ?? null;
 
+    const before = {
+      status: demand.status,
+      estimatedEffortDays: demand.estimatedEffortDays,
+      estimatedCost: demand.estimatedCost,
+      quoteNotes: demand.quoteNotes,
+      quotedAt: demand.quotedAt,
+    };
+
     const updated = await db.demand.update({
       where: { id },
       data: {
@@ -103,6 +112,20 @@ export async function POST(
         actorId: session.id,
         actorName: session.name,
         notes: `Quote submitted: ${effortDays} day(s)${cost !== null ? `, cost ${cost}` : ''}.${quoteNotes ? ` Notes: ${quoteNotes}` : ''}`,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_QUOTED',
+      entityType: 'Demand',
+      entityId: id,
+      before,
+      after: {
+        status: 'QUOTED',
+        estimatedEffortDays: effortDays,
+        estimatedCost: cost,
+        quoteNotes,
       },
     });
 

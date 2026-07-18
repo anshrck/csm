@@ -1,0 +1,1032 @@
+     1→# Enterprise Workflow Review And Remediation Plan
+     2→
+     3→Date: 2026-07-18
+     4→
+     5→## Scope
+     6→
+     7→This review verifies the project after most remediation work was added.
+     8→
+     9→User says these areas are still excluded or pending:
+    10→
+    11→- Phase 22: Prepare External Integrations
+    12→- Phase 10: Reporting And Analytics
+    13→- Phase 11: Testing
+    14→- Phase 12: Documentation
+    15→
+    16→This file focuses on what still lacks enterprise-grade quality in workflow, roles, features, and views.
+    17→
+    18→## Verification Summary
+    19→
+    20→### What Is Now Present
+    21→
+    22→The repo now includes many of the backend primitives requested in the earlier plan:
+    23→
+    24→- Prisma migrations exist under `prisma/migrations`.
+    25→- Ticket models exist in `prisma/schema.prisma`.
+    26→- SLA policy and SLA clock models exist.
+    27→- Conversation/comment models exist.
+    28→- Attachment model and API exist.
+    29→- Knowledge article model and API exist.
+    30→- Satisfaction survey model and API exist.
+    31→- Permission and role-permission models exist.
+    32→- Audit log model and helper exist.
+    33→- Notification delivery model and API exist.
+    34→- Fonts were changed away from `next/font/google`.
+    35→- `next.config.ts` no longer hides TypeScript build errors.
+    36→- `npm` scripts were improved for normal dev/build/typecheck flows.
+    37→
+    38→### Verification Results
+    39→
+    40→Commands run:
+    41→
+    42→```powershell
+    43→node_modules\.bin\eslint.exe .
+    44→node_modules\.bin\tsc.exe --noEmit --pretty false
+    45→node node_modules\prisma\build\index.js validate
+    46→```
+    47→
+    48→Results:
+    49→
+    50→- ESLint: passed.
+    51→- Prisma schema validation: passed.
+    52→- TypeScript: failed.
+    53→
+    54→Current TypeScript failure:
+    55→
+    56→```text
+    57→.next/dev/types/validator.ts:
+    58→Type 'typeof import("D:/CSM/src/app/api/notifications/deliveries/route")'
+    59→does not satisfy RouteHandlerConfig<"/api/notifications/deliveries">.
+    60→
+    61→src/app/api/notifications/deliveries/[id]/retry/route.ts:
+    62→Cannot find module '../route'
+    63→```
+    64→
+    65→Root cause:
+    66→
+    67→- `src/app/api/notifications/deliveries/route.ts` incorrectly contains a dynamic retry `POST` handler that expects `{ params: { id } }`, but that file is the static `/api/notifications/deliveries` route.
+    68→- `src/app/api/notifications/deliveries/[id]/retry/route.ts` imports from the wrong relative path.
+    69→
+    70→Fix:
+    71→
+    72→1. Remove the dynamic retry `POST` from `src/app/api/notifications/deliveries/route.ts`.
+    73→2. Put the retry logic directly in `src/app/api/notifications/deliveries/[id]/retry/route.ts`.
+    74→3. Do not re-export dynamic route handlers from a static route file.
+    75→4. Re-run `npm run typecheck`.
+    76→
+    77→Acceptance criteria:
+    78→
+    79→- `npm run typecheck` passes.
+    80→- `npm run build` passes.
+    81→- Retry endpoint remains available at `/api/notifications/deliveries/[id]/retry`.
+    82→
+    83→## Enterprise Readiness Assessment
+    84→
+    85→Current state:
+    86→
+    87→The app has more enterprise primitives than before, but the workflow maturity is still not enterprise-grade.
+    88→
+    89→Main reason:
+    90→
+    91→Most new capabilities are backend-only or shallowly implemented. Enterprise CSM quality requires complete role-specific operating views, strict access rules, exact workflow transitions, queue ownership, escalation rules, audit coverage, and visible work surfaces.
+    92→
+    93→## Major Remaining Gaps
+    94→
+    95→## 1. Ticket/Case Management Exists In API But Not In Role Workspaces
+    96→
+    97→Evidence:
+    98→
+    99→- `Ticket` types exist in `src/lib/types.ts`.
+   100→- Ticket API exists under `src/app/api/tickets`.
+   101→- But `src/lib/store.ts` `ViewKey` and `NAV_BY_ROLE` have no `tickets`, `ticket-detail`, `incidents`, `cases`, or `knowledge` views.
+   102→- Role workspaces still mainly expose demands, catalog, SLA, changes, handovers, governance, and problems.
+   103→
+   104→Why this blocks enterprise-grade CSM:
+   105→
+   106→A CSM platform cannot be enterprise-grade if incidents/cases exist only as APIs. Users need operational screens:
+   107→
+   108→- Customer: raise case, view my cases, respond, close/reopen, submit CSAT.
+   109→- SCM Worker: ticket queue, triage, assign, respond, resolve.
+   110→- CM Leader: backlog, aging, priority queue, escalations, reassignment.
+   111→- Service Owner: incidents by owned service, breach risk, problem linkage.
+   112→
+   113→Plan:
+   114→
+   115→1. Extend `ViewKey`:
+   116→
+   117→```ts
+   118→| 'tickets'
+   119→| 'ticket-detail'
+   120→| 'submit-ticket'
+   121→| 'knowledge'
+   122→| 'article-detail'
+   123→| 'attachments'
+   124→```
+   125→
+   126→2. Add nav items:
+   127→
+   128→- Service Customer: `My Tickets`, `Submit Ticket`, `Knowledge`.
+   129→- SCM Worker: `Ticket Queue`, `Knowledge`.
+   130→- CM Leader: `Ticket Operations`, `Escalations`, `Knowledge Review`.
+   131→- Service Owner: `Service Incidents`, `Known Errors`, `Knowledge`.
+   132→
+   133→3. Create screens:
+   134→
+   135→- `src/components/workspaces/customer/TicketList.tsx`
+   136→- `src/components/workspaces/customer/SubmitTicket.tsx`
+   137→- `src/components/workspaces/customer/TicketDetail.tsx`
+   138→- `src/components/workspaces/scm-worker/TicketQueue.tsx`
+   139→- `src/components/workspaces/scm-worker/TicketDetail.tsx`
+   140→- `src/components/workspaces/cm-leader/TicketOperations.tsx`
+   141→- `src/components/workspaces/service-owner/ServiceTickets.tsx`
+   142→- `src/components/knowledge/KnowledgeSearch.tsx`
+   143→- `src/components/knowledge/ArticleDetail.tsx`
+   144→
+   145→Acceptance criteria:
+   146→
+   147→- Ticket workflows are usable from UI for every role.
+   148→- Ticket records have detail pages with timeline, SLA clocks, comments, attachments, and actions.
+   149→- Global search includes tickets and knowledge articles.
+   150→
+   151→## 2. SCM Ticket Access Is Too Broad
+   152→
+   153→Evidence:
+   154→
+   155→`src/app/api/tickets/route.ts` comments say SCM should see assigned tickets, unassigned queue, and customer orgs they serve, but the implementation says SCM can see all for simplicity.
+   156→
+   157→Enterprise issue:
+   158→
+   159→This leaks customer data across service managers. Enterprise CSM requires precise account/customer assignment boundaries.
+   160→
+   161→Plan:
+   162→
+   163→1. Add a mapping model:
+   164→
+   165→```prisma
+   166→model CustomerAssignment {
+   167→  id        String @id @default(cuid())
+   168→  orgNodeId String
+   169→  userId    String
+   170→  role      String // SCM_OWNER | BACKUP | ESCALATION_MANAGER
+   171→  active    Boolean @default(true)
+   172→  createdAt DateTime @default(now())
+   173→
+   174→  @@unique([orgNodeId, userId, role])
+   175→  @@index([userId])
+   176→  @@index([orgNodeId])
+   177→}
+   178→```
+   179→
+   180→2. Seed SCM-to-customer assignments.
+   181→3. Update ticket list scoping:
+   182→
+   183→SCM Worker can see:
+   184→
+   185→- assignedUserId = session.id
+   186→- assignedUserId = null and serviceCustomerId is in assigned customer orgs
+   187→- serviceCustomerId is in assigned customer orgs
+   188→
+   189→4. Apply the same scoping to demands, communications, conversations, attachments, and dashboards.
+   190→
+   191→Acceptance criteria:
+   192→
+   193→- SCM Worker cannot see unrelated customer tickets.
+   194→- CM Leader can still see all.
+   195→- Customer assignment is visible in CM Leader worker management view.
+   196→
+   197→## 3. Ticket State Machine Is Too Loose
+   198→
+   199→Evidence:
+   200→
+   201→Ticket `PATCH` can directly set status to any supplied string. Dedicated routes exist for assign, resolve, close, reopen, but direct patch still allows broad transitions.
+   202→
+   203→Enterprise issue:
+   204→
+   205→Enterprise workflows need controlled transitions, required fields, ownership rules, and audit consistency.
+   206→
+   207→Plan:
+   208→
+   209→1. Create `src/lib/ticket-state.ts`.
+   210→2. Define allowed transitions:
+   211→
+   212→```ts
+   213→NEW -> TRIAGED
+   214→TRIAGED -> ASSIGNED
+   215→ASSIGNED -> IN_PROGRESS
+   216→IN_PROGRESS -> WAITING_CUSTOMER
+   217→WAITING_CUSTOMER -> IN_PROGRESS
+   218→IN_PROGRESS -> RESOLVED
+   219→RESOLVED -> CLOSED
+   220→RESOLVED -> IN_PROGRESS // reopen before close
+   221→CLOSED -> IN_PROGRESS // reopen, permission restricted
+   222→```
+   223→
+   224→3. Block direct status writes in `PATCH /api/tickets/[id]`.
+   225→4. Require dedicated action routes for transitions.
+   226→5. Enforce required fields:
+   227→
+   228→- assign requires user or group.
+   229→- resolve requires resolutionCode and resolutionNotes.
+   230→- close requires `RESOLVED` unless CM Leader override.
+   231→- reopen requires reason.
+   232→- waiting customer requires customer-visible comment.
+   233→
+   234→Acceptance criteria:
+   235→
+   236→- Invalid ticket transitions return 409.
+   237→- Every transition writes `TicketEvent` and `AuditLog`.
+   238→- UI only exposes valid next actions.
+   239→
+   240→## 4. Ticket Number Generation Is Race-Prone
+   241→
+   242→Evidence:
+   243→
+   244→`src/app/api/tickets/route.ts` creates ticket number with `db.ticket.count() + 1`.
+   245→
+   246→Enterprise issue:
+   247→
+   248→Concurrent ticket creation can generate duplicate numbers.
+   249→
+   250→Plan:
+   251→
+   252→1. Add a sequence/counter model:
+   253→
+   254→```prisma
+   255→model SequenceCounter {
+   256→  key   String @id
+   257→  value Int
+   258→}
+   259→```
+   260→
+   261→2. Generate ticket number inside a transaction.
+   262→3. Use format such as:
+   263→
+   264→```text
+   265→INC-2026-000001
+   266→REQ-2026-000001
+   267→CSM-2026-000001
+   268→```
+   269→
+   270→4. Consider separate prefixes by ticket type.
+   271→
+   272→Acceptance criteria:
+   273→
+   274→- Ticket numbers are unique under concurrent creation.
+   275→- Number format supports enterprise reporting.
+   276→
+   277→## 5. SLA Engine Is Basic And Not Yet Operational
+   278→
+   279→What exists:
+   280→
+   281→- `SlaPolicy`
+   282→- `SlaClock`
+   283→- `startSlaClocks`
+   284→- `pauseSlaClocks`
+   285→- `resumeSlaClocks`
+   286→- `meetSlaClock`
+   287→- `evaluateRunningClocks`
+   288→
+   289→Remaining enterprise gaps:
+   290→
+   291→- No warning threshold table.
+   292→- No business calendar logic.
+   293→- No timezone-aware working-hours calculation.
+   294→- No scheduled evaluator.
+   295→- No response definition beyond assignment.
+   296→- No escalation policy.
+   297→- No SLA clock UI.
+   298→- SLA reports still are not fully based on clock history.
+   299→
+   300→Plan:
+   301→
+   302→1. Add warning and escalation models:
+   303→
+   304→```prisma
+   305→model SlaEscalationPolicy {
+   306→  id          String @id @default(cuid())
+   307→  policyId    String
+   308→  thresholdPct Int
+   309→  notifyRole  String
+   310→  notifyUserId String?
+   311→  active      Boolean @default(true)
+   312→}
+   313→```
+   314→
+   315→2. Implement business-calendar due-date calculation using `BusinessCalendar.rulesJson`.
+   316→3. Add a real background evaluator or admin-safe job endpoint with authorization.
+   317→4. Define first response as first customer-visible internal response, not assignment.
+   318→5. Add SLA clock component in ticket detail:
+   319→
+   320→- Response SLA status
+   321→- Resolution SLA status
+   322→- Due date
+   323→- Time remaining
+   324→- Paused time
+   325→- Breach reason
+   326→
+   327→6. Add SLA breach escalation:
+   328→
+   329→- Notify assigned worker.
+   330→- Notify CM Leader.
+   331→- Notify Service Owner for service-owned breaches.
+   332→- Create audit event.
+   333→
+   334→Acceptance criteria:
+   335→
+   336→- SLA clocks are visible and trusted by operators.
+   337→- SLA warning/breach jobs can run repeatedly without duplicate noise.
+   338→- SLA reports can derive compliance from clocks.
+   339→
+   340→## 6. Conversations Do Not Enforce Entity Access
+   341→
+   342→Evidence:
+   343→
+   344→`GET /api/conversations?entityType=&entityId=` lazy-creates conversations for any supplied entity ID and only filters comments for customers. It does not verify that the user can access the target entity before returning or creating the conversation.
+   345→
+   346→Enterprise issue:
+   347→
+   348→This can expose metadata or allow unauthorized conversation creation.
+   349→
+   350→Plan:
+   351→
+   352→1. Create `src/lib/entity-access.ts`.
+   353→2. Implement:
+   354→
+   355→```ts
+   356→canAccessEntity(session, entityType, entityId, action)
+   357→```
+   358→
+   359→3. Use this helper in:
+   360→
+   361→- conversations
+   362→- comments
+   363→- attachments
+   364→- surveys
+   365→- audit views
+   366→- global search
+   367→
+   368→4. For customer comments:
+   369→
+   370→- Customers can only comment on their own ticket/demand.
+   371→- Internal users can add internal or customer-visible comments only if assigned or privileged.
+   372→
+   373→Acceptance criteria:
+   374→
+   375→- Unauthorized entity IDs return 403 or 404.
+   376→- Conversation creation requires access to the target entity.
+   377→
+   378→## 7. Attachments Have Placeholder Security And Weak Storage Rules
+   379→
+   380→Evidence:
+   381→
+   382→`src/app/api/attachments/route.ts` contains a `dummy-ticket-456` exception and upload does not generally verify access to the target entity before saving.
+   383→
+   384→Enterprise issue:
+   385→
+   386→Attachments often contain sensitive evidence. They require strict authorization, malware scanning, immutable metadata, and controlled download.
+   387→
+   388→Plan:
+   389→
+   390→1. Remove `dummy-ticket-456`.
+   391→2. Use `canAccessEntity`.
+   392→3. Add download endpoint:
+   393→
+   394→- `GET /api/attachments/[id]/download`
+   395→
+   396→4. Store files outside web root.
+   397→5. Generate opaque storage keys, not `Date.now() + filename`.
+   398→6. Add checksum:
+   399→
+   400→```prisma
+   401→sha256 String?
+   402→```
+   403→
+   404→7. Add virus scan status:
+   405→
+   406→```prisma
+   407→scanStatus String // PENDING | CLEAN | INFECTED | FAILED
+   408→```
+   409→
+   410→8. Block download unless scan is clean.
+   411→
+   412→Acceptance criteria:
+   413→
+   414→- Unauthorized users cannot upload or view attachments.
+   415→- File names are not trusted as storage keys.
+   416→- Attachment lifecycle is auditable.
+   417→
+   418→## 8. Permission System Exists But Is Not Broadly Enforced
+   419→
+   420→What exists:
+   421→
+   422→- `Permission`
+   423→- `RolePermission`
+   424→- `hasPermission`
+   425→- `requirePermission`
+   426→
+   427→Problem:
+   428→
+   429→Most routes still use direct role checks or broad `getSession` checks. Permission checks are used only in limited places.
+   430→
+   431→Plan:
+   432→
+   433→1. Define a complete permission catalog:
+   434→
+   435→- `ticket.read.own`
+   436→- `ticket.read.assigned`
+   437→- `ticket.read.customer_assigned`
+   438→- `ticket.read.all`
+   439→- `ticket.create`
+   440→- `ticket.assign`
+   441→- `ticket.resolve`
+   442→- `ticket.close`
+   443→- `ticket.reopen`
+   444→- `comment.internal.create`
+   445→- `comment.customer_visible.create`
+   446→- `attachment.upload`
+   447→- `knowledge.create`
+   448→- `knowledge.review`
+   449→- `knowledge.publish`
+   450→- `sla.evaluate`
+   451→- `audit.read`
+   452→- `notification.delivery.retry`
+   453→
+   454→2. Add route-level permission checks.
+   455→3. Add object-level access checks separately from permission checks.
+   456→4. Add an admin/CM Leader permission matrix view later.
+   457→
+   458→Acceptance criteria:
+   459→
+   460→- Every mutating route has explicit permission enforcement.
+   461→- Every read route has object-level scope enforcement.
+   462→
+   463→## 9. Audit Log Is Not Universal
+   464→
+   465→What exists:
+   466→
+   467→- `AuditLog` model.
+   468→- `writeAuditLog` helper.
+   469→- Ticket creation uses audit.
+   470→
+   471→Remaining gap:
+   472→
+   473→Most important mutations do not consistently write audit logs.
+   474→
+   475→Plan:
+   476→
+   477→1. Add audit calls to:
+   478→
+   479→- all ticket transitions
+   480→- demand transitions
+   481→- change transitions
+   482→- knowledge publish/review
+   483→- comment creation/edit
+   484→- attachment upload/delete
+   485→- SLA evaluate/breach
+   486→- notification delivery retry
+   487→- permission changes
+   488→
+   489→2. Add an audit viewer for CM Leader/admin users.
+   490→3. Add filters:
+   491→
+   492→- actor
+   493→- entity type
+   494→- action
+   495→- date range
+   496→- customer org
+   497→
+   498→Acceptance criteria:
+   499→
+   500→- Every business-critical mutation has audit history.
+   501→- Audit logs are viewable by authorized roles.
+   502→
+   503→## 10. Knowledge Base Exists But Workflow And Views Are Missing
+   504→
+   505→What exists:
+   506→
+   507→- Knowledge article model.
+   508→- `GET/POST /api/knowledge`.
+   509→- `GET/PATCH /api/knowledge/[id]`.
+   510→
+   511→Enterprise gaps:
+   512→
+   513→- No article authoring view.
+   514→- No review queue.
+   515→- No publish/retire workflow UI.
+   516→- No linkage UI from tickets/problems.
+   517→- No customer self-service knowledge view.
+   518→- No article usefulness feedback.
+   519→- No version history.
+   520→
+   521→Plan:
+   522→
+   523→1. Add Knowledge workspace:
+   524→
+   525→- Customer: published search only.
+   526→- SCM Worker: search and suggest articles.
+   527→- CM Leader: review/publish queue.
+   528→- Service Owner: owned-service knowledge and known errors.
+   529→
+   530→2. Add article workflow:
+   531→
+   532→```text
+   533→DRAFT -> REVIEW -> PUBLISHED -> RETIRED
+   534→REVIEW -> DRAFT
+   535→```
+   536→
+   537→3. Add version model:
+   538→
+   539→```prisma
+   540→model KnowledgeArticleVersion {
+   541→  id        String @id @default(cuid())
+   542→  articleId String
+   543→  title     String
+   544→  body      String
+   545→  version   Int
+   546→  createdById String
+   547→  createdAt DateTime @default(now())
+   548→}
+   549→```
+   550→
+   551→Acceptance criteria:
+   552→
+   553→- Knowledge is usable by customers and workers.
+   554→- Known errors can be linked from problems and tickets.
+   555→
+   556→## 11. CSAT Exists But Is Not Integrated Into Customer Experience
+   557→
+   558→What exists:
+   559→
+   560→- `SatisfactionSurvey`
+   561→- `/api/surveys`
+   562→- ticket close creates a CSAT notification.
+   563→
+   564→Enterprise gaps:
+   565→
+   566→- No UI to submit survey from notification.
+   567→- No duplicate prevention.
+   568→- No org/service scoped CSAT analytics.
+   569→- Customer can only survey their own requester ID, not necessarily org-level authorized users.
+   570→
+   571→Plan:
+   572→
+   573→1. Add unique constraint:
+   574→
+   575→```prisma
+   576→@@unique([entityType, entityId, customerId])
+   577→```
+   578→
+   579→2. Add survey UI component.
+   580→3. Add CSAT section to customer dashboard.
+   581→4. Add low-score follow-up workflow for CM Leader.
+   582→5. Add service owner view for service-level CSAT.
+   583→
+   584→Acceptance criteria:
+   585→
+   586→- Customers can submit CSAT from the app.
+   587→- Duplicate surveys are prevented.
+   588→- Leaders can act on low CSAT.
+   589→
+   590→## 12. Dashboards Still Center On Demands, Not Enterprise Service Operations
+   591→
+   592→Evidence:
+   593→
+   594→`/api/stats` still returns `totalDemands`, `pipeline`, `recentActivity` from `DemandEvent`, and only one `averageCsat`.
+   595→
+   596→Enterprise issue:
+   597→
+   598→A mature CSM dashboard must show blended operations:
+   599→
+   600→- Tickets by priority/status/SLA.
+   601→- Demand pipeline.
+   602→- Breach risk.
+   603→- Aging queues.
+   604→- Reopen rate.
+   605→- CSAT by service/customer.
+   606→- Workload by agent/group.
+   607→- Problem backlog.
+   608→- Change risk.
+   609→
+   610→Plan:
+   611→
+   612→1. Split stats by domain:
+   613→
+   614→- `/api/stats/overview`
+   615→- `/api/stats/tickets`
+   616→- `/api/stats/demands`
+   617→- `/api/stats/sla`
+   618→- `/api/stats/workload`
+   619→- `/api/stats/customer-health`
+   620→
+   621→2. Add role-specific dashboard cards:
+   622→
+   623→Customer:
+   624→
+   625→- Open tickets
+   626→- Waiting on me
+   627→- SLA breached/at risk
+   628→- My demands
+   629→- Knowledge recommendations
+   630→
+   631→SCM Worker:
+   632→
+   633→- My assigned tickets
+   634→- Unassigned tickets for my customers
+   635→- SLA due soon
+   636→- Waiting customer
+   637→- Demands pending action
+   638→
+   639→CM Leader:
+   640→
+   641→- Breach risk
+   642→- Aging backlog
+   643→- Workload by worker/group
+   644→- Quote approvals
+   645→- CSAT low-score follow-ups
+   646→
+   647→Service Owner:
+   648→
+   649→- Incidents by owned service
+   650→- SLA breaches by service
+   651→- Problems/known errors
+   652→- Changes touching owned service
+   653→- Customer sentiment
+   654→
+   655→Acceptance criteria:
+   656→
+   657→- Dashboards guide daily work, not only report counts.
+   658→
+   659→## 13. Notification Delivery Is Mocked And Currently Breaks Typecheck
+   660→
+   661→What exists:
+   662→
+   663→- `NotificationDelivery`.
+   664→- `createDeliveries`.
+   665→- `processDelivery`.
+   666→- Delivery retry API.
+   667→
+   668→Problems:
+   669→
+   670→- TypeScript currently fails on delivery routes.
+   671→- Delivery is simulated with random failure.
+   672→- No user-facing delivery admin view.
+   673→- Delivery creation is not consistently called for all notifications.
+   674→
+   675→Plan:
+   676→
+   677→1. Fix route structure first.
+   678→2. Replace random mock behavior with deterministic adapter interface:
+   679→
+   680→```ts
+   681→interface DeliveryAdapter {
+   682→  send(deliveryId: string): Promise<void>;
+   683→}
+   684→```
+   685→
+   686→3. Keep mock adapter for local dev, but make it deterministic.
+   687→4. Add delivery log screen for CM Leader/admin.
+   688→5. Ensure all notification creation paths call `createDeliveries`.
+   689→
+   690→Acceptance criteria:
+   691→
+   692→- Typecheck passes.
+   693→- Delivery behavior is predictable.
+   694→- Failed deliveries can be retried from UI.
+   695→
+   696→## 14. Role Model Still Missing Enterprise Roles
+   697→
+   698→Current roles:
+   699→
+   700→- SERVICE_CUSTOMER
+   701→- SCM_WORKER
+   702→- CM_LEADER
+   703→- SERVICE_OWNER
+   704→
+   705→Enterprise CSM usually needs more role separation:
+   706→
+   707→- Service Desk Agent
+   708→- Technical Resolver
+   709→- Assignment Group Manager
+   710→- Problem Manager
+   711→- Change Manager / Change Approver
+   712→- Knowledge Manager
+   713→- SLA Manager
+   714→- Customer Admin
+   715→- System Admin
+   716→- Auditor / Read-only Compliance
+   717→
+   718→Plan:
+   719→
+   720→1. Decide whether to keep four top-level personas and add permissions/groups, or add explicit roles.
+   721→2. Minimum recommended addition:
+   722→
+   723→- SERVICE_DESK_AGENT
+   724→- TECHNICAL_RESOLVER
+   725→- KNOWLEDGE_MANAGER
+   726→- SYSTEM_ADMIN
+   727→- AUDITOR
+   728→
+   729→3. Add assignment groups for technical resolver ownership.
+   730→4. Add views by role or permission:
+   731→
+   732→- Resolver queue
+   733→- Knowledge review
+   734→- Admin settings
+   735→- Audit log
+   736→- Customer administration
+   737→
+   738→Acceptance criteria:
+   739→
+   740→- Operational responsibilities are not overloaded onto SCM Worker and CM Leader.
+   741→
+   742→## 15. Customer Portal Still Does Not Feel Like Full Customer Service
+   743→
+   744→Current customer nav:
+   745→
+   746→- Dashboard
+   747→- My Demands
+   748→- Submit Demand
+   749→- Service Catalog
+   750→- SLA Performance
+   751→
+   752→Missing customer views:
+   753→
+   754→- My Tickets / Incidents
+   755→- Submit Ticket / Report Issue
+   756→- Conversation inbox
+   757→- Attachments
+   758→- Knowledge/self-service
+   759→- Surveys/feedback
+   760→- Notifications deep links
+   761→- My services/subscriptions
+   762→- Planned maintenance / service notices
+   763→
+   764→Plan:
+   765→
+   766→1. Add customer views:
+   767→
+   768→- `tickets`
+   769→- `submit-ticket`
+   770→- `ticket-detail`
+   771→- `knowledge`
+   772→- `feedback`
+   773→- `service-health`
+   774→
+   775→2. Add customer dashboard cards:
+   776→
+   777→- My open tickets
+   778→- Waiting for my response
+   779→- Recent support messages
+   780→- Services with active incidents
+   781→- Recommended knowledge
+   782→
+   783→Acceptance criteria:
+   784→
+   785→- Customer can complete support workflows without internal-user screens.
+   786→
+   787→## 16. CM Leader Workspace Needs True Operations Control
+   788→
+   789→Current CM Leader nav:
+   790→
+   791→- Dashboard
+   792→- Demand Queue
+   793→- SCM Workers
+   794→- SLM Governance
+   795→- Service Catalog
+   796→- Changes
+   797→- Analytics
+   798→
+   799→Missing:
+   800→
+   801→- Ticket operations center
+   802→- Assignment control
+   803→- Escalation center
+   804→- SLA breach command center
+   805→- Low CSAT follow-up
+   806→- Audit log
+   807→- Knowledge review queue
+   808→- Delivery failure queue
+   809→
+   810→Plan:
+   811→
+   812→1. Add views:
+   813→
+   814→- `ticket-ops`
+   815→- `escalations`
+   816→- `audit`
+   817→- `knowledge-review`
+   818→- `delivery-failures`
+   819→- `csat-followup`
+   820→
+   821→2. Add bulk actions:
+   822→
+   823→- assign/reassign
+   824→- escalate
+   825→- change priority
+   826→- request update
+   827→- approve knowledge
+   828→
+   829→Acceptance criteria:
+   830→
+   831→- CM Leader can run the operation from the app.
+   832→
+   833→## 17. Service Owner Workspace Needs Service Health, Not Just Governance
+   834→
+   835→Current Service Owner nav:
+   836→
+   837→- Dashboard
+   838→- Service Portfolio
+   839→- SLA Performance
+   840→- Governance Approvals
+   841→- Problem Records
+   842→- Changes
+   843→
+   844→Missing:
+   845→
+   846→- Owned-service incident queue
+   847→- Service health page
+   848→- Known error / knowledge ownership
+   849→- Customer impact view
+   850→- Commitments and lifecycle roadmap
+   851→- Service risk register
+   852→
+   853→Plan:
+   854→
+   855→1. Add views:
+   856→
+   857→- `service-health`
+   858→- `service-incidents`
+   859→- `known-errors`
+   860→- `risk-register`
+   861→- `customer-impact`
+   862→
+   863→2. Connect Service Owner to ticket/SLA/problem/knowledge data by owned service.
+   864→
+   865→Acceptance criteria:
+   866→
+   867→- Service Owner sees operational health, not just governance records.
+   868→
+   869→## 18. Demand And Ticket Workflows Are Not Unified
+   870→
+   871→Problem:
+   872→
+   873→Demands and tickets now coexist but are not clearly related.
+   874→
+   875→Enterprise expectation:
+   876→
+   877→Customers should not need to understand internal categories too much. The system should guide whether something is:
+   878→
+   879→- incident
+   880→- service request
+   881→- demand/enhancement
+   882→- complaint
+   883→- question
+   884→
+   885→Plan:
+   886→
+   887→1. Add intake classification:
+   888→
+   889→```text
+   890→Customer request -> guided intake -> Ticket or Demand
+   891→```
+   892→
+   893→2. Add conversion paths:
+   894→
+   895→- Ticket -> Demand
+   896→- Ticket -> Problem
+   897→- Ticket -> Change
+   898→- Demand -> Ticket if actually support issue
+   899→
+   900→3. Add relation model:
+   901→
+   902→```prisma
+   903→model EntityLink {
+   904→  id         String @id @default(cuid())
+   905→  fromType   String
+   906→  fromId     String
+   907→  toType     String
+   908→  toId       String
+   909→  linkType   String // CAUSED_BY | RELATES_TO | CONVERTED_TO | FULFILLED_BY
+   910→  createdAt  DateTime @default(now())
+   911→}
+   912→```
+   913→
+   914→Acceptance criteria:
+   915→
+   916→- Related operational records are visible in each detail page.
+   917→- Intake can route requests to the correct workflow.
+   918→
+   919→## 19. Global Search Is Not Enterprise Complete
+   920→
+   921→Current state:
+   922→
+   923→Global search includes demands, services, changes, and problems. It does not meaningfully expose tickets, knowledge, attachments, conversations, or audit logs.
+   924→
+   925→Plan:
+   926→
+   927→1. Add tickets to all relevant role search configs.
+   928→2. Add knowledge articles.
+   929→3. Add search result action routing to detail views.
+   930→4. Add server-side search endpoint instead of loading many lists client-side.
+   931→
+   932→Acceptance criteria:
+   933→
+   934→- Search works across core operational records with proper scoping.
+   935→
+   936→## 20. URL Routing Is Still Query-State Based, Not Real App Routing
+   937→
+   938→Current state:
+   939→
+   940→Navigation uses Zustand and query string `?view=...`.
+   941→
+   942→Enterprise issue:
+   943→
+   944→This is better than pure memory state, but still not proper URL routing. It limits deep linking, route permissions, breadcrumbs, browser history, SEO-like app structure, and monitorable routes.
+   945→
+   946→Plan:
+   947→
+   948→1. Add route groups:
+   949→
+   950→```text
+   951→/customer/tickets
+   952→/customer/tickets/[id]
+   953→/customer/demands/[id]
+   954→/scm/tickets
+   955→/scm/tickets/[id]
+   956→/cm/operations/tickets
+   957→/owner/services/[id]/health
+   958→```
+   959→
+   960→2. Keep Zustand only for transient UI state.
+   961→3. Notifications should link to real URLs.
+   962→
+   963→Acceptance criteria:
+   964→
+   965→- Refreshing any detail page works.
+   966→- Browser back/forward is reliable.
+   967→- Notification links open exact records.
+   968→
+   969→## 21. External Integrations Are Still Pending
+   970→
+   971→User already excluded this item, but for enterprise readiness it remains important.
+   972→
+   973→Needed later:
+   974→
+   975→- Email inbound/outbound.
+   976→- Teams/Slack notifications.
+   977→- SSO/identity provider.
+   978→- Calendar/change windows.
+   979→- External monitoring ingestion for incidents/SLA.
+   980→- External ITSM integration if this system coexists with another service desk.
+   981→
+   982→Do not treat the current mock notification delivery as enterprise integration.
+   983→
+   984→## 22. Reporting, Testing, And Documentation Are Still Pending
+   985→
+   986→User already excluded these phases, but they remain enterprise blockers.
+   987→
+   988→Minimum later requirements:
+   989→
+   990→- Reporting and analytics dashboards.
+   991→- API integration tests.
+   992→- Role workflow E2E tests.
+   993→- SLA engine tests.
+   994→- Security/access control tests.
+   995→- README and architecture documentation.
+   996→- Operational runbooks.
+   997→
+   998→## Updated Priority Order
+   999→
+  1000→Do the next work in this order:
+  1001→
+  1002→1. Fix TypeScript failure in notification delivery routes.
+  1003→2. Add ticket/case views into role navigation and workspaces.
+  1004→3. Add strict entity access helper and apply it to tickets, conversations, attachments, surveys, and search.
+  1005→4. Replace loose ticket `PATCH` status changes with state-machine action routes.
+  1006→5. Add customer assignment model for SCM scoping.
+  1007→6. Add ticket queues and detail views with comments, attachments, SLA clocks, and actions.
+  1008→7. Add knowledge views and review/publish workflow UI.
+  1009→8. Add CSAT submission UI and low-score follow-up workflow.
+  1010→9. Expand dashboards from demand-only to service operations.
+  1011→10. Add audit log coverage and audit viewer.
+  1012→11. Improve notification delivery routing and admin view.
+  1013→12. Add enterprise roles or permission-backed role views.
+  1014→13. Add real URL routes.
+  1015→14. Then proceed with external integrations, reporting, tests, and documentation.
+  1016→
+  1017→## Definition Of Enterprise-Grade Workflow
+  1018→
+  1019→The app can be considered enterprise-grade for workflow only when:
+  1020→
+  1021→- Every major backend entity has role-appropriate views.
+  1022→- Customers can raise, track, converse, attach files, close, reopen, and rate service work.
+  1023→- SCM Workers operate from scoped queues, not broad all-tenant visibility.
+  1024→- CM Leaders can manage workload, escalations, SLA risk, approvals, and quality.
+  1025→- Service Owners can see service health, incidents, problems, known errors, changes, and customer impact.
+  1026→- Tickets, demands, changes, problems, knowledge, SLA clocks, comments, attachments, and surveys are connected.
+  1027→- State transitions are controlled by workflow rules.
+  1028→- Permissions and entity access are consistently enforced.
+  1029→- Audits exist for all important actions.
+  1030→- Dashboards show actionable work, risk, aging, SLA breach exposure, and quality.
+  1031→- Typecheck and build pass without ignored errors.
+  1032→

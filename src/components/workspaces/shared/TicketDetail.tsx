@@ -27,7 +27,6 @@ import type { Role } from '@/lib/types';
 import {
   type Ticket,
   type TicketEventRow,
-  type SlaClockRow,
   type TicketPriority,
   type TicketStatus,
   type TicketType,
@@ -40,10 +39,7 @@ import {
   TICKET_STATUS_LABELS,
   RESOLUTION_CODE_LABELS,
   IMPACT_LABELS,
-  SLA_CLOCK_TYPE_LABELS,
-  SLA_CLOCK_STATUS_LABELS,
   deriveSlaHealth,
-  formatMins,
 } from '@/lib/tickets';
 
 import {
@@ -60,6 +56,9 @@ import {
   Card,
   CardContent,
 } from '@/components/shared';
+import CommentThread from './CommentThread';
+import AttachmentList from './AttachmentList';
+import CsatWidget from './CsatWidget';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -80,6 +79,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import EntityLinks from '@/components/workspaces/shared/EntityLinks';
+import SlaClocksPanel from '@/components/workspaces/shared/SlaClockPanel';
 import {
   Ticket as TicketIcon,
   ArrowLeft,
@@ -98,7 +99,6 @@ import {
   Send,
   MessageSquare,
   Flag,
-  Gauge,
   Stethoscope,
 } from 'lucide-react';
 
@@ -154,100 +154,10 @@ function TicketTypeBadge({ type }: { type: TicketType }) {
 }
 
 // ---- SLA clock panel -------------------------------------------------------
-
-function SlaClockPanel({ clock }: { clock?: SlaClockRow }) {
-  if (!clock) {
-    return (
-      <div className="rounded-md border border-dashed p-4 text-xs text-muted-foreground">
-        No SLA clock configured for this ticket type.
-      </div>
-    );
-  }
-
-  const status = clock.status;
-  const type = clock.type;
-  const dueAt = new Date(clock.dueAt);
-  const remainingMs = dueAt.getTime() - Date.now();
-  const remainingMins = Math.round(remainingMs / 60000);
-
-  // Progress: 100% = just started, 0% = due now, negative = overdue
-  const percent = clock.percentRemaining ?? (status === 'BREACHED' ? 0 : 100);
-  const elapsedPct = Math.max(0, Math.min(100, 100 - percent));
-
-  const statusMeta: Record<string, { label: string; cls: string; barCls: string; icon: React.ReactNode }> = {
-    RUNNING: {
-      label: 'Running',
-      cls: 'text-emerald-700 dark:text-emerald-300',
-      barCls: percent > 25 ? 'bg-emerald-500' : 'bg-amber-500',
-      icon: <Play className="h-3.5 w-3.5" />,
-    },
-    PAUSED: {
-      label: 'Paused',
-      cls: 'text-amber-700 dark:text-amber-300',
-      barCls: 'bg-amber-400',
-      icon: <Pause className="h-3.5 w-3.5" />,
-    },
-    MET: {
-      label: 'Met',
-      cls: 'text-emerald-700 dark:text-emerald-300',
-      barCls: 'bg-emerald-500',
-      icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    },
-    BREACHED: {
-      label: 'Breached',
-      cls: 'text-rose-700 dark:text-rose-300',
-      barCls: 'bg-rose-500',
-      icon: <ShieldAlert className="h-3.5 w-3.5" />,
-    },
-    CANCELED: {
-      label: 'Canceled',
-      cls: 'text-muted-foreground',
-      barCls: 'bg-muted-foreground/30',
-      icon: <Ban className="h-3.5 w-3.5" />,
-    },
-  };
-  const meta = statusMeta[status] ?? statusMeta.RUNNING;
-
-  let timeLabel: string;
-  if (status === 'RUNNING') {
-    timeLabel = remainingMins < 0 ? `Overdue by ${formatMins(-remainingMins)}` : `${formatMins(remainingMins)} remaining`;
-  } else if (status === 'PAUSED') {
-    timeLabel = `Paused for ${formatMins(clock.totalPausedMins)}`;
-  } else if (status === 'MET' && clock.metAt) {
-    timeLabel = `Met at ${new Date(clock.metAt).toLocaleString()}`;
-  } else if (status === 'BREACHED') {
-    timeLabel = `Due ${new Date(clock.dueAt).toLocaleString()}`;
-  } else {
-    timeLabel = '—';
-  }
-
-  return (
-    <div className="rounded-md border p-4 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium">{SLA_CLOCK_TYPE_LABELS[type as SlaClockRow['type']]} SLA</span>
-        </div>
-        <Badge variant="outline" className={cn('text-[11px] gap-1 font-medium', meta.cls)}>
-          {meta.icon}
-          {meta.label}
-        </Badge>
-      </div>
-      <div className="text-lg font-semibold tabular-nums">{timeLabel}</div>
-      {/* Progress bar */}
-      <div className="relative h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn('h-full transition-all', meta.barCls)}
-          style={{ width: `${elapsedPct}%` }}
-        />
-      </div>
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>Started <RelativeTime date={clock.startedAt} /></span>
-        <span>Due <FormattedDate date={clock.dueAt} /></span>
-      </div>
-    </div>
-  );
-}
+// The inline SlaClockPanel was replaced by the shared
+// `@/components/workspaces/shared/SlaClockPanel` component (imported above as
+// `SlaClocksPanel`). That shared component fetches its own clocks by ticketId.
+// The activity log + remaining helpers below remain.
 
 // ---- Activity log (TicketEvent timeline) -----------------------------------
 
@@ -718,8 +628,6 @@ export default function TicketDetail({ id, role }: TicketDetailProps) {
   const ticket = ticketQ.data;
   const events = ticket?.events ?? [];
   const clocks = ticket?.slaClocks ?? [];
-  const responseClock = clocks.find((c) => c.type === 'RESPONSE');
-  const resolutionClock = clocks.find((c) => c.type === 'RESOLUTION');
   const slaHealth = deriveSlaHealth(clocks);
 
   // ---- Action state + dialogs ---------------------------------------------
@@ -1046,35 +954,42 @@ export default function TicketDetail({ id, role }: TicketDetailProps) {
             <ActivityTimeline events={events} />
           </SectionCard>
 
-          {/* Conversation thread placeholder — wired by a future agent */}
+          {/* Conversation thread — customer-visible + internal comments. */}
           <SectionCard
-            title="Conversation Thread"
-            description="Customer-visible and internal comments on this ticket."
-            actions={
-              <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                Coming soon
-              </Badge>
+            title="Conversation"
+            description="Discuss this case with the customer and team. Comments support CUSTOMER_VISIBLE and INTERNAL visibility (internal is hidden from customers)."
+          >
+            <CommentThread entityType="TICKET" entityId={ticket.id} />
+          </SectionCard>
+
+          {/* Attachments — drop-in widget. */}
+          <SectionCard
+            title="Attachments"
+            description="Files uploaded on this ticket. Max 10 MB each; supported: images, PDF, text, Office docs."
+          >
+            <AttachmentList entityType="TICKET" entityId={ticket.id} />
+          </SectionCard>
+
+          {/* CSAT — customers can submit; agents/owners see read-only summaries. */}
+          <SectionCard
+            title="Customer Satisfaction"
+            description={
+              isCustomer
+                ? 'Rate your experience with how this case was handled. Your feedback goes directly to leadership.'
+                : 'Customer satisfaction score for this ticket. Low scores (1–2★) trigger a follow-up workflow.'
             }
           >
-            <EmptyState
-              icon={<MessageSquare className="h-7 w-7 text-muted-foreground/50" />}
-              title="Threaded conversation coming soon"
-              description="The conversation thread (Comments API + visibility levels) will be wired into this panel by a later build phase."
-            />
+            <CsatWidget entityType="TICKET" entityId={ticket.id} />
           </SectionCard>
         </div>
 
         {/* Right column */}
         <div className="space-y-5">
-          <SectionCard
-            title="SLA Clocks"
-            description="Response and resolution targets for this ticket."
-          >
-            <div className="space-y-3">
-              <SlaClockPanel clock={responseClock} />
-              <SlaClockPanel clock={resolutionClock} />
-            </div>
-          </SectionCard>
+          {/* SLA Clocks — shared, self-contained component */}
+          <SlaClocksPanel ticketId={id} />
+
+          {/* Related entities (tickets, demands, changes, problems) */}
+          <EntityLinks entityType="TICKET" entityId={id} />
 
           <SectionCard title="Ticket Details">
             <dl className="grid grid-cols-2 gap-3 text-sm">

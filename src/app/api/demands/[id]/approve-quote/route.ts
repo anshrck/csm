@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -43,6 +44,12 @@ export async function POST(
         ? body.notes.trim()
         : `Quote pre-approved by CM Leader ${session.name}.`;
 
+    const before = {
+      status: demand.status,
+      quoteApprovedByCmLeader: demand.quoteApprovedByCmLeader,
+      quoteApprovedAt: demand.quoteApprovedAt,
+    };
+
     const updated = await db.demand.update({
       where: { id },
       data: {
@@ -59,6 +66,19 @@ export async function POST(
         actorId: session.id,
         actorName: session.name,
         notes,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_QUOTE_APPROVED',
+      entityType: 'Demand',
+      entityId: id,
+      before,
+      after: {
+        status: updated.status,
+        quoteApprovedByCmLeader: true,
+        quoteApprovedAt: updated.quoteApprovedAt,
       },
     });
 

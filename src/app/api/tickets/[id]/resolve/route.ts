@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
@@ -16,9 +18,9 @@ const VALID_CODES = ['FIXED', 'WORKAROUND', 'DUPLICATE', 'NOT_REPRODUCIBLE', 'OU
 
 // POST /api/tickets/[id]/resolve
 // Body: { resolutionCode: 'FIXED' | 'WORKAROUND' | 'DUPLICATE' | 'NOT_REPRODUCIBLE' | 'OUT_OF_SCOPE',
-//         resolutionNotes: string (required) }
+//         resolutionNotes: string (required, ≥5 chars) }
 //
-// Transition: any non-terminal status → RESOLVED.
+// Transition: any non-terminal status → RESOLVED (state-machine enforced).
 // Marks all RUNNING/PAUSED SLA clocks as MET.
 // Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
@@ -36,19 +38,16 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
-
-    if (ticket.status === 'CLOSED' || ticket.status === 'CANCELED') {
-      return NextResponse.json(
-        { error: `Cannot resolve a ${ticket.status} ticket` },
-        { status: 409 },
-      );
-    }
-    if (ticket.status === 'RESOLVED') {
-      return NextResponse.json({ error: 'Ticket is already resolved' }, { status: 409 });
     }
 
     const body = await req.json().catch(() => ({}));
@@ -60,11 +59,18 @@ export async function POST(
         { status: 400 },
       );
     }
+    body.resolutionCode = resolutionCode; // normalize for state-machine validation
+
+    // State-machine validation — RESOLVED requires resolutionCode + resolutionNotes (≥5 chars).
+    const currentStatus = ticket.status as TicketStatus;
+    const targetStatus = ACTION_TO_STATUS.resolve;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
+    }
+
     const resolutionNotes =
       typeof body.resolutionNotes === 'string' ? body.resolutionNotes.trim() : '';
-    if (!resolutionNotes) {
-      return NextResponse.json({ error: 'resolutionNotes is required' }, { status: 400 });
-    }
 
     const before = {
       status: ticket.status,
@@ -90,7 +96,7 @@ export async function POST(
     const updated = await db.ticket.update({
       where: { id },
       data: {
-        status: 'RESOLVED',
+        status: targetStatus,
         resolutionCode,
         resolutionNotes,
         resolvedAt: now,
@@ -123,11 +129,17 @@ export async function POST(
 
     await auditLog({
       actor: session,
-      action: 'TICKET_RESOLVE',
+      action: 'TICKET_RESOLVED',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: { status: 'RESOLVED', resolutionCode, resolutionNotes, resolvedAt: now.toISOString(), metClocks: metCount },
+      before: { ...before, status: currentStatus },
+      after: {
+        status: targetStatus,
+        resolutionCode,
+        resolutionNotes,
+        resolvedAt: now.toISOString(),
+        metClocks: metCount,
+      },
     });
 
     return NextResponse.json(serializeTicket(updated as TicketWithRelations));

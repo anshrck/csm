@@ -4,12 +4,19 @@ import path from 'path';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { ATTACHMENT_INCLUDE, errorResponse, serializeAttachment } from '../_serialize';
+import { canAccessEntity, type EntityType } from '@/lib/entity-access';
+import type { SessionUser } from '@/lib/types';
+import {
+  ATTACHMENT_INCLUDE,
+  errorResponse,
+  serializeAttachment,
+  type AttachmentEntityType,
+} from '../_serialize';
 
 export const runtime = 'nodejs';
 
 // GET /api/attachments/[id] — metadata for a single attachment.
-// SERVICE_CUSTOMER may only fetch metadata for attachments on entities they own.
+// Caller must pass the entity-access gate (read) on the underlying entity.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -25,11 +32,13 @@ export async function GET(
     });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    if (session.role === 'SERVICE_CUSTOMER') {
-      // Verify ownership of the underlying entity.
-      const ok = await customerOwnsEntity(session.orgNodeId, row.entityType, row.entityId);
-      if (!ok) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
+    const ok = await canAccessAttachmentEntity(
+      session,
+      row.entityType as AttachmentEntityType,
+      row.entityId,
+      'read',
+    );
+    if (!ok) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     return NextResponse.json(serializeAttachment(row));
   } catch (err) {
@@ -93,43 +102,36 @@ export async function DELETE(
   }
 }
 
-async function customerOwnsEntity(
-  orgNodeId: string | null,
-  entityType: string,
+// ---- Attachment-scoped entity-access helper --------------------------------
+//
+// Attachments can attach to COMMENT as well as the canonical entity types in
+// `EntityType`. For COMMENT, we resolve the underlying conversation (and its
+// owning entity) before delegating to the entity-access helper.
+
+async function resolveCommentUnderlyingEntity(
+  commentId: string,
+): Promise<{ entityType: EntityType; entityId: string } | null> {
+  const c = await db.comment.findUnique({
+    where: { id: commentId },
+    include: { conversation: { select: { entityType: true, entityId: true } } },
+  });
+  if (!c) return null;
+  return {
+    entityType: c.conversation.entityType as EntityType,
+    entityId: c.conversation.entityId,
+  };
+}
+
+async function canAccessAttachmentEntity(
+  session: SessionUser,
+  entityType: AttachmentEntityType,
   entityId: string,
+  action: 'read' | 'write',
 ): Promise<boolean> {
-  if (!orgNodeId) return false;
-  try {
-    if (entityType === 'TICKET') {
-      const t = await db.ticket.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(t && t.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'DEMAND') {
-      const d = await db.demand.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(d && d.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'COMMENT') {
-      const c = await db.comment.findUnique({
-        where: { id: entityId },
-        include: { conversation: { select: { serviceCustomerId: true } } },
-      });
-      return Boolean(c && c.conversation.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'SLA_EVENT') {
-      const e = await db.slaEvent.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(e && e.serviceCustomerId === orgNodeId);
-    }
-    return false;
-  } catch {
-    return false;
+  if (entityType === 'COMMENT') {
+    const underlying = await resolveCommentUnderlyingEntity(entityId);
+    if (!underlying) return false;
+    return canAccessEntity(session, underlying.entityType, underlying.entityId, action);
   }
+  return canAccessEntity(session, entityType as EntityType, entityId, action);
 }

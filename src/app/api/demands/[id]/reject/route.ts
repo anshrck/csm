@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -64,6 +65,15 @@ export async function POST(
         actorName: session.name,
         notes: `Demand rejected by ${session.name}. Reason: ${reason}`,
       },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_REJECTED',
+      entityType: 'Demand',
+      entityId: id,
+      before: { status: demand.status },
+      after: { status: 'REJECTED', rejectionReason: reason },
     });
 
     // Notify the customer.

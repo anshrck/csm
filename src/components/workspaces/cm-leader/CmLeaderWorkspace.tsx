@@ -11,6 +11,10 @@ import Catalog from './Catalog';
 import Changes from './Changes';
 import Analytics from './Analytics';
 import Knowledge from './Knowledge';
+import AuditViewer from './AuditViewer';
+import DeliveryAdmin from './DeliveryAdmin';
+import TicketOperations from './TicketOperations';
+import CsatFollowup from './CsatFollowup';
 import TicketList from '@/components/workspaces/shared/TicketList';
 import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
@@ -56,6 +60,10 @@ export default function CmLeaderWorkspace() {
       return <Analytics />;
     case 'reports':
       return <Reports />;
+    case 'audit':
+      return <AuditViewer />;
+    case 'delivery-failures':
+      return <DeliveryAdmin />;
     case 'knowledge':
       return <Knowledge />;
     case 'tickets':
@@ -66,6 +74,10 @@ export default function CmLeaderWorkspace() {
           description="All tenant tickets. Triage, reassign, progress, resolve, and monitor SLA performance. Use bulk assign to distribute work."
         />
       );
+    case 'ticket-ops':
+      return <TicketOperations />;
+    case 'csat-followup':
+      return <CsatFollowup />;
     case 'ticket-detail':
       return <TicketDetail id={params.id} role="CM_LEADER" />;
     default:

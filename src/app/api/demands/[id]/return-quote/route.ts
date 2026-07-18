@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
+import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import {
   DEMAND_INCLUDE,
@@ -63,6 +64,22 @@ export async function POST(
         actorId: session.id,
         actorName: session.name,
         notes: `Quote returned by CM Leader for revision: ${notes}`,
+      },
+    });
+
+    await auditLog({
+      actor: session,
+      action: 'DEMAND_QUOTE_RETURNED',
+      entityType: 'Demand',
+      entityId: id,
+      before: {
+        status: demand.status,
+        quoteApprovedByCmLeader: demand.quoteApprovedByCmLeader,
+      },
+      after: {
+        status: 'UNDER_REVIEW',
+        quoteApprovedByCmLeader: false,
+        notes,
       },
     });
 

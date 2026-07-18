@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import {
   Command,
@@ -28,61 +28,64 @@ import {
   Users,
   Briefcase,
   CornerDownLeft,
+  Ticket as TicketIcon,
+  BookOpen,
+  Mail,
+  ScrollText,
 } from 'lucide-react';
-import type {
-  Role,
-  Demand,
-  Service,
-  Change,
-  Problem,
-  DemandStatus,
-} from '@/lib/types';
-import {
-  DEMAND_STATUS_LABELS,
-  CHANGE_STATUS_LABELS,
-  SERVICE_DOMAIN_LABELS,
-} from '@/lib/types';
+import type { Role, DemandStatus } from '@/lib/types';
+import { DEMAND_STATUS_LABELS } from '@/lib/types';
 import type { ViewKey } from '@/lib/store';
 
 // ----------------------------------------------------------------------------
-// Per-role data source configuration.
-// Each entry lists the API endpoints to fetch + combine for that group.
-// Endpoints may not exist yet (built by other agents); queries fail gracefully
-// to empty arrays.
+// Server-side search hit shape (matches /api/search response).
 // ----------------------------------------------------------------------------
 
-interface RoleSearchConfig {
-  demands: string[];
-  services: string[];
-  changes: string[];
-  problems: string[];
+interface SearchHit {
+  type: 'DEMAND' | 'TICKET' | 'SERVICE' | 'KNOWLEDGE' | 'CHANGE' | 'PROBLEM';
+  id: string;
+  title: string;
+  subtitle: string | null;
+  url: string;
 }
 
-const SEARCH_CONFIG: Record<Role, RoleSearchConfig> = {
-  SERVICE_CUSTOMER: {
-    demands: ['/api/demands?mine=1'],
-    services: ['/api/services?entitled=1'],
-    changes: [],
-    problems: [],
-  },
-  SCM_WORKER: {
-    demands: ['/api/demands?assigned=me', '/api/demands?unassigned=1'],
-    services: ['/api/services'],
-    changes: [],
-    problems: [],
-  },
-  CM_LEADER: {
-    demands: ['/api/demands'],
-    services: ['/api/services'],
-    changes: ['/api/changes'],
-    problems: [],
-  },
-  SERVICE_OWNER: {
-    demands: [],
-    services: ['/api/services?owner=me'],
-    changes: ['/api/changes'],
-    problems: ['/api/problems?owner=me'],
-  },
+interface SearchResponse {
+  results: SearchHit[];
+}
+
+interface SearchResponseAudit {
+  // The audit-logs API returns a flat array of rows.
+  id: string;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  createdAt: string;
+}
+
+interface CommunicationRow {
+  id: string;
+  subject: string;
+  direction: string;
+  channel: string;
+  authorName: string;
+  createdAt: string;
+}
+
+// ----------------------------------------------------------------------------
+// Demand status tone (kept for the demands group).
+// ----------------------------------------------------------------------------
+
+const demandStatusTone: Record<DemandStatus, string> = {
+  NEW: 'text-sky-700 dark:text-sky-300',
+  UNDER_REVIEW: 'text-amber-700 dark:text-amber-300',
+  QUOTED: 'text-violet-700 dark:text-violet-300',
+  ACCEPTED: 'text-teal-700 dark:text-teal-300',
+  IN_CHANGE: 'text-indigo-700 dark:text-indigo-300',
+  FULFILLED: 'text-emerald-700 dark:text-emerald-300',
+  CLOSED: 'text-muted-foreground',
+  REJECTED: 'text-rose-700 dark:text-rose-300',
+  REDIRECTED: 'text-orange-700 dark:text-orange-300',
 };
 
 // ----------------------------------------------------------------------------
@@ -98,36 +101,6 @@ interface QuickAction {
 }
 
 // ----------------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------------
-
-const demandStatusTone: Record<DemandStatus, string> = {
-  NEW: 'text-sky-700 dark:text-sky-300',
-  UNDER_REVIEW: 'text-amber-700 dark:text-amber-300',
-  QUOTED: 'text-violet-700 dark:text-violet-300',
-  ACCEPTED: 'text-teal-700 dark:text-teal-300',
-  IN_CHANGE: 'text-indigo-700 dark:text-indigo-300',
-  FULFILLED: 'text-emerald-700 dark:text-emerald-300',
-  CLOSED: 'text-muted-foreground',
-  REJECTED: 'text-rose-700 dark:text-rose-300',
-  REDIRECTED: 'text-orange-700 dark:text-orange-300',
-};
-
-function dedupeById<T extends { id: string }>(arrs: T[][]): T[] {
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const arr of arrs) {
-    for (const item of arr) {
-      if (item && item.id && !seen.has(item.id)) {
-        seen.add(item.id);
-        out.push(item);
-      }
-    }
-  }
-  return out;
-}
-
-// ----------------------------------------------------------------------------
 // Palette
 // ----------------------------------------------------------------------------
 
@@ -139,50 +112,78 @@ export interface CommandPaletteProps {
 }
 
 export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: CommandPaletteProps) {
-  const config = SEARCH_CONFIG[role];
+  const [query, setQuery] = React.useState('');
 
-  // Build a flat list of query descriptors so we can fetch every endpoint in
-  // a single useQueries call. Each query fails gracefully to [].
-  const queryDescs = React.useMemo(() => {
-    const descs: { kind: 'demand' | 'service' | 'change' | 'problem'; url: string }[] = [];
-    config.demands.forEach((url) => descs.push({ kind: 'demand', url }));
-    config.services.forEach((url) => descs.push({ kind: 'service', url }));
-    config.changes.forEach((url) => descs.push({ kind: 'change', url }));
-    config.problems.forEach((url) => descs.push({ kind: 'problem', url }));
-    return descs;
-  }, [config]);
+  // ---- Server-side search -------------------------------------------------
+  // Debounce the query so we don't fire a request on every keystroke.
+  const debouncedQuery = React.useDeferredValue(query.trim());
+  const searchEnabled = debouncedQuery.length >= 2;
 
-  const queries = useQueries({
-    queries: queryDescs.map((d) => ({
-      queryKey: ['global-search', d.kind, d.url] as const,
-      queryFn: () => apiGet<unknown[]>(d.url).catch(() => [] as unknown[]),
-      staleTime: 15_000,
-      retry: false,
-    })),
+  const searchQ = useQuery<SearchResponse>({
+    queryKey: ['search', debouncedQuery],
+    queryFn: () =>
+      apiGet<SearchResponse>(`/api/search?q=${encodeURIComponent(debouncedQuery)}`),
+    enabled: searchEnabled,
+    staleTime: 10_000,
+    retry: false,
   });
 
-  const demands = dedupeById<Demand>(
-    queryDescs
-      .map((d, i) => (d.kind === 'demand' ? ((queries[i]?.data ?? []) as Demand[]) : []))
-      .filter((x): x is Demand[] => Array.isArray(x)),
-  );
-  const services = dedupeById<Service>(
-    queryDescs
-      .map((d, i) => (d.kind === 'service' ? ((queries[i]?.data ?? []) as Service[]) : []))
-      .filter((x): x is Service[] => Array.isArray(x)),
-  );
-  const changes = dedupeById<Change>(
-    queryDescs
-      .map((d, i) => (d.kind === 'change' ? ((queries[i]?.data ?? []) as Change[]) : []))
-      .filter((x): x is Change[] => Array.isArray(x)),
-  );
-  const problems = dedupeById<Problem>(
-    queryDescs
-      .map((d, i) => (d.kind === 'problem' ? ((queries[i]?.data ?? []) as Problem[]) : []))
-      .filter((x): x is Problem[] => Array.isArray(x)),
-  );
+  // ---- Recent communications (for the Communications group) ---------------
+  // We fetch the most recent communications and let cmdk's fuzzy filter handle
+  // the query. This avoids adding a free-text endpoint just for the palette.
+  const commsQ = useQuery<CommunicationRow[]>({
+    queryKey: ['communications', 'palette'],
+    queryFn: () => apiGet<CommunicationRow[]>('/api/communications'),
+    staleTime: 60_000,
+    retry: false,
+  });
 
-  const isLoading = queries.some((q) => q.isLoading);
+  // ---- Recent audit logs (CM Leader only) --------------------------------
+  const auditQ = useQuery<SearchResponseAudit[]>({
+    queryKey: ['audit-logs', 'palette'],
+    queryFn: () => apiGet<SearchResponseAudit[]>('/api/audit-logs?limit=50'),
+    enabled: role === 'CM_LEADER',
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const isLoading = searchEnabled && searchQ.isFetching;
+  const hits = searchQ.data?.results ?? [];
+
+  // Group hits by type.
+  const demands = hits.filter((h) => h.type === 'DEMAND');
+  const tickets = hits.filter((h) => h.type === 'TICKET');
+  const services = hits.filter((h) => h.type === 'SERVICE');
+  const knowledge = hits.filter((h) => h.type === 'KNOWLEDGE');
+  const changes = hits.filter((h) => h.type === 'CHANGE');
+  const problems = hits.filter((h) => h.type === 'PROBLEM');
+
+  // Communications: client-side filter on subject.
+  const commsFiltered = (commsQ.data ?? [])
+    .filter((c) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return (
+        c.subject.toLowerCase().includes(q) ||
+        c.authorName.toLowerCase().includes(q) ||
+        c.direction.toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 12);
+
+  // Audit logs: client-side filter on action/actor/entity.
+  const auditFiltered = (auditQ.data ?? [])
+    .filter((r) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return (
+        r.action.toLowerCase().includes(q) ||
+        r.actorName.toLowerCase().includes(q) ||
+        r.entityType.toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 12);
+
   const serviceView: ViewKey = role === 'SERVICE_OWNER' ? 'portfolio' : 'catalog';
 
   const quickActions = React.useMemo<QuickAction[]>(() => {
@@ -204,12 +205,26 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
       });
     }
     if (role === 'CM_LEADER') {
-      actions.push({
-        key: 'workers',
-        label: 'View SCM Workers',
-        icon: Users,
-        run: () => onNavigate('workers'),
-      });
+      actions.push(
+        {
+          key: 'workers',
+          label: 'View SCM Workers',
+          icon: Users,
+          run: () => onNavigate('workers'),
+        },
+        {
+          key: 'audit',
+          label: 'Open Audit Log',
+          icon: ScrollText,
+          run: () => onNavigate('audit'),
+        },
+        {
+          key: 'delivery-failures',
+          label: 'Open Delivery Admin',
+          icon: Mail,
+          run: () => onNavigate('delivery-failures'),
+        },
+      );
     }
     if (role === 'SERVICE_OWNER') {
       actions.push({
@@ -242,13 +257,24 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
     return actions;
   }, [role, onNavigate, onOpenAi, onSignOut]);
 
+  // Helper: navigate to the appropriate detail view for a hit.
+  const navigateHit = (h: SearchHit) => {
+    if (h.type === 'TICKET') onNavigate('ticket-detail', { id: h.id });
+    else if (h.type === 'DEMAND') onNavigate('demand-detail', { id: h.id });
+    else if (h.type === 'SERVICE') onNavigate(serviceView);
+    else if (h.type === 'KNOWLEDGE') onNavigate('knowledge');
+    else if (h.type === 'CHANGE') onNavigate('changes');
+    else if (h.type === 'PROBLEM') onNavigate('problems');
+  };
+
   return (
-    <Command
-      className="rounded-lg"
-      loop
-    >
-      <CommandInput placeholder="Search demands, services, changes, or actions…" />
-      <CommandList className="max-h-[min(50vh,360px)]">
+    <Command className="rounded-lg" loop shouldFilter={query.trim().length < 2}>
+      <CommandInput
+        placeholder="Search demands, tickets, services, knowledge, changes, problems…"
+        value={query}
+        onValueChange={setQuery}
+      />
+      <CommandList className="max-h-[min(60vh,440px)]">
         {isLoading && (
           <div className="p-2 space-y-1.5">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -257,7 +283,10 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
           </div>
         )}
 
-        {!isLoading && (
+        {!isLoading && !searchEnabled && (
+          <CommandEmpty>Type at least 2 characters to search.</CommandEmpty>
+        )}
+        {!isLoading && searchEnabled && hits.length === 0 && commsFiltered.length === 0 && (!auditQ.data || auditFiltered.length === 0) && (
           <CommandEmpty>No matches found.</CommandEmpty>
         )}
 
@@ -284,24 +313,43 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
         {/* Demands */}
         {!isLoading && demands.length > 0 && (
           <CommandGroup heading={`Demands · ${demands.length}`}>
-            {demands.slice(0, 30).map((d) => (
-              <CommandItem
-                key={d.id}
-                value={`demand ${d.title} ${d.serviceCustomerName ?? ''} ${DEMAND_STATUS_LABELS[d.status]}`}
-                onSelect={() => onNavigate('demand-detail', { id: d.id })}
-              >
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="flex-1 truncate">{d.title}</span>
-                <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
-                  {d.serviceCustomerName ?? '—'}
-                </span>
-                <span
-                  className={cn(
-                    'text-xs font-medium ml-2',
-                    demandStatusTone[d.status],
-                  )}
+            {demands.slice(0, 10).map((d) => {
+              const status = (d.subtitle ?? '') as DemandStatus;
+              return (
+                <CommandItem
+                  key={d.id}
+                  value={`demand ${d.title} ${d.subtitle ?? ''}`}
+                  onSelect={() => navigateHit(d)}
                 >
-                  {DEMAND_STATUS_LABELS[d.status]}
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex-1 truncate">{d.title}</span>
+                  <span
+                    className={cn(
+                      'text-xs font-medium ml-2',
+                      demandStatusTone[status] ?? 'text-muted-foreground',
+                    )}
+                  >
+                    {DEMAND_STATUS_LABELS[status] ?? d.subtitle}
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        )}
+
+        {/* Tickets */}
+        {!isLoading && tickets.length > 0 && (
+          <CommandGroup heading={`Tickets · ${tickets.length}`}>
+            {tickets.slice(0, 10).map((t) => (
+              <CommandItem
+                key={t.id}
+                value={`ticket ${t.title} ${t.subtitle ?? ''}`}
+                onSelect={() => navigateHit(t)}
+              >
+                <TicketIcon className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1 truncate">{t.title}</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
+                  {t.subtitle ?? ''}
                 </span>
               </CommandItem>
             ))}
@@ -311,20 +359,36 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
         {/* Services */}
         {!isLoading && services.length > 0 && (
           <CommandGroup heading={`Services · ${services.length}`}>
-            {services.slice(0, 30).map((s) => (
+            {services.slice(0, 10).map((s) => (
               <CommandItem
                 key={s.id}
-                value={`service ${s.name} ${s.chapter ?? ''} ${SERVICE_DOMAIN_LABELS[s.domain] ?? ''} class ${s.slaClass}`}
-                onSelect={() => onNavigate(serviceView)}
+                value={`service ${s.title} ${s.subtitle ?? ''}`}
+                onSelect={() => navigateHit(s)}
               >
                 <Library className="h-4 w-4 text-muted-foreground" />
-                <span className="flex-1 truncate">{s.name}</span>
+                <span className="flex-1 truncate">{s.title}</span>
                 <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
-                  {SERVICE_DOMAIN_LABELS[s.domain] ?? s.domain}
+                  {s.subtitle ?? ''}
                 </span>
-                <Badge variant="outline" className="ml-2 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
-                  Class {s.slaClass}
-                </Badge>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* Knowledge articles */}
+        {!isLoading && knowledge.length > 0 && (
+          <CommandGroup heading={`Knowledge · ${knowledge.length}`}>
+            {knowledge.slice(0, 10).map((k) => (
+              <CommandItem
+                key={k.id}
+                value={`knowledge article ${k.title} ${k.subtitle ?? ''}`}
+                onSelect={() => navigateHit(k)}
+              >
+                <BookOpen className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1 truncate">{k.title}</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
+                  {k.subtitle ?? ''}
+                </span>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -333,41 +397,73 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
         {/* Changes */}
         {!isLoading && changes.length > 0 && (
           <CommandGroup heading={`Changes · ${changes.length}`}>
-            {changes.slice(0, 20).map((c) => (
+            {changes.slice(0, 10).map((c) => (
               <CommandItem
                 key={c.id}
-                value={`change ${c.title} ${CHANGE_STATUS_LABELS[c.status]} ${c.type}`}
-                onSelect={() => onNavigate('changes')}
+                value={`change ${c.title} ${c.subtitle ?? ''}`}
+                onSelect={() => navigateHit(c)}
               >
                 <GitBranch className="h-4 w-4 text-muted-foreground" />
                 <span className="flex-1 truncate">{c.title}</span>
                 <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[120px]">
-                  {c.type.toLowerCase()}
-                </span>
-                <span className="text-xs text-muted-foreground ml-2">
-                  {CHANGE_STATUS_LABELS[c.status]}
+                  {c.subtitle ?? ''}
                 </span>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
 
-        {/* Problems (Service Owner) */}
+        {/* Problems */}
         {!isLoading && problems.length > 0 && (
           <CommandGroup heading={`Problems · ${problems.length}`}>
-            {problems.slice(0, 20).map((p) => (
+            {problems.slice(0, 10).map((p) => (
               <CommandItem
                 key={p.id}
-                value={`problem ${p.title} ${p.serviceName ?? ''} ${p.status}`}
-                onSelect={() => onNavigate('problems')}
+                value={`problem ${p.title} ${p.subtitle ?? ''}`}
+                onSelect={() => navigateHit(p)}
               >
                 <Bug className="h-4 w-4 text-muted-foreground" />
                 <span className="flex-1 truncate">{p.title}</span>
                 <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
-                  {p.serviceName ?? '—'}
+                  {p.subtitle ?? ''}
                 </span>
-                <span className="text-xs text-muted-foreground ml-2 capitalize">
-                  {p.status?.toLowerCase()}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* Communications (recent, client-filtered) */}
+        {!isLoading && commsFiltered.length > 0 && (
+          <CommandGroup heading={`Communications · ${commsFiltered.length}`}>
+            {commsFiltered.slice(0, 8).map((c) => (
+              <CommandItem
+                key={c.id}
+                value={`communication ${c.subject} ${c.authorName} ${c.direction}`}
+                onSelect={() => onNavigate('demands')}
+              >
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1 truncate">{c.subject}</span>
+                <Badge variant="outline" className="ml-2 h-5 px-1.5 text-[10px] font-medium">
+                  {c.direction === 'TO_CUSTOMER' ? '→ Customer' : 'Internal'}
+                </Badge>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* Audit Logs (CM Leader only) */}
+        {!isLoading && role === 'CM_LEADER' && auditFiltered.length > 0 && (
+          <CommandGroup heading={`Audit Log · ${auditFiltered.length}`}>
+            {auditFiltered.slice(0, 8).map((a) => (
+              <CommandItem
+                key={a.id}
+                value={`audit ${a.action} ${a.actorName} ${a.entityType} ${a.entityId}`}
+                onSelect={() => onNavigate('audit', { id: a.entityId })}
+              >
+                <ScrollText className="h-4 w-4 text-muted-foreground" />
+                <span className="flex-1 truncate font-mono text-xs">{a.action}</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[120px]">
+                  {a.actorName} · {a.entityType}
                 </span>
               </CommandItem>
             ))}
@@ -380,7 +476,7 @@ export function CommandPalette({ role, onNavigate, onOpenAi, onSignOut }: Comman
       <div className="flex items-center justify-between gap-3 px-3 py-2 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Search className="h-3 w-3" />
-          <span>type to filter</span>
+          <span>type to search across the tenant</span>
         </span>
         <span className="flex items-center gap-2">
           <kbd className="rounded border bg-muted px-1 py-0.5 font-sans">↑</kbd>

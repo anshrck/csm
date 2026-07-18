@@ -5,6 +5,11 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
 import {
+  canAccessEntity,
+  type EntityType,
+} from '@/lib/entity-access';
+import type { SessionUser } from '@/lib/types';
+import {
   ATTACHMENT_INCLUDE,
   asAttachmentEntityType,
   buildStorageKey,
@@ -12,15 +17,15 @@ import {
   isAllowedMime,
   MAX_FILE_BYTES,
   serializeAttachment,
+  type AttachmentEntityType,
 } from './_serialize';
 
 export const runtime = 'nodejs';
 
 // GET /api/attachments?entityType=DEMAND&entityId=...
-// Lists attachments for an entity. All authenticated roles can list — the
-// underlying entity's role scoping is enforced at the workspace layer. We do
-// gate SERVICE_CUSTOMER to attachments on their own orgNode's tickets/demands
-// for safety, and to their own comments.
+// Lists attachments for an entity. All authenticated roles can list, but the
+// caller must pass the entity-access gate (read) on the underlying entity.
+// For COMMENT entity type we resolve the underlying conversation entity first.
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -40,12 +45,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'INVALID_ENTITY_ID — entityId is required' }, { status: 400 });
     }
 
-    // SERVICE_CUSTOMER scope check — confirm they own the underlying entity.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      const ok = await customerCanAccessEntity(session.id, session.orgNodeId, entityType, entityId);
-      if (!ok) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Entity-access gate (read) — verify the caller can read the underlying entity.
+    const ok = await canAccessAttachmentEntity(session, entityType, entityId, 'read');
+    if (!ok) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const rows = await db.attachment.findMany({
@@ -118,12 +121,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // SERVICE_CUSTOMER scope check on the underlying entity.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      const ok = await customerCanAccessEntity(session.id, session.orgNodeId, entityType, entityId);
-      if (!ok) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Entity-access gate (write) — caller must be allowed to write the
+    // underlying entity before we attach a file to it.
+    try {
+      await requireAttachmentEntityAccess(session, entityType, entityId, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const storageKey = buildStorageKey(fileName);
@@ -165,48 +168,46 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// SERVICE_CUSTOMER ownership check for the underlying entity.
-async function customerCanAccessEntity(
-  _userId: string,
-  orgNodeId: string | null,
-  entityType: 'TICKET' | 'DEMAND' | 'CHANGE' | 'PROBLEM' | 'SLA_EVENT' | 'COMMENT',
+// ---- Attachment-scoped entity-access helpers -------------------------------
+//
+// Attachments can attach to COMMENT as well as the canonical entity types in
+// `EntityType`. For COMMENT, we resolve the underlying conversation (and its
+// owning entity) before delegating to the entity-access helper.
+
+async function resolveCommentUnderlyingEntity(
+  commentId: string,
+): Promise<{ entityType: EntityType; entityId: string } | null> {
+  const c = await db.comment.findUnique({
+    where: { id: commentId },
+    include: { conversation: { select: { entityType: true, entityId: true } } },
+  });
+  if (!c) return null;
+  return {
+    entityType: c.conversation.entityType as EntityType,
+    entityId: c.conversation.entityId,
+  };
+}
+
+async function canAccessAttachmentEntity(
+  session: SessionUser,
+  entityType: AttachmentEntityType,
   entityId: string,
+  action: 'read' | 'write',
 ): Promise<boolean> {
-  if (!orgNodeId) return false;
-  try {
-    if (entityType === 'TICKET') {
-      const t = await db.ticket.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(t && t.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'DEMAND') {
-      const d = await db.demand.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(d && d.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'COMMENT') {
-      // A customer may upload to a comment if they can see the comment's
-      // conversation (which itself is tied to their orgNode).
-      const c = await db.comment.findUnique({
-        where: { id: entityId },
-        include: { conversation: { select: { serviceCustomerId: true } } },
-      });
-      return Boolean(c && c.conversation.serviceCustomerId === orgNodeId);
-    }
-    if (entityType === 'SLA_EVENT') {
-      const e = await db.slaEvent.findUnique({
-        where: { id: entityId },
-        select: { serviceCustomerId: true },
-      });
-      return Boolean(e && e.serviceCustomerId === orgNodeId);
-    }
-    // CHANGE / PROBLEM are internal — customers can't attach to them directly.
-    return false;
-  } catch {
-    return false;
+  if (entityType === 'COMMENT') {
+    const underlying = await resolveCommentUnderlyingEntity(entityId);
+    if (!underlying) return false;
+    return canAccessEntity(session, underlying.entityType, underlying.entityId, action);
   }
+  return canAccessEntity(session, entityType as EntityType, entityId, action);
+}
+
+async function requireAttachmentEntityAccess(
+  session: SessionUser,
+  entityType: AttachmentEntityType,
+  entityId: string,
+  action: 'read' | 'write',
+): Promise<void> {
+  const ok = await canAccessAttachmentEntity(session, entityType, entityId, action);
+  if (!ok) throw new Error('FORBIDDEN');
 }

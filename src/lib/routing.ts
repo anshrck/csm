@@ -63,6 +63,14 @@ export const VIEW_PATH: Record<ViewKey, string> = {
   knowledge: 'knowledge',
   tickets: 'tickets',
   'ticket-detail': 'tickets',
+  // Enterprise Workflow Review — ticket UI + CSAT follow-up + customer assignment
+  'submit-ticket': 'submit-ticket',
+  'ticket-ops': 'ticket-ops',
+  'service-incidents': 'service-incidents',
+  'csat-followup': 'csat-followup',
+  // Enterprise Workflow Review — CM Leader oversight views
+  audit: 'audit',
+  'delivery-failures': 'delivery-failures',
 };
 
 /**

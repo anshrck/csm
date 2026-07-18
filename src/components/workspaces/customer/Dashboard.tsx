@@ -13,6 +13,9 @@ import {
   Activity,
   HeartPulse,
   Inbox,
+  MessageSquare,
+  BookOpen,
+  ChevronRight,
 } from 'lucide-react';
 import { useApp } from '@/lib/store';
 import { apiGet } from '@/lib/api';
@@ -21,10 +24,10 @@ import {
   type Service,
   type SlaEvent,
   type SlaHealth,
-  type DashboardStats,
   DEMAND_PIPELINE,
   DEMAND_STATUS_LABELS,
 } from '@/lib/types';
+import type { Ticket } from '@/lib/tickets';
 import {
   PageHeader,
   StatCard,
@@ -44,8 +47,15 @@ import {
 } from '@/components/shared';
 import { cn } from '@/lib/utils';
 
-// Extended stats shape returned by /api/stats (superset of DashboardStats).
-interface StatsResponse extends DashboardStats {
+/* ----------------------------- Response types ----------------------------- */
+
+interface StatsResponse {
+  totalDemands: number;
+  byStatus: Record<string, number>;
+  slaWarnings: number;
+  slaBreaches: number;
+  pendingApprovals: number;
+  openChanges: number;
   pipeline?: { status: string; count: number }[];
   slaByService?: {
     serviceId: string;
@@ -62,48 +72,126 @@ interface StatsResponse extends DashboardStats {
     actorName: string;
     createdAt: string;
   }[];
+  totalOpenTickets?: number;
+  totalActiveDemands?: number;
+  avgCsat?: number | null;
+  reopenRate?: number | null;
 }
+
+interface OverviewResponse {
+  totalOpenTickets: number;
+  totalActiveDemands: number;
+  slaBreaches: number;
+  slaWarnings: number;
+  avgCsat: number | null;
+  reopenRate: number | null;
+}
+
+interface TicketsStatsResponse {
+  byStatus: Record<string, number>;
+  waitingCustomer: number;
+  unassigned: number;
+  reopened: number;
+  slaBreached: number;
+}
+
+interface KnowledgeSummary {
+  id: string;
+  title: string;
+  type: string;
+  serviceName: string | null;
+  snippet: string;
+  updatedAt: string;
+}
+
+interface CommunicationRow {
+  id: string;
+  demandId: string | null;
+  subject: string;
+  body: string;
+  authorName: string;
+  createdAt: string;
+}
+
+/* ----------------------------- Component ----------------------------- */
 
 export default function Dashboard() {
   const { navigate } = useApp();
 
+  // Blended overview + tickets stats (new split endpoints).
+  const overviewQ = useQuery({
+    queryKey: ['stats', 'overview'],
+    queryFn: () => apiGet<OverviewResponse>('/api/stats/overview'),
+    staleTime: 30_000,
+  });
+  const ticketStatsQ = useQuery({
+    queryKey: ['stats', 'tickets'],
+    queryFn: () => apiGet<TicketsStatsResponse>('/api/stats/tickets'),
+    staleTime: 30_000,
+  });
+
+  // Legacy /api/stats (kept as a backward-compatible aggregator — provides
+  // slaByService + recentActivity + pipeline).
   const statsQ = useQuery({
     queryKey: ['stats'],
     queryFn: () => apiGet<StatsResponse>('/api/stats'),
+    staleTime: 30_000,
   });
 
   const demandsQ = useQuery({
     queryKey: ['demands', 'mine'],
     queryFn: () => apiGet<Demand[]>('/api/demands?mine=1'),
   });
-
   const servicesQ = useQuery({
     queryKey: ['services', 'entitled'],
     queryFn: () => apiGet<Service[]>('/api/services?entitled=1'),
   });
-
   const slaEventsQ = useQuery({
     queryKey: ['sla-events'],
     queryFn: () => apiGet<SlaEvent[]>('/api/sla-events'),
   });
 
-  // Tickets raised by this customer's org that are still in an open state.
-  const openTicketsQ = useQuery({
+  // Tickets — open + waiting-customer subsets (used by the operational panels).
+  const openTicketsQ = useQuery<Ticket[]>({
     queryKey: ['tickets', 'customer-dashboard', 'open'],
     queryFn: () =>
-      apiGet<Array<{ id: string; status: string }>>(
-        '/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER',
-      ),
+      apiGet<Ticket[]>(
+        '/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER&sort=sla',
+    ),
     staleTime: 30_000,
   });
-  const openTicketCount = openTicketsQ.data?.length ?? 0;
+  const waitingTicketsQ = useQuery<Ticket[]>({
+    queryKey: ['tickets', 'customer-dashboard', 'waiting'],
+    queryFn: () => apiGet<Ticket[]>('/api/tickets?status=WAITING_CUSTOMER'),
+    staleTime: 30_000,
+  });
+
+  // Recent support messages — communications addressed TO this customer.
+  const commsQ = useQuery<CommunicationRow[]>({
+    queryKey: ['communications', 'recent'],
+    queryFn: () => apiGet<CommunicationRow[]>('/api/communications'),
+    staleTime: 60_000,
+  });
+
+  // Recommended knowledge — three most recently published articles.
+  const knowledgeQ = useQuery<KnowledgeSummary[]>({
+    queryKey: ['knowledge', 'recommended'],
+    queryFn: () =>
+      apiGet<KnowledgeSummary[]>('/api/knowledge?status=PUBLISHED&summary=1'),
+    staleTime: 60_000,
+  });
 
   const demands = demandsQ.data ?? [];
   const services = servicesQ.data ?? [];
   const slaEvents = slaEventsQ.data ?? [];
   const stats = statsQ.data;
+  const overview = overviewQ.data;
+  const ticketStats = ticketStatsQ.data;
+  const openTickets = openTicketsQ.data ?? [];
+  const waitingTickets = waitingTicketsQ.data ?? [];
+  const comms = commsQ.data ?? [];
+  const knowledge = knowledgeQ.data ?? [];
 
-  // Pending My Action = QUOTED demands awaiting customer decision
   const pendingDemands = useMemo(
     () =>
       demands
@@ -112,7 +200,6 @@ export default function Dashboard() {
     [demands],
   );
 
-  // Compute SLA health per service from events (fallback when stats.slaByService missing)
   const slaHealthByService = useMemo(() => {
     const map = new Map<string, { health: SlaHealth; warnings: number; breaches: number }>();
     for (const ev of slaEvents) {
@@ -131,14 +218,15 @@ export default function Dashboard() {
 
   const recentActivity = stats?.recentActivity ?? [];
 
-  const pendingCount = stats?.byStatus?.QUOTED ?? pendingDemands.length;
-  const slaWarnings = stats?.slaWarnings ?? slaEvents.filter((e) => e.eventType === 'WARNING').length;
-  const slaBreaches = stats?.slaBreaches ?? slaEvents.filter((e) => e.eventType === 'BREACHED').length;
-  const totalDemands = stats?.totalDemands ?? demands.length;
+  const myOpenTicketCount = overview?.totalOpenTickets ?? openTickets.length;
+  const waitingCustomerCount =
+    ticketStats?.waitingCustomer ?? waitingTickets.length;
+  const slaBreaches = overview?.slaBreaches ?? stats?.slaBreaches ?? 0;
+  const slaWarnings = overview?.slaWarnings ?? stats?.slaWarnings ?? 0;
+  const totalDemands = overview?.totalActiveDemands ?? stats?.totalDemands ?? demands.length;
 
   const loading = demandsQ.isLoading || statsQ.isLoading;
 
-  // SLA health rows — prefer stats.slaByService; fall back to client computation.
   const slaHealthRows = useMemo(() => {
     if (stats?.slaByService && stats.slaByService.length > 0) {
       return stats.slaByService.map((s) => ({
@@ -165,7 +253,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        description="Your demand pipeline and service governance overview."
+        description="Your service operations overview — tickets, demands, SLA posture, and recommended knowledge."
         icon={<LayoutDashboard className="h-5 w-5" />}
         actions={
           <Button onClick={() => navigate('submit-demand')} className="gap-2">
@@ -175,50 +263,151 @@ export default function Dashboard() {
         }
       />
 
-      {/* Stat cards */}
+      {/* Operational stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          label="Total Demands"
+          label="My Open Tickets"
+          value={loading ? '—' : myOpenTicketCount}
+          icon={<Inbox className="h-4 w-4" />}
+          hint="Tickets raised by your org still in flight"
+          tone={myOpenTicketCount > 0 ? 'warning' : 'default'}
+          onClick={() => navigate('tickets')}
+        />
+        <StatCard
+          label="Waiting for My Response"
+          value={loading ? '—' : waitingCustomerCount}
+          icon={<Clock className="h-4 w-4" />}
+          hint="Tickets paused until you reply"
+          tone={waitingCustomerCount > 0 ? 'warning' : 'default'}
+          onClick={() => navigate('tickets')}
+        />
+        <StatCard
+          label="SLA Breached"
+          value={loading ? '—' : slaBreaches}
+          icon={<ShieldAlert className="h-4 w-4" />}
+          hint="Targets missed on your services"
+          tone={slaBreaches > 0 ? 'danger' : 'success'}
+          onClick={() => navigate('sla')}
+        />
+        <StatCard
+          label="SLA At Risk"
+          value={loading ? '—' : slaWarnings}
+          icon={<AlertTriangle className="h-4 w-4" />}
+          hint="Approaching threshold — action now"
+          tone={slaWarnings > 0 ? 'warning' : 'success'}
+          onClick={() => navigate('sla')}
+        />
+        <StatCard
+          label="My Active Demands"
           value={loading ? '—' : totalDemands}
           icon={<FileText className="h-4 w-4" />}
           hint="All demands you have submitted"
           onClick={() => navigate('demands')}
         />
-        <StatCard
-          label="Pending My Action"
-          value={loading ? '—' : pendingCount}
-          icon={<Clock className="h-4 w-4" />}
-          hint="Quotes awaiting your decision"
-          tone={pendingCount > 0 ? 'warning' : 'default'}
-          onClick={() => navigate('demands')}
-        />
-        <StatCard
-          label="Open Tickets"
-          value={openTicketCount}
-          icon={<Inbox className="h-4 w-4" />}
-          hint="Tickets raised by your org — NEW + active"
-          tone={openTicketCount > 0 ? 'warning' : 'default'}
-          onClick={() => navigate('tickets')}
-        />
-        <StatCard
-          label="SLA Warnings"
-          value={loading ? '—' : slaWarnings}
-          icon={<AlertTriangle className="h-4 w-4" />}
-          hint="Approaching threshold"
-          tone={slaWarnings > 0 ? 'warning' : 'success'}
-          onClick={() => navigate('sla')}
-        />
-        <StatCard
-          label="SLA Breaches"
-          value={loading ? '—' : slaBreaches}
-          icon={<ShieldAlert className="h-4 w-4" />}
-          hint="Targets missed"
-          tone={slaBreaches > 0 ? 'danger' : 'success'}
-          onClick={() => navigate('sla')}
-        />
       </div>
 
-      {/* Demand pipeline lanes */}
+      {/* My Open Tickets + Waiting for My Response */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <SectionCard
+          title="My Open Tickets"
+          description="Tickets raised by your organisation that are still open — sorted by SLA due date."
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => navigate('tickets')} className="gap-1">
+              All tickets <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
+          {openTicketsQ.isLoading ? (
+            <LoadingState rows={3} />
+          ) : openTickets.length === 0 ? (
+            <EmptyState
+              icon={<Inbox className="h-8 w-8" />}
+              title="No open tickets"
+              description="Raise a ticket from the service catalog when you need help."
+            />
+          ) : (
+            <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+              {openTickets.slice(0, 8).map((t) => (
+                <li
+                  key={t.id}
+                  className="py-2.5 first:pt-0 last:pb-0 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+                  onClick={() => navigate('ticket-detail', { id: t.id })}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-mono text-muted-foreground">{t.number}</span>
+                        <PriorityDot priority={t.priority} />
+                        <span className="text-sm font-medium truncate">{t.title}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                        {t.serviceName ?? 'General'} · {t.status.replace(/_/g, ' ').toLowerCase()}
+                      </div>
+                    </div>
+                    <SlaStatusPill ticket={t} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          title="Waiting for My Response"
+          description="Tickets paused until you reply — your response unblocks SLA clocks."
+          actions={
+            waitingCustomerCount > 0 ? (
+              <Badge variant="outline" className="gap-1">
+                <Clock className="h-3 w-3" /> {waitingCustomerCount} waiting
+              </Badge>
+            ) : null
+          }
+        >
+          {waitingTickets.length === 0 ? (
+            <EmptyState
+              icon={<Clock className="h-8 w-8" />}
+              title="Nothing waiting on you"
+              description="Tickets needing your response will appear here."
+            />
+          ) : (
+            <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+              {waitingTickets.map((t) => (
+                <li
+                  key={t.id}
+                  className="py-2.5 first:pt-0 last:pb-0 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+                  onClick={() => navigate('ticket-detail', { id: t.id })}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-mono text-muted-foreground">{t.number}</span>
+                        <PriorityDot priority={t.priority} />
+                        <span className="text-sm font-medium truncate">{t.title}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                        {t.serviceName ?? 'General'} · waiting since{' '}
+                        <RelativeTime date={t.updatedAt} />
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('ticket-detail', { id: t.id });
+                      }}
+                    >
+                      Reply
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Demand pipeline */}
       <SectionCard
         title="Demand Pipeline"
         description="Your demands grouped by lifecycle stage. Click a card to open details."
@@ -244,7 +433,7 @@ export default function Dashboard() {
         )}
       </SectionCard>
 
-      {/* Pending My Action + SLA Health */}
+      {/* Pending My Action + Recent Support Messages */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <SectionCard
           title="Pending My Action"
@@ -309,6 +498,49 @@ export default function Dashboard() {
         </SectionCard>
 
         <SectionCard
+          title="Recent Support Messages"
+          description="Latest communications sent to your organisation by the SCM team."
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => navigate('demands')} className="gap-1">
+              All threads <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
+          {comms.length === 0 ? (
+            <EmptyState
+              icon={<MessageSquare className="h-8 w-8" />}
+              title="No messages yet"
+              description="Communications from your SCM team will surface here."
+            />
+          ) : (
+            <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+              {comms.slice(0, 6).map((c) => (
+                <li
+                  key={c.id}
+                  className="py-3 first:pt-0 last:pb-0 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+                  onClick={() => c.demandId && navigate('demand-detail', { id: c.demandId })}
+                >
+                  <div className="flex items-start gap-3">
+                    <UserAvatar name={c.authorName} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-medium truncate">{c.subject}</p>
+                        <RelativeTime date={c.createdAt} className="text-xs text-muted-foreground shrink-0" />
+                      </div>
+                      <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{c.body}</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground/80">from {c.authorName}</p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* SLA Health + Recommended Knowledge */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <SectionCard
           title="SLA Health"
           description="Per-service health across your entitled catalog."
           actions={
@@ -345,6 +577,46 @@ export default function Dashboard() {
                     <SlaClassBadge slaClass={s.slaClass} />
                     <SlaHealthBadge health={s.health} />
                   </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          title="Recommended Knowledge"
+          description="Recently published articles from the knowledge base."
+          actions={
+            <Button variant="ghost" size="sm" onClick={() => navigate('knowledge')} className="gap-1">
+              Browse all <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          }
+        >
+          {knowledgeQ.isLoading ? (
+            <LoadingState rows={3} />
+          ) : knowledge.length === 0 ? (
+            <EmptyState
+              icon={<BookOpen className="h-8 w-8" />}
+              title="No articles published"
+              description="Knowledge articles will appear here as they are published."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {knowledge.slice(0, 3).map((a) => (
+                <li
+                  key={a.id}
+                  className="rounded-md border p-3 hover:border-primary/40 hover:bg-muted/40 transition-colors cursor-pointer"
+                  onClick={() => navigate('knowledge')}
+                >
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-medium truncate flex-1">{a.title}</span>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{a.snippet}</p>
+                  {a.serviceName && (
+                    <p className="mt-1 text-[11px] text-muted-foreground/80">{a.serviceName}</p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -401,6 +673,80 @@ export default function Dashboard() {
         )}
       </SectionCard>
     </div>
+  );
+}
+
+/* ----------------------------- Inline helpers ----------------------------- */
+
+function PriorityDot({ priority }: { priority: string }) {
+  const cls =
+    priority === 'P1'
+      ? 'bg-rose-500'
+      : priority === 'P2'
+        ? 'bg-amber-500'
+        : priority === 'P3'
+          ? 'bg-teal-500'
+          : 'bg-sky-500';
+  return (
+    <span
+      className={cn('inline-block h-2 w-2 rounded-full shrink-0', cls)}
+      title={priority}
+      aria-label={`Priority ${priority}`}
+    />
+  );
+}
+
+function SlaStatusPill({ ticket }: { ticket: Ticket }) {
+  // Derive SLA status from ticket.slaClocks (lightweight).
+  const clocks = ticket.slaClocks ?? [];
+  if (clocks.length === 0) {
+    return <span className="text-[10px] text-muted-foreground">No SLA</span>;
+  }
+  const hasBreached = clocks.some((c) => c.status === 'BREACHED');
+  const hasRunning = clocks.some((c) => c.status === 'RUNNING');
+  if (hasBreached) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 text-[10px]"
+      >
+        Breached
+      </Badge>
+    );
+  }
+  if (hasRunning) {
+    const soonest = clocks
+      .filter((c) => c.status === 'RUNNING' && c.dueAt)
+      .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())[0];
+    if (!soonest) {
+      return (
+        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+          On track
+        </Badge>
+      );
+    }
+    const dueMs = new Date(soonest.dueAt).getTime();
+    const diffH = (dueMs - Date.now()) / 3_600_000;
+    if (diffH <= 2) {
+      return (
+        <Badge
+          variant="outline"
+          className="border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 text-[10px]"
+        >
+          Due {Math.max(0, Math.round(diffH))}h
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+        Due {Math.round(diffH)}h
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-300">
+      Met
+    </Badge>
   );
 }
 

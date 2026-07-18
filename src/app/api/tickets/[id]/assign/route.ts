@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
@@ -13,10 +15,12 @@ import {
 export const runtime = 'nodejs';
 
 // POST /api/tickets/[id]/assign
-// Body: { assignedUserId: string | null }
+// Body: { assignedUserId?: string, assignmentGroupId?: string }
 //
-// Transition: NEW | TRIAGED → ASSIGNED (or stays in current state if already
-// IN_PROGRESS/etc. — we just update the assignee and emit an event).
+// Transition: NEW | TRIAGED → ASSIGNED. Requires assignedUserId or assignmentGroupId
+// (state-machine enforced). For tickets already in ASSIGNED/IN_PROGRESS/etc.,
+// the assignee is simply updated without a status flip (the route rejects via
+// the state machine if the current status doesn't allow a transition to ASSIGNED).
 //
 // Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
@@ -34,15 +38,35 @@ export async function POST(
     }
     const { id } = await params;
 
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const ticket = await db.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // State-machine validation — ASSIGNED requires assignedUserId or assignmentGroupId.
+    const currentStatus = ticket.status as TicketStatus;
+    const targetStatus = ACTION_TO_STATUS.assign;
+    const transition = validateTransition(currentStatus, targetStatus, body, session.role);
+    if (!transition.valid) {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
+    }
+
     const assignedUserId =
       typeof body.assignedUserId === 'string' && body.assignedUserId.trim()
         ? body.assignedUserId.trim()
+        : null;
+    const assignmentGroupId =
+      typeof body.assignmentGroupId === 'string' && body.assignmentGroupId.trim()
+        ? body.assignmentGroupId.trim()
         : null;
 
     let assigneeName: string | null = null;
@@ -62,17 +86,34 @@ export async function POST(
       }
       assigneeName = u.name;
     }
+    if (assignmentGroupId) {
+      const g = await db.assignmentGroup.findUnique({
+        where: { id: assignmentGroupId },
+        select: { id: true },
+      });
+      if (!g) {
+        return NextResponse.json(
+          { error: 'assignmentGroupId does not reference a known group' },
+          { status: 400 },
+        );
+      }
+    }
 
-    const before = { assignedUserId: ticket.assignedUserId, status: ticket.status };
+    const before = {
+      assignedUserId: ticket.assignedUserId,
+      assignmentGroupId: ticket.assignmentGroupId,
+      status: ticket.status,
+    };
 
-    // If the ticket was NEW or TRIAGED, advance to ASSIGNED. Otherwise keep
-    // the existing status (the user is re-assigning mid-flight).
-    const nextStatus =
-      ticket.status === 'NEW' || ticket.status === 'TRIAGED' ? 'ASSIGNED' : ticket.status;
+    const data: Record<string, unknown> = {
+      assignedUserId,
+      assignmentGroupId,
+      status: targetStatus,
+    };
 
     const updated = await db.ticket.update({
       where: { id },
-      data: { assignedUserId, status: nextStatus },
+      data,
       include: TICKET_INCLUDE,
     });
 
@@ -84,17 +125,19 @@ export async function POST(
         actorName: session.name,
         notes: assignedUserId
           ? `Ticket assigned to ${assigneeName}.`
-          : `Ticket unassigned by ${session.name}.`,
+          : assignmentGroupId
+            ? `Ticket assigned to group ${assignmentGroupId}.`
+            : `Ticket unassigned by ${session.name}.`,
       },
     });
 
     await auditLog({
       actor: session,
-      action: 'TICKET_ASSIGN',
+      action: 'TICKET_ASSIGNED',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: { assignedUserId, status: nextStatus },
+      before: { ...before, status: currentStatus },
+      after: { assignedUserId, assignmentGroupId, status: targetStatus },
     });
 
     return NextResponse.json(serializeTicket(updated as TicketWithRelations));

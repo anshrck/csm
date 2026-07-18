@@ -18,13 +18,11 @@ import type { Role, SessionUser } from '@/lib/types';
  *
  * Scope rules (per task contract):
  *   - SERVICE_CUSTOMER: only tickets for their own orgNode (serviceCustomerId)
- *   - SCM_WORKER: assigned-to-me + unassigned + tickets on customer orgs they
- *                 serve (i.e. tickets whose serviceCustomerId matches one of
- *                 the orgNodes they currently serve as the assigned SCM). We
- *                 approximate "customer orgs they serve" as: every customer
- *                 orgNode that has at least one demand currently assigned to
- *                 this SCM Worker. This keeps the rule pragmatic without
- *                 requiring an explicit "SCM-to-customer" mapping table.
+ *   - SCM_WORKER: assigned-to-me OR (unassigned AND serviceCustomerId IN my
+ *                 assigned customer orgs) OR serviceCustomerId IN my assigned
+ *                 customer orgs. Customer-org assignments come from the
+ *                 CustomerAssignment table (the canonical SCM-to-customer
+ *                 mapping established in the Enterprise Workflow Review).
  *   - CM_LEADER: all tenant tickets
  *   - SERVICE_OWNER: tickets on services they own (serviceOwnerId = caller.id)
  */
@@ -39,21 +37,22 @@ export async function buildTicketScope(
     return { serviceCustomerId: session.orgNodeId };
   }
   if (session.role === ('SCM_WORKER' as Role)) {
-    // Assigned-to-me OR unassigned OR customers I serve.
-    // Resolve "customers I serve" via the demands currently assigned to me.
-    const myCustomerOrgIds = await db.demand
-      .findMany({
-        where: { assignedScmWorkerId: session.id },
-        select: { serviceCustomerId: true },
-        distinct: ['serviceCustomerId'],
-      })
-      .then((rows) => rows.map((r) => r.serviceCustomerId));
+    // Customer orgs this SCM worker is currently assigned to serve.
+    const assignments = await db.customerAssignment.findMany({
+      where: { userId: session.id, active: true },
+      select: { orgNodeId: true },
+    });
+    const myCustomerOrgIds = assignments.map((a) => a.orgNodeId);
 
     const orClauses: Record<string, unknown>[] = [
       { assignedUserId: session.id },
-      { assignedUserId: null },
     ];
     if (myCustomerOrgIds.length > 0) {
+      // Unassigned tickets on my customer orgs (the "queue I should pick up
+      // from") plus tickets on my customer orgs regardless of assignee.
+      orClauses.push({
+        AND: [{ assignedUserId: null }, { serviceCustomerId: { in: myCustomerOrgIds } }],
+      });
       orClauses.push({ serviceCustomerId: { in: myCustomerOrgIds } });
     }
     return { OR: orClauses };
@@ -93,16 +92,11 @@ export async function canReadTicket(
   }
   if (session.role === 'SCM_WORKER') {
     if (ticket.assignedUserId === session.id) return true;
-    if (ticket.assignedUserId === null) return true;
-    // Customers I serve
-    const myCustomerOrgIds = await db.demand
-      .findMany({
-        where: { assignedScmWorkerId: session.id },
-        select: { serviceCustomerId: true },
-        distinct: ['serviceCustomerId'],
-      })
-      .then((rows) => rows.map((r) => r.serviceCustomerId));
-    return myCustomerOrgIds.includes(ticket.serviceCustomerId);
+    // Customers I serve (via CustomerAssignment).
+    const count = await db.customerAssignment.count({
+      where: { userId: session.id, orgNodeId: ticket.serviceCustomerId, active: true },
+    });
+    return count > 0;
   }
   if (session.role === 'SERVICE_OWNER') {
     if (!ticket.serviceId) return false;

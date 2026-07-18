@@ -3,6 +3,11 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
 import {
+  canAccessEntity,
+  requireEntityAccess,
+  type EntityType,
+} from '@/lib/entity-access';
+import {
   CONVERSATION_INCLUDE,
   asEntityType,
   errorResponse,
@@ -13,9 +18,9 @@ export const runtime = 'nodejs';
 
 // GET /api/conversations?entityType=DEMAND&entityId=...&createIfMissing=1
 // Returns the conversation (with comments) for the given entity, optionally
-// creating one if it does not yet exist. SERVICE_CUSTOMER callers may only
-// read conversations tied to their own orgNode; we resolve the customer id
-// from the underlying entity (DEMAND / TICKET) when possible.
+// creating one if it does not yet exist. All roles are scoped via the
+// entity-access helper — access is verified before the conversation is read
+// or created.
 //
 // Query params:
 //   entityType (required) — TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
@@ -25,8 +30,7 @@ export const runtime = 'nodejs';
 // Role scoping (visibility is enforced on the comments array):
 //   SERVICE_CUSTOMER → CUSTOMER_VISIBLE comments only, and only for entities
 //                       in their orgNode.
-//   SCM_WORKER       → all comments for entities they're assigned to
-//                       (or any entity if no assignment mapping exists).
+//   SCM_WORKER       → all comments for entities they're assigned to.
 //   CM_LEADER        → all comments.
 //   SERVICE_OWNER    → all comments for entities tied to services they own.
 export async function GET(req: NextRequest) {
@@ -49,19 +53,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'INVALID_ENTITY_ID — entityId is required' }, { status: 400 });
     }
 
-    // Resolve the owning serviceCustomerId for the entity so we can scope
-    // SERVICE_CUSTOMER reads. Returns null if not applicable.
-    const serviceCustomerId = await resolveServiceCustomerId(entityType, entityId);
-
-    // SERVICE_CUSTOMER scope check: must own the underlying entity.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (!session.orgNodeId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-      if (!serviceCustomerId || serviceCustomerId !== session.orgNodeId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Entity-access gate (read) — verify the caller can read the underlying entity.
+    const ok = await canAccessEntity(session, entityType as EntityType, entityId, 'read');
+    if (!ok) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    // Resolve the owning serviceCustomerId for the entity so we can stamp it on
+    // newly-created conversations + scope SERVICE_CUSTOMER reads.
+    const serviceCustomerId = await resolveServiceCustomerId(entityType, entityId);
 
     let conv = await db.conversation.findFirst({
       where: { entityType, entityId },
@@ -69,7 +69,13 @@ export async function GET(req: NextRequest) {
     });
 
     if (!conv && createIfMissing) {
-      // Only internal roles + the owning customer can seed a conversation.
+      // Verify write access before creating a conversation shell.
+      try {
+        await requireEntityAccess(session, entityType as EntityType, entityId, 'write');
+      } catch {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+
       conv = await db.conversation.create({
         data: {
           entityType,
@@ -136,13 +142,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'INVALID_ENTITY_ID — entityId is required' }, { status: 400 });
     }
 
-    const serviceCustomerId = await resolveServiceCustomerId(entityType, entityId);
-
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (!session.orgNodeId || !serviceCustomerId || serviceCustomerId !== session.orgNodeId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Entity-access gate (write) — caller must be allowed to write the
+    // underlying entity before we create a conversation on it.
+    try {
+      await requireEntityAccess(session, entityType as EntityType, entityId, 'write');
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    const serviceCustomerId = await resolveServiceCustomerId(entityType, entityId);
 
     // Upsert — if a conversation already exists for this entity, return it.
     const existing = await db.conversation.findFirst({

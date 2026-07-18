@@ -85,6 +85,7 @@ import {
   UserPlus,
   Wrench,
 } from 'lucide-react';
+import EntityLinks from '@/components/workspaces/shared/EntityLinks';
 
 /* ------------------------------ helpers ------------------------------ */
 
@@ -1384,6 +1385,10 @@ export default function DemandDetail({
               <EmptyState icon={<MessageSquare className="size-6" />} title="No activity yet" />
             )}
           </SectionCard>
+
+          {/* Related entities — relate this demand to tickets, changes,
+              problems, or knowledge articles. */}
+          <EntityLinks entityType="DEMAND" entityId={demand.id} />
         </div>
 
         {/* Side column */}

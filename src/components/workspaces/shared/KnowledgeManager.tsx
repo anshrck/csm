@@ -64,6 +64,22 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   BookOpen,
   Plus,
   MoreHorizontal,
@@ -77,6 +93,8 @@ import {
   AlertOctagon,
   Wrench,
   Loader2,
+  History,
+  RotateCcw,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -573,67 +591,59 @@ function ArticleEditorDialog({
           <div className="py-12 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading article…
           </div>
+        ) : isEdit ? (
+          <Tabs defaultValue="editor" className="flex-1 flex flex-col overflow-hidden">
+            <TabsList className="self-start">
+              <TabsTrigger value="editor" className="gap-1.5">
+                <Pencil className="h-3.5 w-3.5" /> Editor
+              </TabsTrigger>
+              <TabsTrigger value="history" className="gap-1.5">
+                <History className="h-3.5 w-3.5" /> Version History
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="editor" className="flex-1 overflow-hidden mt-2 data-[state=inactive]:hidden">
+              <ScrollArea className="flex-1 -mx-1 px-1 max-h-[58vh]">
+                <ArticleEditorForm
+                  title={title}
+                  body={body}
+                  type={type}
+                  serviceId={serviceId}
+                  services={services}
+                  canSelectService={canSelectService}
+                  onTitle={setTitle}
+                  onBody={setBody}
+                  onType={(v) => setType(v)}
+                  onService={setServiceId}
+                />
+              </ScrollArea>
+            </TabsContent>
+            <TabsContent value="history" className="flex-1 overflow-hidden mt-2 data-[state=inactive]:hidden">
+              <ArticleVersionHistory
+                articleId={articleId!}
+                liveTitle={existing?.title}
+                liveBody={existing?.body}
+                onRestored={() => {
+                  // Invalidate + close so the editor re-opens with the restored state.
+                  qc.invalidateQueries({ queryKey: ['knowledge', 'article', articleId] });
+                  onOpenChange(false);
+                }}
+              />
+            </TabsContent>
+          </Tabs>
         ) : (
           <ScrollArea className="flex-1 -mx-1 px-1">
-            <div className="grid gap-4 py-2">
-              <div className="grid gap-1.5">
-                <Label htmlFor="kb-title">Title</Label>
-                <Input
-                  id="kb-title"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. How to reset your SSO password"
-                  maxLength={200}
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="kb-type">Type</Label>
-                  <Select value={type} onValueChange={(v) => setType(v as 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK')}>
-                    <SelectTrigger id="kb-type">
-                      <SelectValue placeholder="Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="HOW_TO">How To</SelectItem>
-                      <SelectItem value="KNOWN_ERROR">Known Error</SelectItem>
-                      <SelectItem value="FAQ">FAQ</SelectItem>
-                      <SelectItem value="RUNBOOK">Runbook</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {canSelectService && (
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="kb-service">Service (optional)</Label>
-                    <Select value={serviceId} onValueChange={setServiceId}>
-                      <SelectTrigger id="kb-service">
-                        <SelectValue placeholder="None" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">None</SelectItem>
-                        {services.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="kb-body">Body (Markdown)</Label>
-                <Textarea
-                  id="kb-body"
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  placeholder={'# Title\n\nWrite the article in **Markdown**. Supports headings, lists, code blocks, links, and tables.'}
-                  className="min-h-[320px] font-mono text-xs"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Tip: use <code className="font-mono">#</code> for headings, <code className="font-mono">-</code> for lists, <code className="font-mono">```</code> for code blocks.
-                </p>
-              </div>
-            </div>
+            <ArticleEditorForm
+              title={title}
+              body={body}
+              type={type}
+              serviceId={serviceId}
+              services={services}
+              canSelectService={canSelectService}
+              onTitle={setTitle}
+              onBody={setBody}
+              onType={(v) => setType(v)}
+              onService={setServiceId}
+            />
           </ScrollArea>
         )}
         <DialogFooter>
@@ -647,6 +657,263 @@ function ArticleEditorDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---- Editor form (split out so it can render in either a ScrollArea or a Tab) ----
+
+function ArticleEditorForm({
+  title,
+  body,
+  type,
+  serviceId,
+  services,
+  canSelectService,
+  onTitle,
+  onBody,
+  onType,
+  onService,
+}: {
+  title: string;
+  body: string;
+  type: 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK';
+  serviceId: string;
+  services: ServiceOption[];
+  canSelectService: boolean;
+  onTitle: (v: string) => void;
+  onBody: (v: string) => void;
+  onType: (v: 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK') => void;
+  onService: (v: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 py-2">
+      <div className="grid gap-1.5">
+        <Label htmlFor="kb-title">Title</Label>
+        <Input
+          id="kb-title"
+          value={title}
+          onChange={(e) => onTitle(e.target.value)}
+          placeholder="e.g. How to reset your SSO password"
+          maxLength={200}
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid gap-1.5">
+          <Label htmlFor="kb-type">Type</Label>
+          <Select value={type} onValueChange={(v) => onType(v as 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK')}>
+            <SelectTrigger id="kb-type">
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="HOW_TO">How To</SelectItem>
+              <SelectItem value="KNOWN_ERROR">Known Error</SelectItem>
+              <SelectItem value="FAQ">FAQ</SelectItem>
+              <SelectItem value="RUNBOOK">Runbook</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {canSelectService && (
+          <div className="grid gap-1.5">
+            <Label htmlFor="kb-service">Service (optional)</Label>
+            <Select value={serviceId} onValueChange={onService}>
+              <SelectTrigger id="kb-service">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">None</SelectItem>
+                {services.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor="kb-body">Body (Markdown)</Label>
+        <Textarea
+          id="kb-body"
+          value={body}
+          onChange={(e) => onBody(e.target.value)}
+          placeholder={'# Title\n\nWrite the article in **Markdown**. Supports headings, lists, code blocks, links, and tables.'}
+          className="min-h-[320px] font-mono text-xs"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Tip: use <code className="font-mono">#</code> for headings, <code className="font-mono">-</code> for lists, <code className="font-mono">```</code> for code blocks.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---- Version history panel (renders inside the editor Tab) ----
+
+interface ArticleVersion {
+  id: string;
+  articleId: string;
+  title: string;
+  body: string;
+  version: number;
+  createdById: string;
+  createdByName: string;
+  creatorAvatarColor: string | null;
+  createdAt: string;
+  current: boolean;
+}
+
+function ArticleVersionHistory({
+  articleId,
+  liveTitle,
+  liveBody,
+  onRestored,
+}: {
+  articleId: string;
+  liveTitle?: string;
+  liveBody?: string;
+  onRestored: () => void;
+}) {
+  const qc = useQueryClient();
+  const [confirmVersion, setConfirmVersion] = React.useState<ArticleVersion | null>(null);
+  const [restorePending, setRestorePending] = React.useState(false);
+
+  const versionsQ = useQuery<ArticleVersion[]>({
+    queryKey: ['knowledge', 'article', articleId, 'versions'],
+    queryFn: () => apiGet(`/api/knowledge/${articleId}/versions`),
+    enabled: !!articleId,
+    staleTime: 30_000,
+  });
+
+  const versions = versionsQ.data ?? [];
+
+  const restoreMut = useMutation({
+    mutationFn: (versionId: string) =>
+      apiPost(`/api/knowledge/${articleId}/versions`, { sourceVersionId: versionId }),
+    onMutate: () => setRestorePending(true),
+    onSuccess: () => {
+      toast.success('Version restored', {
+        description: 'The selected version is now the live article. A snapshot of the previous state was saved to history.',
+      });
+      qc.invalidateQueries({ queryKey: ['knowledge', 'article', articleId, 'versions'] });
+      qc.invalidateQueries({ queryKey: ['knowledge', 'article', articleId] });
+      qc.invalidateQueries({ queryKey: ['knowledge'] });
+      setConfirmVersion(null);
+      onRestored();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Restore failed'),
+    onSettled: () => setRestorePending(false),
+  });
+
+  return (
+    <div className="py-2 space-y-3 max-h-[58vh] overflow-y-auto scrollbar-thin">
+      <div className="flex items-start gap-2 rounded-md border bg-muted/30 p-3">
+        <History className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+        <div className="text-xs text-muted-foreground">
+          Every save snapshots the previous live state as a numbered version.
+          Restoring a version <strong>creates a new snapshot</strong> of the
+          current state (so history is preserved) and copies the selected
+          version&apos;s content into the live article. Only available on DRAFT
+          or REVIEW articles.
+        </div>
+      </div>
+
+      {versionsQ.isLoading ? (
+        <div className="py-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading versions…
+        </div>
+      ) : versions.length === 0 ? (
+        <div className="py-8">
+          <EmptyState
+            icon={<History className="h-8 w-8 text-muted-foreground/50" />}
+            title="No saved versions yet"
+            description="Versions are created automatically when you save changes to this article. The first save after this feature was enabled will produce the first version row."
+          />
+        </div>
+      ) : (
+        <ol className="space-y-2">
+          {versions.map((v) => {
+            const isLive = Boolean(v.current || (liveTitle && v.title === liveTitle && v.body === liveBody));
+            return (
+              <li
+                key={v.id}
+                className={cn(
+                  'rounded-md border p-3 flex flex-col sm:flex-row sm:items-center gap-3',
+                  isLive && 'border-emerald-300 bg-emerald-50/40 dark:bg-emerald-950/20 dark:border-emerald-900/60',
+                )}
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="flex flex-col items-center justify-center h-12 w-12 rounded-md bg-muted text-sm font-semibold tabular-nums shrink-0">
+                    v{v.version}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-medium text-sm truncate">{v.title}</div>
+                      {isLive && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300"
+                        >
+                          Live
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>By {v.createdByName}</span>
+                      <span>·</span>
+                      <span>{new Date(v.createdAt).toLocaleString()}</span>
+                    </div>
+                    {/* Preview snippet */}
+                    <pre className="mt-1 text-[11px] text-muted-foreground/80 line-clamp-2 whitespace-pre-wrap font-sans max-h-8 overflow-hidden">
+                      {v.body.slice(0, 200)}
+                      {v.body.length > 200 ? '…' : ''}
+                    </pre>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1"
+                    disabled={isLive}
+                    onClick={() => setConfirmVersion(v)}
+                    title={isLive ? 'This is already the live version' : 'Restore this version'}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Restore
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      {/* Restore confirmation */}
+      <AlertDialog open={!!confirmVersion} onOpenChange={(v) => !v && setConfirmVersion(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore version {confirmVersion?.version}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will replace the current live title and body with the content of
+              version {confirmVersion?.version}. A snapshot of the current state will
+              be saved to the history first, so you can always undo this restore.
+              {' '}Only DRAFT or REVIEW articles can be restored — published articles
+              must be retired first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restorePending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restorePending}
+              onClick={() => confirmVersion && restoreMut.mutate(confirmVersion.id)}
+            >
+              {restorePending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              Restore version {confirmVersion?.version}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 

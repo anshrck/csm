@@ -61,6 +61,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import EntityLinks from '@/components/workspaces/shared/EntityLinks';
 
 export default function DemandDetail({ id }: { id: string }) {
   const { navigate } = useApp();
@@ -436,6 +437,9 @@ export default function DemandDetail({ id }: { id: string }) {
               />
             )}
           </SectionCard>
+
+          {/* Related entities — read-only view of links created by SCM/CM. */}
+          <EntityLinks entityType="DEMAND" entityId={demand.id} readOnly />
         </div>
       </div>
     </div>

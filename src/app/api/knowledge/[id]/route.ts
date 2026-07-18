@@ -118,6 +118,26 @@ export async function PATCH(
       status: article.status,
     };
 
+    // Snapshot the current live state as a KnowledgeArticleVersion row
+    // BEFORE applying the update. This powers the version-history UI and the
+    // "restore version" workflow. The version number is monotonically
+    // increasing per article (1, 2, 3, …).
+    const latestVersion = await db.knowledgeArticleVersion.findFirst({
+      where: { articleId: id },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    const nextVersionNumber = (latestVersion?.version ?? 0) + 1;
+    await db.knowledgeArticleVersion.create({
+      data: {
+        articleId: id,
+        title: article.title,
+        body: article.body,
+        version: nextVersionNumber,
+        createdById: session.id,
+      },
+    });
+
     const updated = await db.knowledgeArticle.update({
       where: { id },
       data: {

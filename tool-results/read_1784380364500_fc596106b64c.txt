@@ -1,0 +1,269 @@
+  1100→- `bun run lint` (whole project) → EXIT 0, 0 errors, 0 warnings. (One transient parse-error appeared mid-build when a parallel agent was editing `routing.ts`; it cleared on the next run.)
+  1101→- `bunx tsc --noEmit --skipLibCheck` → 0 errors in any of my files. The only remaining TS errors are pre-existing in other agents' files (`cm-leader/DemandQueue.tsx` missing `useMutation` import, and two missing test files referenced from `tsconfig.json` by another agent).
+  1102→- Runtime smoke-tests via `bun -e`:
+  1103→  - All 7 Zod schemas parse valid input cleanly and reject invalid input with the expected error messages (joined via the `validateBody` helper).
+  1104→  - Login rate limiter: 4 fails don't block; 5th fail blocks; `clearLoginAttempts` resets; auto-clears after the block window passes.
+  1105→  - Session expiry: 0-day payload valid; 6-day payload valid; 8-day payload expired; missing-ts payload rejected.
+  1106→  - `SESSION_SECRET` guard: throws in production without the env var; throws in production with a <16-char value; imports cleanly with a strong value in production; imports cleanly in dev with the fallback.
+  1107→  - 7 knowledge articles visible via direct `db.knowledgeArticle.findMany()` call.
+  1108→- Dev server running; latest log entries show clean 200s on all routes including the new knowledge nav path (other agents are actively using the platform).
+  1109→
+  1110→## Coordination notes for future agents
+  1111→
+  1112→- The `KnowledgeArticle` API enforces role scoping server-side: SERVICE_CUSTOMER gets only PUBLISHED articles; SCM_WORKER / CM_LEADER / SERVICE_OWNER see all statuses (filtered by query params). Don't relax the SERVICE_CUSTOMER gate — customers must never see DRAFT/REVIEW/RETIRED articles (the API returns 404 rather than 403 to avoid leaking existence).
+  1113→- The `KnowledgeSearch` component (shared) is the canonical customer-facing search UX. If you need to embed a knowledge-search dropdown in another workspace (e.g. inside a ticket form to suggest related articles), import `KnowledgeSearch` from `@/components/workspaces/shared/KnowledgeSearch` and pass `publishedOnly` / `serviceId` / `initialType` props as needed.
+  1114→- The `KnowledgeManager` component (shared) is the canonical SCM/CM/Owner CRUD UI. It takes a `role` prop and an optional `defaultFilterOwnedServices` prop. The `actionsFor(article)` helper inside it determines action visibility — extend it if you add new lifecycle transitions.
+  1115→- The `validateBody` helper returns `{success: true, data: T} | {success: false, error: string}` — use it like `const parsed = validateBody(mySchema, body); if (!parsed.success) return 400; parsed.data`. The `error` string is a `;`-joined `path: message` list, safe to surface directly to the API consumer.
+  1116→- The login rate limiter is in-process (per-instance). For multi-instance deployments, replace the `loginAttempts` Map in `src/lib/auth.ts` with a shared store (Redis recommended). The exported `isLoginRateLimited` / `recordFailedLogin` / `clearLoginAttempts` API stays stable.
+  1117→- The `SESSION_SECRET` production guard throws on first import of `src/lib/auth.ts`. Any route handler that calls `getSession()` / `requireAuth()` / `requireRole()` triggers this. Deploy scripts must export `SESSION_SECRET` before starting the server, or the first request to any authenticated endpoint will 500.
+  1118→- The session expiry check uses the `ts` field in the HMAC-signed payload. Existing sessions created before this change carry a valid `ts` (the foundation's `createSession` always set it) so no migration is needed. Sessions older than 7 days will silently expire on next request (the user will be redirected to the login screen).
+  1119→- I added `BookOpen` to the `NAV_BY_ROLE` icons for all 4 roles. If you change the icon set, `lucide-react` exports `BookOpen` — no extra install needed.
+  1120→- I did NOT write tests. I did NOT run `bun run build`. I did NOT modify the demo quick-login. I did NOT touch the catch-all route or the AppShell (other agents own those).
+  1121→
+  1122→Stage Summary:
+  1123→- **(A) Knowledge Base**: 5 API routes + 1 serializer + 2 shared React components + 4 workspace wrappers. Full DRAFT→REVIEW→PUBLISHED→RETIRED lifecycle with role-scoped visibility, audit-log entries on every transition, CM-Leader notifications on submit-review, markdown-rendered article viewer, and a markdown editor with a live customer-preview search embedded. All 4 role workspaces now have a "Knowledge Base" nav item.
+  1124→- **(B) Security hardening**: Zod 4 validation library covering 7 API contracts + `validateBody` helper. Session hardening: production SESSION_SECRET guard (throws if missing or weak), 7-day session expiry enforced server-side, in-memory login rate limiter (5 fails / 15 min → 429). Login route rewritten to use Zod validation + rate limiting.
+  1125→- **(C) Documentation**: top-level `README.md` (setup, env vars, demo accounts, production warnings, migrations, project layout) + `docs/architecture.md` (roles, permission model, entity model, demand/ticket/SLA lifecycles, notification flow, audit log, knowledge base lifecycle, deployment assumptions, cross-cutting conventions).
+  1126→
+  1127→---
+  1128→
+  1129→Task ID: P8-ROUTING-UX
+  1130→Agent: Routing + Queue UX Builder
+  1131→Task: Implement Phase 8 items 19 (URL-based routing) and 20 (queue/work management UX) from the plan.
+  1132→
+  1133→Work Log:
+  1134→- Read full worklog.md (foundation + all prior task sections + G1/G2 governance wiring) + inspected every file I needed to modify (store.ts, AppShell.tsx, page.tsx, all 4 workspace files, both DemandQueue files, customer DemandList, shared.tsx DataTable).
+  1135→- Confirmed the project rules' "user can only see the / route" constraint is satisfied by using an optional catch-all dynamic segment (`[...slug]`) — it's a single route file pattern that handles ALL workspace URLs.
+  1136→
+  1137→## Files created (8)
+  1138→
+  1139→### Routing (Phase 8 item 19)
+  1140→1. `src/lib/routing.ts` — URL helpers:
+  1141→   - `ROLE_PREFIX` / `PREFIX_ROLE` (SERVICE_CUSTOMER→customer, SCM_WORKER→scm, CM_LEADER→cm, SERVICE_OWNER→owner)
+  1142→   - `VIEW_PATH` map: every ViewKey → path segment. Detail views reuse parent list path so `/scm/demands/abc123` reads naturally. Includes `tickets` + `ticket-detail` (Phase 2 integration) and preserves `reports` + `knowledge` added by other agents.
+  1143→   - `DETAIL_VIEWS` map: `/demands/<id>` → demand-detail, `/changes/<id>` → change-detail, `/tickets/<id>` → ticket-detail.
+  1144→   - `pathToView(slug)` → `{ view, params, prefix, unknownRole }`
+  1145→   - `viewToPath(role, view, params)` — detail views emit `/<prefix>/<list>/<id>`; extra params become query-string
+  1146→   - `dashboardPath(role)` + `isWorkspacePath(pathname)` helpers
+  1147→2. `src/app/[...slug]/page.tsx` — catch-all workspace route (client component):
+  1148→   - Unwraps `params` Promise with `React.use()` (Next.js 16 requirement).
+  1149→   - Hydrates session independently (deep-link/refresh friendly).
+  1150→   - Auth + role-prefix guard: unauthenticated → `router.replace('/')`; mismatched prefix → `router.replace('/<role>/dashboard')`.
+  1151→   - URL→store sync effect (browser back/forward / deep-link) with `pushedRef` guard to skip re-sync on our own `router.push`.
+  1152→   - Store→URL push effect (in-app navigation) — only fires when pathname doesn't already match.
+  1153→   - Renders the same AppShell + workspace + AiPanel + GlobalSearch + RoleGuidePanel as the original `/page.tsx`.
+  1154→
+  1155→### Queue UX (Phase 8 item 20)
+  1156→3. `src/components/workspaces/shared/SavedFilters.tsx` — reusable preset + custom-saved filter bar:
+  1157→   - Built-in preset buttons + localStorage-persisted custom presets (with delete button).
+  1158→   - "Save current" inline name input when current filters don't match any preset.
+  1159→   - Exports `DEMAND_PRESETS` (the six plan-named presets: My Open Work / Unassigned / Breaching Soon / Waiting Customer / Pending Approval / Accepted Needs Change), `DemandQueueFilters` interface, `filtersEqual()` + `matchPreset()` helpers.
+  1160→4. `src/components/workspaces/shared/QueueControls.tsx` — reusable queue header:
+  1161→   - Sort dropdown (Age / Priority / SLA Due / Customer / Owner).
+  1162→   - Filter chips with one-tap removal + "Clear all".
+  1163→   - View toggle (table/card).
+  1164→   - Bulk action bar (visible when selection non-empty) — generic over action definitions.
+  1165→   - Companion row helpers: `<AgingBadge>` (neutral <3d, amber 3-5d, red >5d), `<OverdueSlaIndicator>`, `<SelectAllCheckbox>`, `<RowCheckbox>`.
+  1166→   - Sort helpers: `sortByAge`, `sortByPriority`, `sortByCustomer`, `sortByOwner` (generic over row shape).
+  1167→5. `src/components/workspaces/shared/TicketQueue.tsx` — drop-in ticket queue page (wrapper for the future TicketList). Same SavedFilters + QueueControls pattern. Ticket-specific presets (My Open Work / Unassigned / Breaching Soon / Waiting Customer / P1-P2). Priority badge + AgingBadge + OverdueSlaIndicator on each row. Bulk "Assign to…" action via `/api/tickets/[id]` PATCH. Card + table view. Other agents building the ticket workspace can adopt this directly.
+  1168→
+  1169→## Files modified (5)
+  1170→
+  1171→6. `src/lib/store.ts`:
+  1172→   - Added `tickets` + `ticket-detail` to `ViewKey`.
+  1173→   - Added `navTick: number` counter. `navigate()` bumps it so URL push subscribers fire even when navigating to the same view with new params.
+  1174→   - Added `syncFromUrl(slug)` action — parses slug via `pathToView()` and sets view+params WITHOUT bumping navTick (URL-driven updates only).
+  1175→7. `src/app/page.tsx` — rewritten as a thin entry:
+  1176→   - Hydrates session → renders `<LoginScreen/>` if unauthenticated, otherwise `router.replace(dashboardPath(role))` and brief loader.
+  1177→   - Login flow unchanged in `LoginScreen.tsx` — `setSession()` triggers this redirect effect.
+  1178→8. `src/components/shell/AppShell.tsx`:
+  1179→   - Sidebar nav calls `navigate(view)` — URL push handled by catch-all route's store→URL effect.
+  1180→   - `handleLogout` now calls `router.replace('/')` after `logout()` (avoids flash of stale workspace URL).
+  1181→   - `useRouter` imported + used in `TopBar`.
+  1182→9. `src/components/workspaces/scm-worker/DemandQueue.tsx` — rewritten:
+  1183→   - Wires SavedFilters + QueueControls.
+  1184→   - Full filter state: search + status multi-toggle + unassigned/mine/breachingSoon/waitingCustomer/pendingApproval/acceptedNeedsChange.
+  1185→   - Filter chips with removal, sort + view toggle, row checkboxes + bulk "Pick up selected" (assigns all to current SCM Worker).
+  1186→   - AgingBadge + SLA breach badge on each row. SLA breach detection via `/api/sla-events` joined to demand.relatedServiceIds.
+  1187→   - Card view as 1/2/3-col responsive grid.
+  1188→10. `src/components/workspaces/cm-leader/DemandQueue.tsx` — rewritten:
+  1189→    - Same SavedFilters + QueueControls pattern.
+  1190→    - CM_LEADER bulk actions: "Assign to…" (worker-picker dialog with workload counts) + "Approve quotes" (bulk POST `/api/demands/[id]/approve-quote`).
+  1191→    - Worker + customer select filters in addition to the shared presets.
+  1192→    - AgingBadge + SLA breach badge on each row. Card + table view.
+  1193→11. `src/components/workspaces/customer/DemandList.tsx` — rewritten:
+  1194→    - Customer-facing preset subset (excludes internal "Unassigned" + "Pending Approval"; "My Open Work" reinterpreted as "all my open demands").
+  1195→    - SavedFilters + QueueControls + AgingBadge + SLA breach badge. Table + card view toggle.
+  1196→
+  1197→## Files modified (1 more — type widening)
+  1198→
+  1199→12. `src/components/shared.tsx`:
+  1200→    - `Column<T>.header` widened from `string` to `React.ReactNode` so queue tables can render `<SelectAllCheckbox>` in the header cell. Fully backwards-compatible (string still assignable).
+  1201→
+  1202→## Routing design notes
+  1203→
+  1204→### URL ⇄ store feedback loop
+  1205→The catch-all page uses a `pushedRef` to break the cycle:
+  1206→1. User clicks sidebar nav → `navigate(view)` → store updates + navTick bumps.
+  1207→2. Catch-all's store→URL effect fires → `pushedRef = true` → `router.push(expectedPath)`.
+  1208→3. URL changes → Next.js re-renders with new `slug` prop.
+  1209→4. URL→store effect fires → sees `pushedRef === true` → clears ref + skips re-sync.
+  1210→
+  1211→Browser back/forward:
+  1212→1. URL changes (no `router.push` from us) → Next.js re-renders with new `slug`.
+  1213→2. URL→store effect fires → `pushedRef === false` → calls `syncFromUrl(slug)` → store updates.
+  1214→3. Store→URL effect fires → expected path already matches pathname → no push.
+  1215→
+  1216→This avoids infinite loops while keeping URL and store in sync.
+  1217→
+  1218→### Next.js 16 `params` is a Promise
+  1219→The catch-all page is a client component. In Next.js 16, `params` is a Promise and must be unwrapped with `React.use()` (or `await` in a server component) before accessing its properties. The page unwraps once at the top: `const { slug } = use(params);` — then uses `slug` everywhere. Caught this from the dev.log error on first test.
+  1220→
+  1221→### Detail views reuse list paths
+  1222→- `demand-detail` → `/demands/<id>`
+  1223→- `change-detail` → `/changes/<id>`
+  1224→- `ticket-detail` → `/tickets/<id>`
+  1225→
+  1226→`pathToView()` uses `DETAIL_VIEWS` to convert URL+id to the detail ViewKey; `viewToPath()` appends the id segment for the three detail ViewKeys.
+  1227→
+  1228→## Verification
+  1229→- `bun run lint` → EXIT 0 (zero errors, zero warnings across the entire repo including all 12 files I created/modified).
+  1230→- Dev server smoke tests (curl):
+  1231→  - `GET /` → 200 (renders LoginScreen when unauthenticated)
+  1232→  - `GET /scm/dashboard` → 200 · `GET /scm/demands` → 200
+  1233→  - `GET /cm/dashboard` → 200 · `GET /cm/approvals` → 200 (plan-specified URL)
+  1234→  - `GET /customer/dashboard` → 200 · `GET /customer/demands` → 200 · `GET /customer/demands/test-id-123` → 200 (deep-link)
+  1235→  - `GET /owner/dashboard` → 200 · `GET /owner/services` → 200 (plan-specified URL — corresponds to `portfolio` view) · `GET /owner/problems` → 200
+  1236→- Authenticated smoke test: login as customer → GET /customer/demands → 200, page mounts React shell, fetches `/api/demands?mine=1` + `/api/sla-events` + `/api/services?entitled=1` client-side.
+  1237→- No new errors in `dev.log` after the Next.js 16 `params` Promise fix.
+  1238→
+  1239→## Coordination notes
+  1240→- **TicketList/TicketQueue**: Plan assumed TicketList might be built by another agent — none was present in `src/components/workspaces/`. Created `shared/TicketQueue.tsx` as a self-contained, drop-in queue page. Other agents building the ticket workspace can render `<TicketQueue />` directly in their workspace switch under the `tickets` view key. The `ticket-detail` ViewKey is wired into routing + store but no detail component exists yet — future agent work.
+  1241→- **ViewKey extensions**: Added `tickets` + `ticket-detail` to `ViewKey` and to `VIEW_PATH` / `DETAIL_VIEWS` in `src/lib/routing.ts`. The `reports` and `knowledge` ViewKeys (added by other agents) are already in both maps — confirmed intact.
+  1242→- **`Column<T>.header` type widening**: Changed from `string` to `React.ReactNode` in `src/components/shared.tsx`. Fully backwards-compatible (strings still valid) but allows queue tables to render checkboxes / icon buttons in the header cell. All existing consumers continue to compile.
+  1243→- **AppShell logout flow**: Now calls `router.replace('/')` after `logout()`. The catch-all page would have redirected to `/` itself once `session` becomes null, but doing it explicitly avoids a flash.
+  1244→- **Login redirect**: After successful login, `setSession()` triggers `/page.tsx`'s redirect effect → `router.replace(dashboardPath(role))`. No changes needed in `LoginScreen.tsx`.
+  1245→- **Cross-role URL access**: If a logged-in customer hits `/scm/demands`, the catch-all page's auth+role effect calls `router.replace('/customer/dashboard')`. This happens client-side after hydration (curl sees 200 on the original URL — a real browser will redirect). The page renders a brief "Redirecting to your workspace…" loader during the redirect.
+  1246→- Did NOT write tests. Did NOT run `bun run build`. Did NOT modify any other agent's API routes or workspace files (other than the queue pages I was explicitly assigned to update).
+  1247→- Work record written to `/home/z/my-project/agent-ctx/P8-ROUTING-UX.md`.
+  1248→
+  1249→---
+  1250→
+  1251→Task ID: P9-NOTIF-REPORTS
+  1252→Agent: Notification Delivery System + Reports/Analytics UI (Phase 9 item 21 + Phase 10 item 23)
+  1253→Task: Build the Notification Delivery system (worker + API + watchdog wiring + helper) and the comprehensive Reports/Analytics UI for CM Leader and Service Owner.
+  1254→
+  1255→Work Log:
+  1256→- Read full `worklog.md` + foundation contracts (auth, db, api, audit, store, types) + the P3-SLA agent's `/api/reports/_compute.ts` (operational endpoint shape) before writing any code. Confirmed the NotificationDelivery Prisma model was already in the schema (Phase 9 prep by the orchestrator) — no schema changes needed.
+  1257→- Confirmed the existing `/api/reports/operational` and `/api/reports/export` routes were owned by the parallel P3-SLA agent and adapt my Reports.tsx UI to consume their shape rather than overwriting them.
+  1258→
+  1259→## (A) Notification Delivery System — 7 files
+  1260→
+  1261→### `src/lib/notifications.ts` (NEW)
+  1262→- `createNotificationWithDelivery({ userId, type, title, message, entityRef?, extraChannels? })` — uses a Prisma `$transaction` so the Notification row and its PORTAL NotificationDelivery row are written atomically (no orphan notifications). Extra channels (EMAIL/TEAMS/SLACK) are scheduled as additional PENDING deliveries.
+  1263→- `createNotificationsWithDelivery(userIds, payload)` — batch fan-out variant for notifying multiple users (e.g. all CM_LEADER users). Each user gets their own Notification + their own PORTAL delivery.
+  1264→- PORTAL is ALWAYS created — it's the system of record for the in-app drawer.
+  1265→
+  1266→### `src/lib/notification-delivery.ts` (NEW)
+  1267→- `processPendingDeliveries()` — the worker. Finds up to 100 PENDING deliveries per call and processes each:
+  1268→  - PORTAL → mark SENT immediately (in-app flag flip).
+  1269→  - EMAIL → `console.log("[EMAIL] To: <email> | Subject: <title> | Body: <msg> [ref: <entityRef>]")`, mark SENT.
+  1270→  - TEAMS / SLACK → similar console.log with appropriate format, mark SENT.
+  1271→  - 5% simulated failure rate on EMAIL/TEAMS/SLACK (random per delivery) — marks FAILED with a realistic error message ("SMTP 421 service not available", "Microsoft Graph 503", "Slack API 429", etc.).
+  1272→  - Returns `{ processed, sent, failed, skipped, durationMs }`.
+  1273→  - Idempotent — SENT/FAILED deliveries are skipped.
+  1274→- `getDeliveryStats()` — returns `{ byStatus, byChannel, total, pending, sent, failed }` for the oversight panel.
+  1275→
+  1276→### `src/app/api/notification-deliveries/route.ts` (NEW)
+  1277→- GET — list deliveries with filters: `notificationId`, `status` (comma multi), `channel` (comma multi), `scope=mine`, `limit`. Role scoping: CM_LEADER sees all (oversight); other roles see only their own notifications' deliveries. Includes the parent notification + its user (name/email/avatarColor) so the oversight view renders without an extra fetch. Supports `?stats=1` for an aggregate-only fast path.
+  1278→- POST — CM_LEADER-only: manually schedule an extra PENDING delivery for an existing notification (e.g. retry a failed EMAIL). Idempotent — if a PENDING delivery for the same channel already exists, returns it instead of duplicating. Writes an audit log entry.
+  1279→
+  1280→### `src/app/api/notification-deliveries/process/route.ts` (NEW)
+  1281→- POST — CM_LEADER-only trigger for `processPendingDeliveries()`. Returns the worker summary. Writes an audit log entry on every invocation.
+  1282→
+  1283→### `src/app/api/notifications/process/route.ts` (NEW)
+  1284→- POST — convenience alias under the `/notifications` namespace. Callable by both CM_LEADER and SCM_WORKER (safe idempotent maintenance action — handy when an SCM Worker just submitted a batch of quote-approval requests and wants the email channel flushed immediately).
+  1285→
+  1286→### `src/app/api/notification-preferences/route.ts` (NEW)
+  1287→- GET — returns the canonical default preference matrix + supported channels (PORTAL/EMAIL/TEAMS/SLACK) + supported notification types (all 16 types from the schema comment) + friendly labels. PORTAL is locked ON for every type (the in-app drawer is the system of record).
+  1288→- POST / PATCH — validates the supplied preference matrix (every type present, every channel a boolean, no unknown keys, PORTAL remains true) and echoes it back. The client persists the matrix to localStorage — the server is the source of truth for defaults, the client is the source of truth for per-user overrides.
+  1289→- Defaults: PORTAL always on; EMAIL on for high-urgency governance/breach/approval events (SlaBreached, SlaWarning, QuoteApprovalRequested, CommitmentEscalated, DemandRejected, DemandFulfilled); TEAMS/SLACK off by default.
+  1290→
+  1291→### `src/lib/watchdog.ts` (MODIFIED)
+  1292→- Imports `processPendingDeliveries` from `./notification-delivery`.
+  1293→- `WatchdogState` interface extended with `notificationsProcessed/Sent/Failed` fields.
+  1294→- `tick()` function now calls `processPendingDeliveries()` via `.then().catch()` so the synchronous tick never blocks on the async DB work. Worker counts are written into `watchdog-state.json` via a merge-with-existing-file pattern (so the counts don't clobber the most recent lint/devlog counts). All worker errors are caught + logged to `watchdog.log` — a transient DB hiccup never takes the watchdog down.
+  1295→
+  1296→## (B) Reports/Analytics UI — 5 files
+  1297→
+  1298→### `src/lib/store.ts` (MODIFIED)
+  1299→- Added `'reports'` to the `ViewKey` union.
+  1300→- Added Reports nav item to CM_LEADER and SERVICE_OWNER `NAV_BY_ROLE` arrays (label: "Reports", icon: "BarChart3"). Bumped the existing CM_LEADER Analytics icon from "BarChart3" to "TrendingUp" to differentiate the two views.
+  1301→
+  1302→### `src/lib/routing.ts` (MODIFIED)
+  1303→- Added `reports: 'reports'` to the `VIEW_PATH` map so the new view is URL-routable as `/cm/reports` and `/owner/reports`.
+  1304→
+  1305→### `src/components/workspaces/cm-leader/CmLeaderWorkspace.tsx` (MODIFIED)
+  1306→- Added `case 'reports': return <Reports />;`. Reports component is loaded via `next/dynamic` (ssr:false) with a loading skeleton to keep its large recharts bundle out of the initial client bundle for CM Leader users who never open it.
+  1307→
+  1308→### `src/components/workspaces/service-owner/ServiceOwnerWorkspace.tsx` (MODIFIED)
+  1309→- Same wiring as CM Leader.
+  1310→
+  1311→### `src/components/workspaces/shared/Reports.tsx` (NEW — default export)
+  1312→Comprehensive operational report UI:
+  1313→- **Controls**: Date range preset selector (7d/30d/90d/custom) — converts to from/to ISO date params for the API. Custom date pickers visible only when range=custom. Refresh button refetches all three queries.
+  1314→- **Scope + range banner**: Shows the active date window + scope (owned services vs all tenant).
+  1315→- **KPI row**: Tickets in window, SLA Compliance %, Reopen Rate %, Demand Conversion %.
+  1316→- **Section 1 — Ticket Volume**: Four BarCharts (By Priority, By Type, By Customer, By Service). Priority/type bars are color-coded (P1=rose, P2=amber, P3=teal, P4=sky; Incident=rose, Service Request=teal, Question=amber, Complaint=violet).
+  1317→- **Section 2 — SLA Compliance**: Overall ComplianceDonut (using shared widget) + per-service table (Service, Total, Met, Breached, Compliance% with color-coded values).
+  1318→- **Section 3 — Avg Response & Resolution Time**: Three StatCards (tenant-wide averages + service count) + per-service grouped BarChart (Response=amber, Resolution=teal).
+  1319→- **Section 4 — Backlog Aging**: BarChart by age bucket (0-1d, 1-3d, 3-7d, 7-14d, 14d+) with green→amber→rose color gradient.
+  1320→- **Section 5 — Reopen Rate**: ComplianceDonut for the rate + 3 StatCards (Reopened, Total Closed, Rate%).
+  1321→- **Section 6 — CSAT Trend**: LineChart of avg rating per ISO week (1-5★ scale) with sample-count tooltip.
+  1322→- **Section 7 — Worker Workload**: Per-worker row with UserAvatar + name + dual progress bars (Tickets=teal, Demands=amber). Sorted by activity. Scrollable list with custom scrollbar styling.
+  1323→- **Section 8 — Demand Conversion**: Three StatCards (Demands Created, Reached IN_CHANGE+, Conversion Rate%) + funnel-style progress bars (created → reached → conversion gap).
+  1324→- **Bonus — Notification Delivery Oversight panel (CM_LEADER only)**: Aggregate StatCards (Pending/Sent/Failed/Total) + per-channel breakdown cards + filterable DataTable of recent deliveries (Channel, Status, Notification, Recipient with avatar, Created time) + "Flush pending now" button that hits POST /api/notification-deliveries/process.
+  1325→- **Export buttons**: Each section has [CSV] [JSON] buttons that hit `/api/reports/export?format=...&report=...&from=...&to=...`. CSV downloads as a file via blob+Content-Disposition; JSON opens in a new tab. Uses the camelCase report keys owned by the P3-SLA agent's export endpoint (ticketVolume, slaCompliance, avgResponseTime, avgResolutionTime, backlogAging, reopenRate, csatTrend, workerWorkload, demandConversion).
+  1326→- **Client-side enrichment**: The operational endpoint (owned by the P3-SLA agent) doesn't expose by-type breakdown or per-service response/resolution averages, so Reports.tsx fetches `/api/tickets?limit=500&sort=recent` and `/api/sla-clocks?status=MET,BREACHED` in parallel and computes these client-side. All fetches are gated on `reportQ.isSuccess` so they only run after the main report resolves.
+  1327→- **Empty states**: Every chart has a `ChartEmpty` placeholder when there's no data in the window.
+  1328→- **Loading states**: `<LoadingState rows={6} />` while the report is fetching.
+  1329→- **Responsive**: All charts use ResponsiveContainer. Grid layouts collapse from 2-col to 1-col on mobile. Worker Workload + Notification Delivery table scroll vertically with `scrollbar-thin` styling.
+  1330→
+  1331→## Coexistence with parallel agent (P3-SLA)
+  1332→
+  1333→The Reports UI was rewritten to consume the **existing** `/api/reports/operational` and `/api/reports/export` endpoints (owned by the P3-SLA agent — see `src/app/api/reports/_compute.ts`). My initial version of those routes was overwritten by the P3-SLA agent's implementation; rather than overwrite it back (which would break their UI tests), I adapted my Reports.tsx to consume their response shape directly + added two client-side enrichments (byType via `/api/tickets`, per-service avg via `/api/sla-clocks`). No conflicts with the P3-SLA agent's work.
+  1334→
+  1335→## Verification
+  1336→
+  1337→- `bun run lint` → EXIT 0 (zero errors, zero warnings across all 12 files I created/modified).
+  1338→- `bunx tsc --noEmit --skipLibCheck` → zero errors in any of my files. (Two pre-existing TS errors in other agents' files — `cm-leader/DemandQueue.tsx` missing `useMutation` import; `shared/TicketList.tsx` uses `'ticket-detail'` ViewKey that doesn't exist. These are not my files to fix.)
+  1339→- End-to-end smoke tests via fetch against the running dev server (logged in as cmleader@cerebree.io):
+  1340→  - GET /api/notification-preferences → 200 (channels + 16 types + defaults + labels + portalLocked:true).
+  1341→  - POST /api/notification-preferences (valid matrix) → 200 (ok:true, savedTo:'client-localStorage').
+  1342→  - POST /api/notification-preferences (PORTAL off) → 400 ("PORTAL channel for X cannot be disabled — it is the system of record").
+  1343→  - GET /api/notification-deliveries?stats=1 → 200 (byStatus + byChannel aggregates).
+  1344→  - GET /api/notification-deliveries?limit=3 → 200 (3 deliveries with notification relation + user info).
+  1345→  - POST /api/notification-deliveries/process → 200 (worker summary).
+  1346→  - POST /api/notifications/process → 200 (alternative trigger, same summary).
+  1347→  - GET /api/reports/operational?from=...&to=... → 200 (full report with all 9 sections).
+  1348→  - GET /api/reports/export?format=csv&report=slaCompliance → 200 (text/csv with Content-Disposition attachment header; body: `serviceId,serviceName,total,met,breached,compliancePct`).
+  1349→  - GET /api/reports/export?format=csv&report=ticketVolume → 200 (multi-dimensional CSV with byCustomer/byService/byPriority rows).
+  1350→  - GET /api/reports/export?format=json&report=all → 200 (full report as JSON).
+  1351→  - GET /cm/reports → 200 (HTML renders; reports content loads client-side via next/dynamic ssr:false).
+  1352→  - GET /owner/reports → 200 (HTML renders; same dynamic loading).
+  1353→- Smoke test of the underlying lib helpers via bunx tsx script:
+  1354→  - `createNotificationWithDelivery` (PORTAL only) → 1 Notification + 1 PENDING PORTAL delivery.
+  1355→  - `createNotificationWithDelivery` (extra EMAIL) → 1 Notification + 2 PENDING deliveries (PORTAL + EMAIL).
+  1356→  - `createNotificationsWithDelivery` (batch to 1 CM_LEADER user) → 1 Notification + 1 PENDING PORTAL delivery.
+  1357→  - `getDeliveryStats` → correctly aggregates 4 PENDING deliveries by status + channel.
+  1358→  - `processPendingDeliveries` → 4 deliveries: 4 SENT, 0 FAILED, 0 SKIPPED, ~7ms. EMAIL simulation log: `[EMAIL] To: customer@cerebree.io | Subject: ... | Body: ... [ref: sla-event:test2]`.
+  1359→  - `getDeliveryStats` after processing → 8 SENT, 0 PENDING, 0 FAILED.
+  1360→- Verified the watchdog is wired: `mini-services/watchdog/watchdog.log` shows the new "notification-delivery worker" log line per tick with processed/sent/failed/skipped/durationMs.
+  1361→- Verified the Notification Delivery Oversight panel renders for CM_LEADER but NOT for SERVICE_OWNER (the conditional `{session?.role === 'CM_LEADER' && <NotificationDeliveryOversight />}` is correctly gated).
+  1362→
+  1363→Stage Summary:
+  1364→- Notification Delivery system COMPLETE: helper (`createNotificationWithDelivery`/`createNotificationsWithDelivery`) + worker (`processPendingDeliveries` + 5% simulated failure) + 4 API routes (`/api/notification-deliveries` GET+POST, `/api/notification-deliveries/process` POST, `/api/notifications/process` POST, `/api/notification-preferences` GET+POST+PATCH) + watchdog wiring (worker runs every 60s tick via `.then().catch()` so it never blocks the synchronous tick). The in-app PORTAL channel always succeeds; EMAIL/TEAMS/SLACK are simulated with a 5% random failure rate per delivery for demo realism.
+  1365→- Reports/Analytics UI COMPLETE: comprehensive 8-section view (Ticket Volume × 4 breakdowns, SLA Compliance donut + table, Avg Response/Resolution per service, Backlog Aging buckets, Reopen Rate donut + stats, CSAT Trend line chart, Worker Workload bars, Demand Conversion funnel) + bonus Notification Delivery Oversight panel for CM Leader. Per-section [CSV] [JSON] export buttons hit the existing P3-SLA `/api/reports/export` endpoint with camelCase report keys. Date range preset selector (7d/30d/90d/custom) computes from/to ISO date params client-side. Responsive design with mobile-first breakpoints + custom scrollbar styling on long lists. Loaded via `next/dynamic` (ssr:false) to keep the recharts bundle out of the initial client payload. Wired into `NAV_BY_ROLE` for both CM_LEADER and SERVICE_OWNER + URL-routable as `/cm/reports` and `/owner/reports`.
+  1366→- All 12 files I created/modified lint clean and TypeScript-clean. End-to-end smoke tests pass against the running dev server. Did NOT write tests. Did NOT run `bun run build`. Did NOT modify any foundation file beyond the watchdog wiring. Did NOT modify any other agent's workspace files (only the 5 I was assigned + the new shared Reports component). Did NOT refactor existing notification-creation sites to use the new helper — per the contract, just provided the helper for future use.
+  1367→- Work record written to `/home/z/my-project/agent-ctx/P9-NOTIF-REPORTS.md`.
+  1368→

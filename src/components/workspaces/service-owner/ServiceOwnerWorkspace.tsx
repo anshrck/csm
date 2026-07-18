@@ -10,6 +10,7 @@ import Problems from './Problems';
 import Changes from './Changes';
 import DemandDetail from './DemandDetail';
 import Knowledge from './Knowledge';
+import ServiceTickets from './ServiceTickets';
 import TicketList from '@/components/workspaces/shared/TicketList';
 import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
@@ -74,6 +75,8 @@ export default function ServiceOwnerWorkspace() {
           hideCreate
         />
       );
+    case 'service-incidents':
+      return <ServiceTickets />;
     case 'ticket-detail':
       return <TicketDetail id={params.id} role="SERVICE_OWNER" />;
     default:

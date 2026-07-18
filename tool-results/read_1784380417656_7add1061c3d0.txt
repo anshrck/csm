@@ -1,0 +1,1077 @@
+     1→'use client';
+     2→
+     3→/**
+     4→ * TicketList — shared ticket queue used by all 4 role workspaces.
+     5→ *
+     6→ * Renders a DataTable of tickets with:
+     7→ *   - columns: Number, Title, Type, Priority, Status, Service, Assignee, Created, SLA indicator
+     8→ *   - filters: status (multi), priority, type, search, preset views
+     9→ *   - sorting by age / priority / SLA dueAt
+    10→ *   - bulk assignment for CM Leader (select rows → assign to worker)
+    11→ *   - aging badges (P1 > 1h amber, > 4h red; P2 > 4h amber, > 24h red, etc.)
+    12→ *   - SLA indicator pill derived from each ticket's clocks
+    13→ *
+    14→ * Role-aware:
+    15→ *   - SCM_WORKER + CM_LEADER: full action affordances (create, assign, bulk assign)
+    16→ *   - SERVICE_CUSTOMER: can create tickets, no assign menu
+    17→ *   - SERVICE_OWNER: read-only, no create button
+    18→ */
+    19→
+    20→import * as React from 'react';
+    21→import { useMemo, useState } from 'react';
+    22→import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+    23→import { toast } from 'sonner';
+    24→
+    25→import { useApp } from '@/lib/store';
+    26→import { apiGet, apiPost } from '@/lib/api';
+    27→import {
+    28→  type Ticket,
+    29→  type TicketStatus,
+    30→  type TicketPriority,
+    31→  type TicketType,
+    32→  type SlaClockRow,
+    33→  type TicketSlaHealth,
+    34→  TICKET_TYPE_LABELS,
+    35→  TICKET_PRIORITY_SHORT,
+    36→  TICKET_STATUS_LABELS,
+    37→  deriveSlaHealth,
+    38→  formatMins,
+    39→} from '@/lib/tickets';
+    40→import type { Role } from '@/lib/types';
+    41→
+    42→import {
+    43→  PageHeader,
+    44→  SectionCard,
+    45→  EmptyState,
+    46→  LoadingState,
+    47→  UserAvatar,
+    48→  RelativeTime,
+    49→  FormattedDate,
+    50→  DataTable,
+    51→  type Column,
+    52→  Button,
+    53→  Badge,
+    54→  Card,
+    55→  CardContent,
+    56→} from '@/components/shared';
+    57→import { Input } from '@/components/ui/input';
+    58→import { Label } from '@/components/ui/label';
+    59→import { Textarea } from '@/components/ui/textarea';
+    60→import { Checkbox } from '@/components/ui/checkbox';
+    61→import {
+    62→  Select,
+    63→  SelectContent,
+    64→  SelectItem,
+    65→  SelectTrigger,
+    66→  SelectValue,
+    67→} from '@/components/ui/select';
+    68→import {
+    69→  Popover,
+    70→  PopoverContent,
+    71→  PopoverTrigger,
+    72→} from '@/components/ui/popover';
+    73→import {
+    74→  Dialog,
+    75→  DialogContent,
+    76→  DialogDescription,
+    77→  DialogFooter,
+    78→  DialogHeader,
+    79→  DialogTitle,
+    80→} from '@/components/ui/dialog';
+    81→import { cn } from '@/lib/utils';
+    82→import {
+    83→  Ticket as TicketIcon,
+    84→  Search,
+    85→  X,
+    86→  Filter,
+    87→  Plus,
+    88→  Inbox,
+    89→  AlertTriangle,
+    90→  Clock,
+    91→  CheckCircle2,
+    92→  Pause,
+    93→  Play,
+    94→  TimerReset,
+    95→  ChevronDown,
+    96→  UserPlus,
+    97→  ShieldAlert,
+    98→} from 'lucide-react';
+    99→
+   100→// ---- Filter presets --------------------------------------------------------
+   101→
+   102→type PresetKey = 'all' | 'my_open' | 'unassigned' | 'breaching' | 'waiting' | 'resolved';
+   103→
+   104→const PRESETS: { key: PresetKey; label: string; description: string }[] = [
+   105→  { key: 'all', label: 'All', description: 'Every ticket in your scope' },
+   106→  { key: 'my_open', label: 'My Open Work', description: 'Tickets assigned to you that are not yet resolved/closed' },
+   107→  { key: 'unassigned', label: 'Unassigned', description: 'Tickets with no assignee — pick one up' },
+   108→  { key: 'breaching', label: 'Breaching Soon', description: 'Running SLA clocks within 25% of dueAt' },
+   109→  { key: 'waiting', label: 'Waiting Customer', description: 'Awaiting customer response — SLA paused' },
+   110→  { key: 'resolved', label: 'Resolved', description: 'Resolved tickets awaiting close' },
+   111→];
+   112→
+   113→// ---- Status / priority / type options --------------------------------------
+   114→
+   115→const STATUS_OPTIONS: TicketStatus[] = [
+   116→  'NEW',
+   117→  'TRIAGED',
+   118→  'ASSIGNED',
+   119→  'IN_PROGRESS',
+   120→  'WAITING_CUSTOMER',
+   121→  'RESOLVED',
+   122→  'CLOSED',
+   123→  'CANCELED',
+   124→];
+   125→
+   126→const PRIORITY_OPTIONS: TicketPriority[] = ['P1', 'P2', 'P3', 'P4'];
+   127→const TYPE_OPTIONS: TicketType[] = ['INCIDENT', 'SERVICE_REQUEST', 'QUESTION', 'COMPLAINT'];
+   128→
+   129→// ---- Status + priority badge styles ----------------------------------------
+   130→
+   131→const statusStyles: Record<TicketStatus, string> = {
+   132→  NEW: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-300',
+   133→  TRIAGED: 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950 dark:text-cyan-300',
+   134→  ASSIGNED: 'bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300',
+   135→  IN_PROGRESS: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300',
+   136→  WAITING_CUSTOMER: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   137→  RESOLVED: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
+   138→  CLOSED: 'bg-muted text-muted-foreground border-border',
+   139→  CANCELED: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+   140→};
+   141→
+   142→function TicketStatusBadge({ status }: { status: TicketStatus }) {
+   143→  return (
+   144→    <Badge
+   145→      variant="outline"
+   146→      className={cn('font-medium border text-xs', statusStyles[status])}
+   147→    >
+   148→      {TICKET_STATUS_LABELS[status]}
+   149→    </Badge>
+   150→  );
+   151→}
+   152→
+   153→const priorityStyles: Record<TicketPriority, string> = {
+   154→  P1: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+   155→  P2: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   156→  P3: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300',
+   157→  P4: 'bg-muted text-muted-foreground border-border',
+   158→};
+   159→
+   160→function TicketPriorityBadge({ priority }: { priority: TicketPriority }) {
+   161→  return (
+   162→    <Badge
+   163→      variant="outline"
+   164→      className={cn('font-semibold border text-xs tabular-nums', priorityStyles[priority])}
+   165→    >
+   166→      {TICKET_PRIORITY_SHORT[priority]}
+   167→    </Badge>
+   168→  );
+   169→}
+   170→
+   171→const typeStyles: Record<TicketType, string> = {
+   172→  INCIDENT: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300',
+   173→  SERVICE_REQUEST: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-300',
+   174→  QUESTION: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/50 dark:text-sky-300',
+   175→  COMPLAINT: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300',
+   176→};
+   177→
+   178→function TicketTypeBadge({ type }: { type: TicketType }) {
+   179→  return (
+   180→    <Badge variant="outline" className={cn('font-medium border text-xs', typeStyles[type])}>
+   181→      {TICKET_TYPE_LABELS[type]}
+   182→    </Badge>
+   183→  );
+   184→}
+   185→
+   186→// ---- SLA health pill -------------------------------------------------------
+   187→
+   188→const slaHealthMeta: Record<
+   189→  TicketSlaHealth,
+   190→  { label: string; cls: string; icon: React.ReactNode }
+   191→> = {
+   192→  on_track: {
+   193→    label: 'On track',
+   194→    cls: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
+   195→    icon: <CheckCircle2 className="h-3 w-3" />,
+   196→  },
+   197→  at_risk: {
+   198→    label: 'At risk',
+   199→    cls: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   200→    icon: <AlertTriangle className="h-3 w-3" />,
+   201→  },
+   202→  breached: {
+   203→    label: 'Breached',
+   204→    cls: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+   205→    icon: <ShieldAlert className="h-3 w-3" />,
+   206→  },
+   207→  met: {
+   208→    label: 'SLA met',
+   209→    cls: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
+   210→    icon: <CheckCircle2 className="h-3 w-3" />,
+   211→  },
+   212→  paused: {
+   213→    label: 'Paused',
+   214→    cls: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   215→    icon: <Pause className="h-3 w-3" />,
+   216→  },
+   217→  none: {
+   218→    label: 'No SLA',
+   219→    cls: 'bg-muted text-muted-foreground border-border',
+   220→    icon: <Clock className="h-3 w-3" />,
+   221→  },
+   222→};
+   223→
+   224→function SlaHealthPill({ health, dueAt }: { health: TicketSlaHealth; dueAt?: string | null }) {
+   225→  const meta = slaHealthMeta[health];
+   226→  let suffix = '';
+   227→  if ((health === 'on_track' || health === 'at_risk') && dueAt) {
+   228→    const mins = Math.round((new Date(dueAt).getTime() - Date.now()) / 60000);
+   229→    suffix = ` · ${formatMins(mins)}`;
+   230→  }
+   231→  return (
+   232→    <Badge variant="outline" className={cn('font-medium border text-[11px] gap-1', meta.cls)}>
+   233→      {meta.icon}
+   234→      {meta.label}
+   235→      {suffix}
+   236→    </Badge>
+   237→  );
+   238→}
+   239→
+   240→// ---- Aging badge -----------------------------------------------------------
+   241→
+   242→/**
+   243→ * Aging thresholds by priority (in hours). Beyond `warn` we show an amber
+   244→ * "aging" badge; beyond `overdue` we show a red one. P1 incidents age fastest.
+   245→ */
+   246→const AGE_THRESHOLDS: Record<TicketPriority, { warn: number; overdue: number }> = {
+   247→  P1: { warn: 1, overdue: 4 },
+   248→  P2: { warn: 4, overdue: 24 },
+   249→  P3: { warn: 24, overdue: 72 },
+   250→  P4: { warn: 72, overdue: 168 },
+   251→};
+   252→
+   253→function AgingBadge({ createdAt, priority, status }: { createdAt: string; priority: TicketPriority; status: TicketStatus }) {
+   254→  // Don't show aging on terminal statuses.
+   255→  if (status === 'RESOLVED' || status === 'CLOSED' || status === 'CANCELED') return null;
+   256→
+   257→  const hours = (Date.now() - new Date(createdAt).getTime()) / 3600000;
+   258→  const t = AGE_THRESHOLDS[priority];
+   259→  if (hours >= t.overdue) {
+   260→    return (
+   261→      <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300">
+   262→        Aging {Math.round(hours)}h
+   263→      </Badge>
+   264→    );
+   265→  }
+   266→  if (hours >= t.warn) {
+   267→    return (
+   268→      <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300">
+   269→        Aging {Math.round(hours)}h
+   270→      </Badge>
+   271→    );
+   272→  }
+   273→  return null;
+   274→}
+   275→
+   276→// ---- Worker / customer options hook ----------------------------------------
+   277→
+   278→interface ScmWorker {
+   279→  id: string;
+   280→  name: string;
+   281→  title: string | null;
+   282→  avatarColor: string;
+   283→}
+   284→
+   285→/**
+   286→ * Fetch the SCM-worker roster from /api/stats (workloadByWorker array).
+   287→ * Falls back to an empty list when stats are unavailable.
+   288→ */
+   289→function useScmWorkers() {
+   290→  return useQuery<ScmWorker[]>({
+   291→    queryKey: ['stats', 'scm-workers'],
+   292→    queryFn: async () => {
+   293→      const stats = await apiGet<{
+   294→        workloadByWorker?: Array<{
+   295→          workerId: string;
+   296→          workerName: string;
+   297→          avatarColor?: string;
+   298→        }>;
+   299→      }>('/api/stats');
+   300→      return (stats.workloadByWorker ?? []).map((w) => ({
+   301→        id: w.workerId,
+   302→        name: w.workerName,
+   303→        title: null,
+   304→        avatarColor: w.avatarColor ?? '#0d9488',
+   305→      }));
+   306→    },
+   307→    staleTime: 60_000,
+   308→  });
+   309→}
+   310→
+   311→// ---- Bulk assign dialog ----------------------------------------------------
+   312→
+   313→function BulkAssignDialog({
+   314→  open,
+   315→  onOpenChange,
+   316→  workers,
+   317→  selectedCount,
+   318→  onConfirm,
+   319→  pending,
+   320→}: {
+   321→  open: boolean;
+   322→  onOpenChange: (v: boolean) => void;
+   323→  workers: ScmWorker[];
+   324→  selectedCount: number;
+   325→  onConfirm: (workerId: string) => void;
+   326→  pending: boolean;
+   327→}) {
+   328→  const [workerId, setWorkerId] = useState('');
+   329→  React.useEffect(() => {
+   330→    if (!open) setWorkerId('');
+   331→  }, [open]);
+   332→
+   333→  return (
+   334→    <Dialog open={open} onOpenChange={onOpenChange}>
+   335→      <DialogContent className="sm:max-w-md">
+   336→        <DialogHeader>
+   337→          <DialogTitle className="flex items-center gap-2">
+   338→            <UserPlus className="h-4 w-4" /> Bulk assign {selectedCount} ticket{selectedCount === 1 ? '' : 's'}
+   339→          </DialogTitle>
+   340→          <DialogDescription>
+   341→            Choose an SCM Worker to assign the selected tickets to. Each ticket&apos;s status will advance to ASSIGNED if it was NEW or TRIAGED.
+   342→          </DialogDescription>
+   343→        </DialogHeader>
+   344→        <div className="space-y-3 py-1">
+   345→          <div className="space-y-1.5">
+   346→            <Label htmlFor="bulk-worker">Assignee</Label>
+   347→            <Select value={workerId} onValueChange={setWorkerId}>
+   348→              <SelectTrigger id="bulk-worker" className="w-full">
+   349→                <SelectValue placeholder="Select SCM Worker…" />
+   350→              </SelectTrigger>
+   351→              <SelectContent>
+   352→                {workers.length === 0 ? (
+   353→                  <SelectItem value="__none" disabled>No workers available</SelectItem>
+   354→                ) : (
+   355→                  workers.map((w) => (
+   356→                    <SelectItem key={w.id} value={w.id}>
+   357→                      {w.name}
+   358→                      {w.title ? ` · ${w.title}` : ''}
+   359→                    </SelectItem>
+   360→                  ))
+   361→                )}
+   362→              </SelectContent>
+   363→            </Select>
+   364→          </div>
+   365→        </div>
+   366→        <DialogFooter>
+   367→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   368→            Cancel
+   369→          </Button>
+   370→          <Button
+   371→            disabled={pending || !workerId || workerId === '__none'}
+   372→            onClick={() => onConfirm(workerId)}
+   373→          >
+   374→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <UserPlus className="h-4 w-4 mr-1.5" />}
+   375→            {pending ? 'Assigning…' : 'Assign'}
+   376→          </Button>
+   377→        </DialogFooter>
+   378→      </DialogContent>
+   379→    </Dialog>
+   380→  );
+   381→}
+   382→
+   383→// ---- Create ticket dialog --------------------------------------------------
+   384→
+   385→interface ServiceOption { id: string; name: string }
+   386→
+   387→function CreateTicketDialog({
+   388→  open,
+   389→  onOpenChange,
+   390→  services,
+   391→  defaultCustomerId,
+   392→  canPickCustomer,
+   393→  onConfirm,
+   394→  pending,
+   395→}: {
+   396→  open: boolean;
+   397→  onOpenChange: (v: boolean) => void;
+   398→  services: ServiceOption[];
+   399→  defaultCustomerId: string | null;
+   400→  canPickCustomer: boolean;
+   401→  onConfirm: (payload: {
+   402→    title: string;
+   403→    description: string;
+   404→    type: TicketType;
+   405→    priority: TicketPriority;
+   406→    serviceId: string | null;
+   407→    serviceCustomerId: string;
+   408→  }) => void;
+   409→  pending: boolean;
+   410→}) {
+   411→  const [title, setTitle] = useState('');
+   412→  const [description, setDescription] = useState('');
+   413→  const [type, setType] = useState<TicketType>('INCIDENT');
+   414→  const [priority, setPriority] = useState<TicketPriority>('P3');
+   415→  const [serviceId, setServiceId] = useState<string>('__none');
+   416→  const [customerId, setCustomerId] = useState<string>(defaultCustomerId ?? '');
+   417→
+   418→  React.useEffect(() => {
+   419→    if (!open) {
+   420→      setTitle('');
+   421→      setDescription('');
+   422→      setType('INCIDENT');
+   423→      setPriority('P3');
+   424→      setServiceId('__none');
+   425→      setCustomerId(defaultCustomerId ?? '');
+   426→    }
+   427→  }, [open, defaultCustomerId]);
+   428→
+   429→  const valid = title.trim().length > 0 && description.trim().length > 0 && (canPickCustomer ? !!customerId : true);
+   430→
+   431→  return (
+   432→    <Dialog open={open} onOpenChange={onOpenChange}>
+   433→      <DialogContent className="sm:max-w-lg">
+   434→        <DialogHeader>
+   435→          <DialogTitle className="flex items-center gap-2">
+   436→            <Plus className="h-4 w-4" /> Raise a new ticket
+   437→          </DialogTitle>
+   438→          <DialogDescription>
+   439→            Provide the title, description, and classification. An SLA clock will start automatically based on the matching SLA policy.
+   440→          </DialogDescription>
+   441→        </DialogHeader>
+   442→        <div className="space-y-3 py-1">
+   443→          <div className="space-y-1.5">
+   444→            <Label htmlFor="t-title">Title (required)</Label>
+   445→            <Input
+   446→              id="t-title"
+   447→              value={title}
+   448→              onChange={(e) => setTitle(e.target.value)}
+   449→              maxLength={200}
+   450→              placeholder="Brief summary of the issue or request"
+   451→            />
+   452→          </div>
+   453→          <div className="space-y-1.5">
+   454→            <Label htmlFor="t-desc">Description (required)</Label>
+   455→            <Textarea
+   456→              id="t-desc"
+   457→              value={description}
+   458→              onChange={(e) => setDescription(e.target.value)}
+   459→              rows={5}
+   460→              placeholder="What is happening? What did you expect? Any error messages, steps to reproduce, business impact…"
+   461→            />
+   462→          </div>
+   463→          <div className="grid grid-cols-2 gap-3">
+   464→            <div className="space-y-1.5">
+   465→              <Label htmlFor="t-type">Type</Label>
+   466→              <Select value={type} onValueChange={(v) => setType(v as TicketType)}>
+   467→                <SelectTrigger id="t-type" className="w-full">
+   468→                  <SelectValue />
+   469→                </SelectTrigger>
+   470→                <SelectContent>
+   471→                  {TYPE_OPTIONS.map((t) => (
+   472→                    <SelectItem key={t} value={t}>{TICKET_TYPE_LABELS[t]}</SelectItem>
+   473→                  ))}
+   474→                </SelectContent>
+   475→              </Select>
+   476→            </div>
+   477→            <div className="space-y-1.5">
+   478→              <Label htmlFor="t-prio">Priority</Label>
+   479→              <Select value={priority} onValueChange={(v) => setPriority(v as TicketPriority)}>
+   480→                <SelectTrigger id="t-prio" className="w-full">
+   481→                  <SelectValue />
+   482→                </SelectTrigger>
+   483→                <SelectContent>
+   484→                  {PRIORITY_OPTIONS.map((p) => (
+   485→                    <SelectItem key={p} value={p}>{TICKET_PRIORITY_SHORT[p]}</SelectItem>
+   486→                  ))}
+   487→                </SelectContent>
+   488→              </Select>
+   489→            </div>
+   490→          </div>
+   491→          <div className="space-y-1.5">
+   492→            <Label htmlFor="t-service">Service (optional)</Label>
+   493→            <Select value={serviceId} onValueChange={setServiceId}>
+   494→              <SelectTrigger id="t-service" className="w-full">
+   495→                <SelectValue placeholder="Select a service…" />
+   496→              </SelectTrigger>
+   497→              <SelectContent>
+   498→                <SelectItem value="__none">No specific service</SelectItem>
+   499→                {services.map((s) => (
+   500→                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+   501→                ))}
+   502→              </SelectContent>
+   503→            </Select>
+   504→          </div>
+   505→          {canPickCustomer && (
+   506→            <div className="space-y-1.5">
+   507→              <Label htmlFor="t-customer">Customer org (required)</Label>
+   508→              <Input
+   509→                id="t-customer"
+   510→                value={customerId}
+   511→                onChange={(e) => setCustomerId(e.target.value)}
+   512→                placeholder="Customer org node id"
+   513→              />
+   514→              <p className="text-[11px] text-muted-foreground">
+   515→                For SCM Workers raising a ticket on behalf of a customer. Customers do not see this field.
+   516→              </p>
+   517→            </div>
+   518→          )}
+   519→        </div>
+   520→        <DialogFooter>
+   521→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
+   522→            Cancel
+   523→          </Button>
+   524→          <Button
+   525→            disabled={pending || !valid}
+   526→            onClick={() =>
+   527→              onConfirm({
+   528→                title: title.trim(),
+   529→                description: description.trim(),
+   530→                type,
+   531→                priority,
+   532→                serviceId: serviceId === '__none' ? null : serviceId,
+   533→                serviceCustomerId: customerId,
+   534→              })
+   535→            }
+   536→          >
+   537→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <Plus className="h-4 w-4 mr-1.5" />}
+   538→            {pending ? 'Creating…' : 'Create Ticket'}
+   539→          </Button>
+   540→        </DialogFooter>
+   541→      </DialogContent>
+   542→    </Dialog>
+   543→  );
+   544→}
+   545→
+   546→// ---- Main component --------------------------------------------------------
+   547→
+   548→interface TicketListProps {
+   549→  role: Role;
+   550→  /** Override the page title (defaults to "Tickets"). */
+   551→  title?: string;
+   552→  description?: string;
+   553→  /** Optional fixed customer filter (e.g. for the customer workspace) */
+   554→  fixedCustomerId?: string;
+   555→  /** Show the create button — defaults to true for everyone except SERVICE_OWNER. */
+   556→  hideCreate?: boolean;
+   557→}
+   558→
+   559→export default function TicketList({
+   560→  role,
+   561→  title = 'Tickets & Incidents',
+   562→  description = 'Track and resolve incidents, service requests, questions, and complaints across your scope.',
+   563→  fixedCustomerId,
+   564→  hideCreate,
+   565→}: TicketListProps) {
+   566→  const { navigate, session } = useApp();
+   567→  const qc = useQueryClient();
+   568→
+   569→  // Filter state
+   570→  const [preset, setPreset] = useState<PresetKey>('all');
+   571→  const [statusFilter, setStatusFilter] = useState<TicketStatus[]>([]);
+   572→  const [priorityFilter, setPriorityFilter] = useState<TicketPriority[]>([]);
+   573→  const [typeFilter, setTypeFilter] = useState<TicketType[]>([]);
+   574→  const [search, setSearch] = useState('');
+   575→  const [sort, setSort] = useState<'recent' | 'priority' | 'age' | 'sla'>('recent');
+   576→
+   577→  // Selection (bulk assign)
+   578→  const [selected, setSelected] = useState<Set<string>>(new Set());
+   579→  const [bulkOpen, setBulkOpen] = useState(false);
+   580→
+   581→  // Create dialog
+   582→  const [createOpen, setCreateOpen] = useState(false);
+   583→
+   584→  // Workers + services for dialogs
+   585→  const workersQ = useScmWorkers();
+   586→  const servicesQ = useQuery<ServiceOption[]>({
+   587→    queryKey: ['services', 'all-status', 'ticket-list'],
+   588→    queryFn: () => apiGet('/api/services?status=ALL'),
+   589→    staleTime: 60_000,
+   590→  });
+   591→
+   592→  const canCreate = hideCreate !== true && role !== 'SERVICE_OWNER';
+   593→  const canBulkAssign = role === 'CM_LEADER';
+   594→
+   595→  // Build the query string from preset + filters
+   596→  const queryString = useMemo(() => {
+   597→    const params = new URLSearchParams();
+   598→    // Preset-driven defaults
+   599→    if (preset === 'my_open' && session) {
+   600→      params.set('assignedUserId', 'me');
+   601→      params.set('status', 'NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER');
+   602→    } else if (preset === 'unassigned') {
+   603→      params.set('assignedUserId', 'unassigned');
+   604→    } else if (preset === 'breaching') {
+   605→      params.set('breachingSoon', '1');
+   606→    } else if (preset === 'waiting') {
+   607→      params.set('status', 'WAITING_CUSTOMER');
+   608→    } else if (preset === 'resolved') {
+   609→      params.set('status', 'RESOLVED');
+   610→    }
+   611→    // User-driven filters (override / refine preset)
+   612→    if (statusFilter.length > 0) params.set('status', statusFilter.join(','));
+   613→    if (priorityFilter.length > 0) params.set('priority', priorityFilter.join(','));
+   614→    if (typeFilter.length > 0) params.set('type', typeFilter.join(','));
+   615→    if (search.trim()) params.set('q', search.trim());
+   616→    if (fixedCustomerId) params.set('serviceCustomerId', fixedCustomerId);
+   617→    params.set('sort', sort);
+   618→    return params.toString();
+   619→  }, [preset, statusFilter, priorityFilter, typeFilter, search, fixedCustomerId, sort, session]);
+   620→
+   621→  const ticketsQ = useQuery<Ticket[]>({
+   622→    queryKey: ['tickets', queryString],
+   623→    queryFn: () => apiGet<Ticket[]>(`/api/tickets?${queryString}`),
+   624→    staleTime: 15_000,
+   625→  });
+   626→
+   627→  // Bulk assign mutation
+   628→  const bulkAssign = useMutation({
+   629→    mutationFn: async ({ workerId, ticketIds }: { workerId: string; ticketIds: string[] }) => {
+   630→      // Fire all assignments in parallel — the API is idempotent.
+   631→      await Promise.all(
+   632→        ticketIds.map((id) => apiPost(`/api/tickets/${id}/assign`, { assignedUserId: workerId })),
+   633→      );
+   634→    },
+   635→    onSuccess: (_data, vars) => {
+   636→      toast.success(`Assigned ${vars.ticketIds.length} ticket${vars.ticketIds.length === 1 ? '' : 's'}`, {
+   637→        description: `All selected tickets assigned to ${workersQ.data?.find((w) => w.id === vars.workerId)?.name ?? 'worker'}.`,
+   638→      });
+   639→      setSelected(new Set());
+   640→      setBulkOpen(false);
+   641→      qc.invalidateQueries({ queryKey: ['tickets'] });
+   642→    },
+   643→    onError: (e: Error) => toast.error(e.message || 'Bulk assign failed'),
+   644→  });
+   645→
+   646→  // Create ticket mutation
+   647→  const createTicket = useMutation({
+   648→    mutationFn: (payload: {
+   649→      title: string;
+   650→      description: string;
+   651→      type: TicketType;
+   652→      priority: TicketPriority;
+   653→      serviceId: string | null;
+   654→      serviceCustomerId: string;
+   655→    }) => apiPost<Ticket>('/api/tickets', payload),
+   656→    onSuccess: (t) => {
+   657→      toast.success(`Ticket ${t.number} created`, {
+   658→        description: t.title,
+   659→      });
+   660→      setCreateOpen(false);
+   661→      qc.invalidateQueries({ queryKey: ['tickets'] });
+   662→      // Navigate to the new ticket
+   663→      navigate('ticket-detail', { id: t.id });
+   664→    },
+   665→    onError: (e: Error) => toast.error(e.message || 'Could not create ticket'),
+   666→  });
+   667→
+   668→  const tickets = ticketsQ.data ?? [];
+   669→
+   670→  // Selected tickets objects (for bulk actions)
+   671→  const selectedTickets = useMemo(
+   672→    () => tickets.filter((t) => selected.has(t.id)),
+   673→    [tickets, selected],
+   674→  );
+   675→
+   676→  const toggleSelect = (id: string) => {
+   677→    setSelected((prev) => {
+   678→      const next = new Set(prev);
+   679→      if (next.has(id)) next.delete(id);
+   680→      else next.add(id);
+   681→      return next;
+   682→    });
+   683→  };
+   684→
+   685→  const toggleSelectAll = () => {
+   686→    if (selected.size === tickets.length) {
+   687→      setSelected(new Set());
+   688→    } else {
+   689→      setSelected(new Set(tickets.map((t) => t.id)));
+   690→    }
+   691→  };
+   692→
+   693→  const hasUserFilters =
+   694→    statusFilter.length > 0 ||
+   695→    priorityFilter.length > 0 ||
+   696→    typeFilter.length > 0 ||
+   697→    search.trim().length > 0;
+   698→
+   699→  // ---- Columns -------------------------------------------------------------
+   700→  const columns: Column<Ticket>[] = useMemo(() => {
+   701→    const cols: Column<Ticket>[] = [];
+   702→
+   703→    if (canBulkAssign) {
+   704→      cols.push({
+   705→        key: 'select',
+   706→        header: null,
+   707→        render: (t) => (
+   708→          <Checkbox
+   709→            checked={selected.has(t.id)}
+   710→            onCheckedChange={() => toggleSelect(t.id)}
+   711→            onClick={(e) => e.stopPropagation()}
+   712→            aria-label={`Select ${t.number}`}
+   713→          />
+   714→        ),
+   715→        headerClassName: 'w-10',
+   716→        className: 'w-10',
+   717→      });
+   718→    }
+   719→
+   720→    cols.push(
+   721→      {
+   722→        key: 'number',
+   723→        header: 'Number',
+   724→        render: (t) => (
+   725→          <span className="font-mono text-xs font-medium text-primary">{t.number}</span>
+   726→        ),
+   727→        headerClassName: 'w-24',
+   728→        className: 'w-24',
+   729→      },
+   730→      {
+   731→        key: 'title',
+   732→        header: 'Title',
+   733→        render: (t) => (
+   734→          <div className="min-w-0 max-w-[280px]">
+   735→            <div className="font-medium text-sm truncate">{t.title}</div>
+   736→            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+   737→              <AgingBadge createdAt={t.createdAt} priority={t.priority} status={t.status} />
+   738→              {t.serviceName && (
+   739→                <span className="text-[11px] text-muted-foreground truncate max-w-[140px]">
+   740→                  {t.serviceName}
+   741→                </span>
+   742→              )}
+   743→            </div>
+   744→          </div>
+   745→        ),
+   746→      },
+   747→      {
+   748→        key: 'type',
+   749→        header: 'Type',
+   750→        render: (t) => <TicketTypeBadge type={t.type} />,
+   751→        headerClassName: 'w-32',
+   752→        className: 'w-32',
+   753→      },
+   754→      {
+   755→        key: 'priority',
+   756→        header: 'Priority',
+   757→        render: (t) => <TicketPriorityBadge priority={t.priority} />,
+   758→        headerClassName: 'w-20',
+   759→        className: 'w-20',
+   760→      },
+   761→      {
+   762→        key: 'status',
+   763→        header: 'Status',
+   764→        render: (t) => <TicketStatusBadge status={t.status} />,
+   765→        headerClassName: 'w-32',
+   766→        className: 'w-32',
+   767→      },
+   768→      {
+   769→        key: 'assignee',
+   770→        header: 'Assignee',
+   771→        render: (t) =>
+   772→          t.assignedUserName ? (
+   773→            <div className="flex items-center gap-1.5">
+   774→              <UserAvatar name={t.assignedUserName} size="sm" />
+   775→              <span className="text-xs truncate max-w-[100px]">{t.assignedUserName}</span>
+   776→            </div>
+   777→          ) : (
+   778→            <span className="text-xs text-muted-foreground italic">Unassigned</span>
+   779→          ),
+   780→        headerClassName: 'w-36',
+   781→        className: 'w-36',
+   782→      },
+   783→      {
+   784→        key: 'sla',
+   785→        header: 'SLA',
+   786→        render: (t) => {
+   787→          const health = deriveSlaHealth(t.slaClocks);
+   788→          const dueAt = t.slaClocks?.find((c) => c.status === 'RUNNING')?.dueAt ?? null;
+   789→          return <SlaHealthPill health={health} dueAt={dueAt} />;
+   790→        },
+   791→        headerClassName: 'w-40',
+   792→        className: 'w-40',
+   793→      },
+   794→      {
+   795→        key: 'created',
+   796→        header: 'Created',
+   797→        render: (t) => (
+   798→          <div className="text-xs text-muted-foreground">
+   799→            <RelativeTime date={t.createdAt} />
+   800→          </div>
+   801→        ),
+   802→        headerClassName: 'w-28 text-right',
+   803→        className: 'w-28 text-right',
+   804→      },
+   805→    );
+   806→
+   807→    return cols;
+   808→  }, [canBulkAssign, selected, toggleSelect]);
+   809→
+   810→  // ---- Render --------------------------------------------------------------
+   811→
+   812→  return (
+   813→    <div className="space-y-5">
+   814→      <PageHeader
+   815→        title={title}
+   816→        description={description}
+   817→        icon={<TicketIcon className="h-5 w-5" />}
+   818→        actions={
+   819→          canCreate ? (
+   820→            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+   821→              <Plus className="h-4 w-4" /> Raise Ticket
+   822→            </Button>
+   823→          ) : null
+   824→        }
+   825→      />
+   826→
+   827→      {/* Preset chips */}
+   828→      <div className="flex flex-wrap items-center gap-1.5">
+   829→        {PRESETS.map((p) => (
+   830→          <button
+   831→            key={p.key}
+   832→            onClick={() => {
+   833→              setPreset(p.key);
+   834→              // Clear user filters when switching presets so the preset semantics win.
+   835→              setStatusFilter([]);
+   836→              setPriorityFilter([]);
+   837→              setTypeFilter([]);
+   838→              setSearch('');
+   839→            }}
+   840→            title={p.description}
+   841→            className={cn(
+   842→              'inline-flex items-center h-8 px-3 rounded-md text-xs font-medium border transition-colors',
+   843→              preset === p.key
+   844→                ? 'bg-primary text-primary-foreground border-primary'
+   845→                : 'bg-background hover:bg-accent hover:text-accent-foreground border-border',
+   846→            )}
+   847→          >
+   848→            {p.label}
+   849→          </button>
+   850→        ))}
+   851→      </div>
+   852→
+   853→      <SectionCard>
+   854→        {/* Filter bar */}
+   855→        <div className="flex flex-wrap items-center gap-2 mb-4">
+   856→          <div className="relative flex-1 min-w-[200px] max-w-md">
+   857→            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+   858→            <Input
+   859→              placeholder="Search by title…"
+   860→              value={search}
+   861→              onChange={(e) => setSearch(e.target.value)}
+   862→              className="pl-9 pr-9 h-9"
+   863→            />
+   864→            {search && (
+   865→              <button
+   866→                onClick={() => setSearch('')}
+   867→                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+   868→                aria-label="Clear search"
+   869→              >
+   870→                <X className="h-4 w-4" />
+   871→              </button>
+   872→            )}
+   873→          </div>
+   874→
+   875→          <Popover>
+   876→            <PopoverTrigger asChild>
+   877→              <Button variant="outline" size="sm" className="h-9 gap-1.5">
+   878→                <Filter className="h-3.5 w-3.5" /> Status
+   879→                {statusFilter.length > 0 && (
+   880→                  <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">
+   881→                    {statusFilter.length}
+   882→                  </Badge>
+   883→                )}
+   884→                <ChevronDown className="h-3 w-3 opacity-60" />
+   885→              </Button>
+   886→            </PopoverTrigger>
+   887→            <PopoverContent className="w-56" align="start">
+   888→              <div className="space-y-1.5">
+   889→                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</p>
+   890→                {STATUS_OPTIONS.map((s) => (
+   891→                  <label key={s} className="flex items-center gap-2 cursor-pointer py-1">
+   892→                    <Checkbox
+   893→                      checked={statusFilter.includes(s)}
+   894→                      onCheckedChange={() => {
+   895→                        setStatusFilter((prev) =>
+   896→                          prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s],
+   897→                        );
+   898→                      }}
+   899→                    />
+   900→                    <span className="text-sm">{TICKET_STATUS_LABELS[s]}</span>
+   901→                  </label>
+   902→                ))}
+   903→                {statusFilter.length > 0 && (
+   904→                  <Button
+   905→                    variant="ghost"
+   906→                    size="sm"
+   907→                    className="w-full mt-1 text-xs h-7"
+   908→                    onClick={() => setStatusFilter([])}
+   909→                  >
+   910→                    Clear
+   911→                  </Button>
+   912→                )}
+   913→              </div>
+   914→            </PopoverContent>
+   915→          </Popover>
+   916→
+   917→          <Select
+   918→            value={priorityFilter.length === 0 ? 'all' : priorityFilter[0]}
+   919→            onValueChange={(v) => setPriorityFilter(v === 'all' ? [] : [v as TicketPriority])}
+   920→          >
+   921→            <SelectTrigger className="h-9 w-[120px] text-xs">
+   922→              <SelectValue placeholder="Priority" />
+   923→            </SelectTrigger>
+   924→            <SelectContent>
+   925→              <SelectItem value="all">All priorities</SelectItem>
+   926→              {PRIORITY_OPTIONS.map((p) => (
+   927→                <SelectItem key={p} value={p}>{TICKET_PRIORITY_SHORT[p]}</SelectItem>
+   928→              ))}
+   929→            </SelectContent>
+   930→          </Select>
+   931→
+   932→          <Select
+   933→            value={typeFilter.length === 0 ? 'all' : typeFilter[0]}
+   934→            onValueChange={(v) => setTypeFilter(v === 'all' ? [] : [v as TicketType])}
+   935→          >
+   936→            <SelectTrigger className="h-9 w-[140px] text-xs">
+   937→              <SelectValue placeholder="Type" />
+   938→            </SelectTrigger>
+   939→            <SelectContent>
+   940→              <SelectItem value="all">All types</SelectItem>
+   941→              {TYPE_OPTIONS.map((t) => (
+   942→                <SelectItem key={t} value={t}>{TICKET_TYPE_LABELS[t]}</SelectItem>
+   943→              ))}
+   944→            </SelectContent>
+   945→          </Select>
+   946→
+   947→          <Select value={sort} onValueChange={(v) => setSort(v as 'recent' | 'priority' | 'age' | 'sla')}>
+   948→            <SelectTrigger className="h-9 w-[130px] text-xs">
+   949→              <SelectValue placeholder="Sort" />
+   950→            </SelectTrigger>
+   951→            <SelectContent>
+   952→              <SelectItem value="recent">Most recent</SelectItem>
+   953→              <SelectItem value="priority">Priority (P1 first)</SelectItem>
+   954→              <SelectItem value="age">Oldest first</SelectItem>
+   955→              <SelectItem value="sla">SLA due soonest</SelectItem>
+   956→            </SelectContent>
+   957→          </Select>
+   958→
+   959→          {hasUserFilters && (
+   960→            <Button
+   961→              variant="ghost"
+   962→              size="sm"
+   963→              onClick={() => {
+   964→                setStatusFilter([]);
+   965→                setPriorityFilter([]);
+   966→                setTypeFilter([]);
+   967→                setSearch('');
+   968→              }}
+   969→              className="h-9 text-xs"
+   970→            >
+   971→              <X className="h-3.5 w-3.5" /> Clear
+   972→            </Button>
+   973→          )}
+   974→        </div>
+   975→
+   976→        {/* Bulk action bar */}
+   977→        {canBulkAssign && selected.size > 0 && (
+   978→          <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+   979→            <span className="text-xs font-medium">
+   980→              {selected.size} ticket{selected.size === 1 ? '' : 's'} selected
+   981→            </span>
+   982→            <div className="flex items-center gap-2">
+   983→              <Button
+   984→                variant="ghost"
+   985→                size="sm"
+   986→                className="h-7 text-xs"
+   987→                onClick={() => setSelected(new Set())}
+   988→              >
+   989→                Clear
+   990→              </Button>
+   991→              <Button
+   992→                size="sm"
+   993→                className="h-7 gap-1.5 text-xs"
+   994→                onClick={() => setBulkOpen(true)}
+   995→              >
+   996→                <UserPlus className="h-3.5 w-3.5" /> Assign {selected.size} to…
+   997→              </Button>
+   998→            </div>
+   999→          </div>
+  1000→        )}
+  1001→
+  1002→        {/* Select-all row (only when bulk assign is available) */}
+  1003→        {canBulkAssign && tickets.length > 0 && (
+  1004→          <div className="mb-1 flex items-center gap-2 px-1">
+  1005→            <Checkbox
+  1006→              checked={selected.size === tickets.length && tickets.length > 0}
+  1007→              onCheckedChange={toggleSelectAll}
+  1008→              aria-label="Select all"
+  1009→            />
+  1010→            <span className="text-[11px] text-muted-foreground">
+  1011→              {selected.size === tickets.length ? 'All selected' : 'Select all'}
+  1012→            </span>
+  1013→          </div>
+  1014→        )}
+  1015→
+  1016→        {ticketsQ.isLoading ? (
+  1017→          <LoadingState rows={6} />
+  1018→        ) : tickets.length === 0 ? (
+  1019→          <EmptyState
+  1020→            icon={<Inbox className="h-10 w-10 text-muted-foreground/50" />}
+  1021→            title={hasUserFilters ? 'No tickets match your filters' : 'No tickets yet'}
+  1022→            description={
+  1023→              hasUserFilters
+  1024→                ? 'Try adjusting your filters or choosing a different preset.'
+  1025→                : canCreate
+  1026→                  ? 'Raise your first ticket to start tracking an incident or request.'
+  1027→                  : 'Tickets raised on services you own will appear here.'
+  1028→            }
+  1029→            action={
+  1030→              canCreate ? (
+  1031→                <Button onClick={() => setCreateOpen(true)} className="gap-2">
+  1032→                  <Plus className="h-4 w-4" /> Raise Ticket
+  1033→                </Button>
+  1034→              ) : undefined
+  1035→            }
+  1036→          />
+  1037→        ) : (
+  1038→          <>
+  1039→            <p className="text-xs text-muted-foreground mb-2">
+  1040→              Showing {tickets.length} ticket{tickets.length === 1 ? '' : 's'}
+  1041→            </p>
+  1042→            <DataTable
+  1043→              columns={columns}
+  1044→              rows={tickets}
+  1045→              onRowClick={(t) => navigate('ticket-detail', { id: t.id })}
+  1046→              empty="No matching tickets."
+  1047→            />
+  1048→          </>
+  1049→        )}
+  1050→      </SectionCard>
+  1051→
+  1052→      {/* Bulk assign dialog */}
+  1053→      <BulkAssignDialog
+  1054→        open={bulkOpen}
+  1055→        onOpenChange={setBulkOpen}
+  1056→        workers={workersQ.data ?? []}
+  1057→        selectedCount={selected.size}
+  1058→        onConfirm={(workerId) =>
+  1059→          bulkAssign.mutate({ workerId, ticketIds: Array.from(selected) })
+  1060→        }
+  1061→        pending={bulkAssign.isPending}
+  1062→      />
+  1063→
+  1064→      {/* Create ticket dialog */}
+  1065→      <CreateTicketDialog
+  1066→        open={createOpen}
+  1067→        onOpenChange={setCreateOpen}
+  1068→        services={servicesQ.data ?? []}
+  1069→        defaultCustomerId={session?.orgNodeId ?? null}
+  1070→        canPickCustomer={role === 'SCM_WORKER' || role === 'CM_LEADER'}
+  1071→        onConfirm={(payload) => createTicket.mutate(payload)}
+  1072→        pending={createTicket.isPending}
+  1073→      />
+  1074→    </div>
+  1075→  );
+  1076→}
+  1077→

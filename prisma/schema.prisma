@@ -38,6 +38,8 @@ model User {
   knowledgeArticles  KnowledgeArticle[] @relation("KnowledgeAuthor")
   reviewedArticles   KnowledgeArticle[] @relation("KnowledgeReviewer")
   surveys            SatisfactionSurvey[]
+  customerAssignments CustomerAssignment[]
+  knowledgeVersions   KnowledgeArticleVersion[] @relation("KnowledgeVersionCreator")
 
   @@index([role])
 }
@@ -55,6 +57,7 @@ model OrgNode {
   demands   Demand[]  @relation("DemandCustomer")
   tickets   Ticket[]  @relation("TicketCustomer")
   slaReportCustomers SlaReportCustomer[]
+  customerAssignments CustomerAssignment[]
 }
 
 model Service {
@@ -519,6 +522,7 @@ model SlaPolicy {
   service          Service?         @relation(fields: [serviceId], references: [id])
   businessCalendar BusinessCalendar? @relation(fields: [businessCalendarId], references: [id])
   slaClocks        SlaClock[]
+  escalationPolicies SlaEscalationPolicy[]
 
   @@index([serviceId])
   @@index([priority])
@@ -638,6 +642,7 @@ model KnowledgeArticle {
   service   Service? @relation(fields: [serviceId], references: [id])
   author    User     @relation("KnowledgeAuthor", fields: [authorId], references: [id])
   reviewer  User?    @relation("KnowledgeReviewer", fields: [reviewerId], references: [id])
+  versions  KnowledgeArticleVersion[]
 
   @@index([status])
   @@index([type])
@@ -704,4 +709,89 @@ model NotificationDelivery {
 
   @@index([notificationId])
   @@index([status])
+}
+
+// ============================================================================
+// Enterprise Workflow Review: Customer Assignment (SCM scoping)
+// ============================================================================
+
+model CustomerAssignment {
+  id        String   @id @default(cuid())
+  orgNodeId String
+  userId    String
+  role      String   // SCM_OWNER | BACKUP | ESCALATION_MANAGER
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  orgNode OrgNode @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgNodeId, userId, role])
+  @@index([userId])
+  @@index([orgNodeId])
+}
+
+// ============================================================================
+// Enterprise Workflow Review: Sequence Counter (race-prone ticket numbers)
+// ============================================================================
+
+model SequenceCounter {
+  key   String @id
+  value Int    @default(0)
+}
+
+// ============================================================================
+// Enterprise Workflow Review: SLA Escalation Policy
+// ============================================================================
+
+model SlaEscalationPolicy {
+  id           String  @id @default(cuid())
+  policyId     String
+  thresholdPct Int     // e.g. 50, 70, 90
+  notifyRole   String  // SCM_WORKER | CM_LEADER | SERVICE_OWNER
+  notifyUserId String?
+  active       Boolean @default(true)
+  createdAt    DateTime @default(now())
+
+  policy SlaPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId])
+}
+
+// ============================================================================
+// Enterprise Workflow Review: Knowledge Article Version History
+// ============================================================================
+
+model KnowledgeArticleVersion {
+  id          String   @id @default(cuid())
+  articleId   String
+  title       String
+  body        String
+  version     Int
+  createdById String
+  createdAt   DateTime @default(now())
+
+  article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  creator User             @relation("KnowledgeVersionCreator", fields: [createdById], references: [id])
+
+  @@index([articleId])
+}
+
+// ============================================================================
+// Enterprise Workflow Review: Entity Links (unify demands/tickets/problems)
+// ============================================================================
+
+model EntityLink {
+  id        String   @id @default(cuid())
+  fromType  String   // TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
+  fromId    String
+  toType    String
+  toId      String
+  linkType  String   // CAUSED_BY | RELATES_TO | CONVERTED_TO | FULFILLED_BY
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([fromType, fromId, toType, toId, linkType])
+  @@index([fromType, fromId])
+  @@index([toType, toId])
 }

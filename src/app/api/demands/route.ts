@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
+import { getAssignedCustomerOrgIds } from '@/lib/entity-access';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from './_serialize';
 
@@ -14,6 +15,12 @@ export const runtime = 'nodejs';
 //   customer=<id> filter by service customer org node
 //   q=<text>      title search (case-insensitive contains)
 //   mine=1        serviceCustomerId === caller.orgNodeId (for customers)
+//
+// SCM scoping (Enterprise Workflow Review): replace the broad "assigned-to-me
+// OR unassigned" rule with precise CustomerAssignment-based scoping:
+//   assignedScmWorkerId = caller.id
+//   OR (assignedScmWorkerId = null AND serviceCustomerId IN assignedCustomerOrgIds)
+//   OR serviceCustomerId IN assignedCustomerOrgIds
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -34,8 +41,6 @@ export async function GET(req: NextRequest) {
       const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
       if (statuses.length) and.push({ status: { in: statuses } });
     }
-    if (assignedMe) and.push({ assignedScmWorkerId: session.id });
-    if (unassigned) and.push({ assignedScmWorkerId: null });
     if (customer) and.push({ serviceCustomerId: customer });
     if (q) {
       and.push({ title: { contains: q } });
@@ -49,11 +54,40 @@ export async function GET(req: NextRequest) {
       }
       and.push({ serviceCustomerId: session.orgNodeId });
     } else if (session.role === 'SCM_WORKER') {
-      // SCM workers see assigned-to-me + unassigned (unless explicitly filtered).
-      if (!assignedMe && !unassigned) {
-        and.push({
-          OR: [{ assignedScmWorkerId: session.id }, { assignedScmWorkerId: null }],
-        });
+      // CustomerAssignment-based scoping.
+      const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(session.id);
+      if (assignedMe) {
+        and.push({ assignedScmWorkerId: session.id });
+      } else if (unassigned) {
+        // Unassigned demands on customer orgs this SCM serves (plus any
+        // unassigned demand if the SCM has no assignments at all — keeps the
+        // queue reachable in dev / seed scenarios).
+        if (assignedCustomerOrgIds.length > 0) {
+          and.push({
+            AND: [
+              { assignedScmWorkerId: null },
+              { serviceCustomerId: { in: assignedCustomerOrgIds } },
+            ],
+          });
+        } else {
+          and.push({ assignedScmWorkerId: null });
+        }
+      } else {
+        // assigned-to-me OR (unassigned AND serviceCustomerId IN myCustomerOrgs)
+        // OR serviceCustomerId IN myCustomerOrgs.
+        const orClauses: Record<string, unknown>[] = [
+          { assignedScmWorkerId: session.id },
+        ];
+        if (assignedCustomerOrgIds.length > 0) {
+          orClauses.push({
+            AND: [
+              { assignedScmWorkerId: null },
+              { serviceCustomerId: { in: assignedCustomerOrgIds } },
+            ],
+          });
+          orClauses.push({ serviceCustomerId: { in: assignedCustomerOrgIds } });
+        }
+        and.push({ OR: orClauses });
       }
       // If mine=1, also restrict to caller's orgNode (rare for SCM, but supported).
       if (mine && session.orgNodeId) {

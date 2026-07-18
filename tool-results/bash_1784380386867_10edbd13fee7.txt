@@ -1,0 +1,301 @@
+- On submit: `POST /api/governance-decisions` with `{serviceId, slaEventId, decisionType:'BREACH_RESPONSE', decision, rationale, resourcesAuthorized}`.
+- After success: the breach Alert flips from rose- to emerald-styled, the icon switches from ShieldAlert → CheckCircle2, and the button changes to `[View governance history]` (navigates to the Governance view). A "Governance response recorded" Badge appears in the alert header.
+- Fetches `GET /api/governance-decisions?serviceId=…&decisionType=BREACH_RESPONSE` per owned service to compute the `respondedBreachEventIds` Set (drives the responded/pending UI state).
+- On mutation success: toast + invalidate `['governance-decisions']` + close dialog.
+
+### `src/components/workspaces/cm-leader/SlmGovernance.tsx` (rewritten)
+- Replaced the toast-only `SlaReportReviewPanel` (which showed breaches as proxy "reports") with a real `<SlaReportsSection>` that fetches `GET /api/sla-reports`.
+- Reports grouped via Tabs: `Pending Review` (with count badge), `Approved`, `Returned`, `Issued`, `Drafts`. Each tab renders a list of `<ReportRow>` cards.
+- For PENDING_REVIEW reports: `[Review & Approve]` button (opens `<ReviewReportDialog>` in `approve` mode) + `[Return for Revision]` button (opens dialog in `return` mode).
+- `<ReviewReportDialog>` shows the report's summary + metrics (byService breakdown: W/B/C per service + total events) so the CM Leader can actually review before approving. Approve mode = optional reviewNotes; Return mode = required reviewNotes.
+- On approve: `POST /api/sla-reports/[id]/approve` with `{reviewNotes}`. On return: `POST /api/sla-reports/[id]/return` with `{reviewNotes}` (required). Both invalidate `['sla-reports']` + toast.
+- StatCards changed: replaced "Pending Report Reviews" (which counted breaches) with "Breaches >3d Open" (more meaningful). Kept the existing Active Breaches DataTable + Compliance Matrix + Donut + Trend Chart panels (those weren't toast-only).
+
+### `src/components/workspaces/scm-worker/SlmDashboard.tsx` (extended)
+- Replaced the toast-only "Draft communication" button with a real `<CommunicateDialog>` that pre-populates subject ("SLA Breach Notification — [service] — [date]") and body (formal breach notification letter template).
+- On submit: `POST /api/communications` with `{slaEventId, serviceId, serviceCustomerId, direction:'TO_CUSTOMER', channel:'PORTAL', subject, body}`. Toast "Communication sent to customer" + invalidate `['communications']` + close dialog.
+- Added a "Recent Communications" panel (right column) showing the last 5 communications from `GET /api/communications`. Each row: subject, direction badge (TO_CUSTOMER/INTERNAL_NOTE), channel, author, RelativeTime.
+- Added a `[Prepare SLA Report]` button → opens `<PrepareReportDialog>` with title, periodStart/periodEnd (defaulted to last month), service multi-select (checkbox list with SlaClassBadge), and summary textarea. On submit: `POST /api/sla-reports` → creates DRAFT.
+- Reports list (fetched via `GET /api/sla-reports?preparedBy=me`) renders each with status badge + context-aware action button:
+  - DRAFT → `[Submit for Review]` (POST /submit, notifies CM Leader)
+  - PENDING_REVIEW → "Awaiting CM Leader" badge
+  - APPROVED → `[Issue to Customer]` (POST /issue, notifies customers)
+  - RETURNED → shows CM Leader review notes + `[Re-submit for Review]` button
+  - ISSUED → "Issued" badge with CheckCircle2
+
+### `src/components/workspaces/shared/DemandDetail.tsx` (extended)
+- Added `requestApprovalMutation` (POST /api/demands/[id]/request-approval) — wired to a new `[Request CM Leader Approval]` button in the SCM_WORKER UNDER_REVIEW governance actions panel. Visible only when quote fields are filled AND not yet approved. Toast "CM Leader has been notified" on success.
+- Added `returnQuoteMutation` (POST /api/demands/[id]/return-quote with `{notes}`) — wired to a new `[Return for Revision…]` button in the CM_LEADER UNDER_REVIEW panel. Opens a `<ReturnQuoteDialog>` (required notes textarea, destructive styling). Visible only when quote fields are filled AND not yet approved.
+- Updated `StatusCallout` for SCM_WORKER UNDER_REVIEW: now differentiates between "Quote draft" (no fields filled) and "Pending CM Leader Approval" (fields filled but not approved), making the status semantically accurate.
+- Updated the SCM_WORKER UNDER_REVIEW actions panel: shows `[Request CM Leader Approval]` button + "Pending CM Leader Approval" Callout when savedQuoteFieldsFilled && !approved (replaces the old "Fill the assessment fields…" Callout).
+- Updated the CM_LEADER UNDER_REVIEW actions panel: when savedQuoteFieldsFilled && !approved, shows BOTH `[Approve Quote]` AND `[Return for Revision…]` buttons (replaces the old disabled-only Approve button + missing Return path). When no draft yet, shows a "Awaiting SCM quote draft" Callout.
+- Added `<ReturnQuoteDialog>` component (similar shape to `<RejectDialog>` — required notes textarea, destructive action button).
+- The existing `[Approve Quote]` button (POST /approve-quote) is unchanged.
+
+## Verification
+- `bun run lint` → EXIT 0 (zero errors, zero warnings across all 14 files I touched/created).
+- `npx tsc --noEmit --skipLibCheck` → zero errors in any file I created or modified (all remaining project TS errors are in unrelated `examples/`, `mini-services/`, `skills/` directories).
+- End-to-end API smoke-test via curl (sandbox dev server) — all 9 endpoints behave as designed:
+  - `POST /api/sla-reports` → 201 with DRAFT status, metrics auto-gathered.
+  - `POST /api/sla-reports/[id]/submit` → 200 with PENDING_REVIEW.
+  - `POST /api/sla-reports/[id]/approve` (CM Leader) → 200 with APPROVED + approvedAt + reviewedByCmLeaderId.
+  - `POST /api/sla-reports/[id]/issue` (SCM) → 200 with ISSUED + issuedAt.
+  - `POST /api/governance-decisions` → 201 with full record (serviceId owner-validated).
+  - `POST /api/communications` → 201 with full record.
+  - `POST /api/demands/[id]/review` → 200 (NEW → UNDER_REVIEW).
+  - `PATCH /api/demands/[id]` (quote fields) → 200.
+  - `POST /api/demands/[id]/request-approval` → 200 (COMMENT event + CM Leader notifications created).
+  - `POST /api/demands/[id]/return-quote` (CM Leader) → 200 (COMMENT event + SCM notification created).
+  - `POST /api/demands/[id]/approve-quote` → 200 (quoteApprovedByCmLeader=true).
+  - `POST /api/demands/[id]/request-approval` (idempotent re-call after approval) → 200, no re-notification.
+- Verified demand events after the full flow: CREATED → REVIEW_STARTED → COMMENT (request-approval) → COMMENT (return-quote by CM Leader) — all in the audit trail.
+- All three role workspace pages (SERVICE_OWNER, CM_LEADER, SCM_WORKER) render via the dev server (GET / returns 200, 30KB+ HTML, no compile errors in dev.log).
+- Work record written to `/home/z/my-project/agent-ctx/G2-governance-workflows-ui.md`.
+
+## Coordination notes for future agents
+- **G1 also worked in parallel** on the same APIs. Their versions of `_serialize.ts`, `/api/sla-reports/[id]/route.ts`, `/api/communications/[id]/route.ts`, `/api/governance-decisions/[id]/route.ts` are present and intact. My versions of `/api/sla-reports/route.ts`, `/api/communications/route.ts`, `/api/governance-decisions/route.ts`, and the four `/api/sla-reports/[id]/{submit,approve,return,issue}/route.ts` files are also present (I wrote them before seeing G1's work). The two sets are functionally compatible — my list endpoints return `metrics` (object), G1's single-endpoint returns `metricsJson` (object). The frontend I wrote only consumes the list endpoints, so it works. If a future agent needs the single-endpoint shape, they should align with G1's `_serialize.ts` helpers.
+- I added 4 new notification types to the runtime: `SlaReportApproved`, `SlaReportReturned`, `BreachCommunicated`, `BreachResponded` (all already declared in the schema's Notification type comment). Plus I reuse `QuoteApprovalRequested` for both demand quote requests AND SLA report submit (semantic overlap, harmless).
+- Demo data: I created 1 test SLA report (currently ISSUED), 1 test demand (currently UNDER_REVIEW, returned for revision), 1 test governance decision (COMMITMENT_APPROVAL on Backup & Recovery), 1 test communication (TO_CUSTOMER on Backup & Recovery) during smoke-testing. These are visible in the UI — they are reasonable demo artifacts, but a future agent may want to clean them up via a re-seed if a pristine demo state is needed.
+
+Stage Summary:
+- Governance workflows UI wiring COMPLETE. Every previously toast-only action now persists real state with audit trails + notifications:
+  - **Service Owner**: Approve/Escalate commitment dialogs → POST /api/governance-decisions. Decision History panel. Breach Response dialog on the dashboard → "Governance response recorded" indicator.
+  - **CM Leader**: SLA Reports section with tabbed grouping (Pending/Approved/Returned/Issued/Drafts), Review & Approve / Return for Revision dialogs that show summary + metrics before signing off.
+  - **SCM Worker**: Communicate to Customer dialog with pre-populated breach letter → POST /api/communications. Recent Communications panel. Prepare SLA Report dialog → DRAFT → Submit → (CM Leader approves) → Issue to Customer.
+  - **Shared DemandDetail**: Request CM Leader Approval (SCM) + Return for Revision (CM Leader) dialogs that create COMMENT audit events + targeted notifications.
+- All 5 UI files compile cleanly, lint cleanly, and render against the live API. All 9 API endpoints (8 new + 1 modified) return correct status codes, persist real rows, emit audit events, and fan out notifications to the right user pools.
+- Theme: teal/emerald throughout. Dialogs use shadcn/ui Dialog + Textarea + Label + Select + Input. Loading spinners via `Clock className="animate-pulse"`. Query invalidation targets the right keys on every mutation.
+- Did NOT write tests. Did NOT run `bun run build`. Did NOT modify any foundation file. Did NOT modify other agents' workspace files (only the 5 I was assigned).
+
+---
+
+Task ID: P4-COMMS
+Agent: Phase 4 comms builder (Threaded Comments + Attachments + CSAT)
+Task: Build the Threaded Comments API, Attachments API, and Customer Satisfaction (CSAT) API — Phase 4 items 11–13 from the plan. Plus three drop-in shared UI components.
+
+Work Log:
+- Read worklog.md foundation contracts (auth/db/api/audit imports, role-scoping rules, ISO-date convention, errorResponse pattern, foundation file ownership).
+- Read prisma/schema.prisma to confirm Phase 4 models (Conversation, Comment, Attachment, SatisfactionSurvey) were already in the DB; verified relations (Comment.author → User, Attachment.uploader → User, SatisfactionSurvey.customer → User, Conversation.comments → Comment[]).
+- Read existing API routes for style reference: src/app/api/communications/route.ts, src/app/api/communications/_serialize.ts, src/app/api/demands/_serialize.ts, src/app/api/notifications/route.ts.
+- Read src/components/workspaces/shared/DemandDetail.tsx + customer/DemandDetail.tsx for TanStack Query + shadcn/ui patterns.
+
+## API routes created (10 new files)
+1. `src/app/api/conversations/_serialize.ts` — Conversation/Comment serializers with `CONVERSATION_INCLUDE`, `errorResponse`, `VALID_ENTITY_TYPES`, `asEntityType`. Comment payload includes `author` (id/name/role/avatarColor/title) for inline avatar rendering.
+2. `src/app/api/conversations/route.ts` — GET (find by entityType+entityId, optional `createIfMissing=1`; returns empty shell `{id:null, comments:[]}` when none) + POST (explicit upsert). SERVICE_CUSTOMER scope: must own the underlying entity (resolved via `resolveServiceCustomerId` — handles TICKET/DEMAND/CHANGE→originDemand/SLA_EVENT). Comments filtered to CUSTOMER_VISIBLE for SERVICE_CUSTOMER.
+3. `src/app/api/conversations/[id]/comments/route.ts` — GET (role-scoped visibility) + POST (validates body+visibility; SERVICE_CUSTOMER cannot post INTERNAL; bumps conversation.updatedAt; COMMENT_CREATED audit log; fans out CommunicationReceived notification to customer org when internal role posts CUSTOMER_VISIBLE comment). Returns the full refreshed conversation.
+4. `src/app/api/conversations/comments/[id]/route.ts` — PATCH (author-only; sets body + editedAt; visibility immutable; COMMENT_EDITED audit log with before/after).
+5. `src/app/api/attachments/_serialize.ts` — Attachment serializer with `url` field, `MAX_FILE_BYTES=10MB`, `isAllowedMime` (image/*, application/pdf, text/*, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.*), `buildStorageKey` (`uploads/yyyy-mm/<ts>-<rand>-<safe-name>`).
+6. `src/app/api/attachments/route.ts` — GET (list; SERVICE_CUSTOMER ownership gate) + POST (multipart upload: entityType+entityId+file; 10MB cap; MIME allowlist; writes to public/uploads/yyyy-mm/; ATTACHMENT_UPLOADED audit log).
+7. `src/app/api/attachments/[id]/route.ts` — GET (metadata; ownership gate) + DELETE (uploader OR CM_LEADER; best-effort fs.unlink; ATTACHMENT_DELETED audit log).
+8. `src/app/api/surveys/_serialize.ts` — Survey serializer (joins customer name), `asSurveyEntityType` (TICKET|DEMAND only), `errorResponse`.
+9. `src/app/api/surveys/route.ts` — GET (filter by entityType/entityId/customerId; role-scoped: SERVICE_CUSTOMER=own, CM_LEADER=all, SERVICE_OWNER=owned-services' entities via JSON-column parse for demands + Prisma relation for tickets, SCM_WORKER=assigned demands) + POST (SERVICE_CUSTOMER only; rating 1-5 integer validation; ownership check; unique [entityType, entityId, customerId] → 409; SURVEY_CREATED audit; if rating ≤ 2 fans out CommitmentEscalated notification to all CM_LEADER users).
+10. `src/app/api/surveys/stats/route.ts` — GET (CM_LEADER + SERVICE_OWNER only; returns count, average, distribution {1..5}, trend per ISO-week, byEntityType breakdown, lowRatingCount, detractorCount, promoterCount, nps).
+
+## UI components created (3 new files under src/components/workspaces/shared/)
+11. `CommentThread.tsx` — props `{entityType, entityId, customerScope?, className?}`. TanStack Query GET /api/conversations (5s refetchInterval). Threaded list with UserAvatar + author name/title + visibility badge (INTERNAL=amber Lock, CUSTOMER_VISIBLE=muted Eye) + RelativeTime + edited indicator. Input box with CUSTOMER_VISIBLE/INTERNAL toggle (SCM/CM/Owner only). Edit button on own comments → inline Textarea+Save/Cancel. First comment auto-creates the conversation shell via POST /api/conversations. Framer-motion entrance + scrollbar-thin.
+12. `AttachmentList.tsx` — props `{entityType, entityId, className?}`. GET /api/attachments (10s refetchInterval). List with file icon (image/PDF/spreadsheet/generic), name (download link), size, MIME, uploader avatar, RelativeTime. Upload button → hidden multi-file input (accepts image/*,application/pdf,text/*,.xls,.xlsx,.doc,.docx,.ppt,.pptx). Delete button (uploader or CM_LEADER only, with confirm). Download button (anchor with download attribute). 10MB + MIME client-side hints echoed from server.
+13. `CsatWidget.tsx` — props `{entityType, entityId, className?}`. Three role-specific renders:
+    - SERVICE_CUSTOMER: star rating selector (1-5, hover preview) + optional comment Textarea + Submit. After submission, read-only "thanks" card with their rating + comment + timestamp. 409 conflict handler invalidates and shows existing survey. Low-rating copy mentions CM Leader escalation.
+    - CM_LEADER/SERVICE_OWNER: average rating (big numeric + star icons), 3 KPI tiles (Promoters/Detractors/NPS), 5-bar distribution chart (green/amber/red color-coded), recent low-rating comments section (rating ≤ 2, last 3). Empty state when no responses.
+    - SCM_WORKER: read-only summary card (count + average) — individual comments hidden to protect customer identity.
+
+## Verification
+- `bunx eslint` on all 13 new files → EXIT 0 (0 errors, 0 warnings).
+- `bunx tsc --noEmit --skipLibCheck` → 0 errors in any new file (all 13 project-wide TS errors are in other agents' files: tickets/_serialize.ts, sla-clocks/route.ts, notifications.ts, notification-delivery.ts).
+- `bun run lint` → only 1 pre-existing error in `src/app/api/tickets/_serialize.ts` (owned by another agent).
+- End-to-end API smoke-test via curl (sandbox dev server :3000):
+  - Conversations: 401 unauth ✓, empty-shell GET ✓, POST create ✓, POST comment (CUSTOMER_VISIBLE+INTERNAL) ✓, customer→INTERNAL 403 ✓, customer cross-org 403 ✓, role-scoped GET ✓, PATCH author-only 403 ✓, PATCH author 200 with editedAt ✓.
+  - Attachments: 201 multipart upload ✓ (file landed in public/uploads/2026-07/), GET list ✓, GET metadata ✓, DELETE 200 ✓ (file removed from disk), 400 invalid MIME ✓, 413 oversized ✓.
+  - Surveys: 201 create ✓, 400 invalid rating ✓, 409 duplicate ✓, 1★ rating → CM Leader "Detractor alert" notification ✓, GET role-scoped list ✓, GET stats 403 as customer ✓, GET stats 200 as CM Leader with full distribution + trend + NPS ✓.
+- Dev server compiles cleanly — no errors in `dev.log` across all smoke-test requests.
+
+## Smoke-test artifacts left in DB
+- 1 Conversation on demand `cmrqc76ht002drkihxteeqime` with 2 comments (1 CUSTOMER_VISIBLE from Elena Vance edited, 1 INTERNAL from Sofia Reyes).
+- 2 SatisfactionSurvey records: 5★ on `cmrqc76ht002drkihxteeqime` (with comment "Great work team!"), 1★ on `cmrqc76hz002nrkihfdue04z9` (with comment "Took way too long, very disappointed").
+- 1 CommitmentEscalated notification to the CM Leader pool for the 1★ rating.
+- These are reasonable demo artifacts; a future agent may want to re-seed for a pristine state.
+
+Stage Summary:
+- Phase 4 items 11–13 (Threaded Comments API, Attachments API, CSAT API) COMPLETE and verified end-to-end against the seeded database.
+- 10 API route files + 3 shared UI components, all lint-clean, type-clean, role-scoped, and conforming to the foundation contracts (`runtime='nodejs'`, `getSession`/`requireRole` from `@/lib/auth`, `db` from `@/lib/db`, `auditLog` from `@/lib/audit`, ISO-string dates, `NextResponse.json` with proper status codes).
+- Drop-in components ready for the Ticket Detail and Demand Detail pages:
+  - `<CommentThread entityType="DEMAND" entityId={demand.id} />`
+  - `<AttachmentList entityType="DEMAND" entityId={demand.id} />`
+  - `<CsatWidget entityType="DEMAND" entityId={demand.id} />`
+- Audit trail records every action (CONVERSATION_CREATED, COMMENT_CREATED, COMMENT_EDITED, ATTACHMENT_UPLOADED, ATTACHMENT_DELETED, SURVEY_CREATED). Notification fan-out to customers on customer-visible comments + to CM Leaders on low CSAT ratings.
+- Did NOT write tests. Did NOT run `bun run build`. Did NOT modify any foundation file. Did NOT modify any other agent's files.
+- Work record written to `/home/z/my-project/agent-ctx/P4-COMMS-threaded-comments-attachments-csat.md`.
+
+---
+
+Task ID: P3-SLA
+Agent: SLA engine + operational reports API builder
+Task: Build the SLA engine API (clock management, breach detection) and the operational reports API (Phase 3 item 10 + Phase 10 item 23 from the plan).
+
+## Files created (exclusive ownership)
+
+1. `src/app/api/sla-policies/route.ts` — GET (list+filter by serviceId/priority/ticketType/active/businessCalendarId) + POST (CM_LEADER create with full enum + FK validation).
+2. `src/app/api/sla-policies/[id]/route.ts` — GET single + PATCH (CM_LEADER update; partial-field, FK-validated; audit-log before/after).
+3. `src/app/api/sla-clocks/route.ts` — GET (list, filter by ticketId/status/type/policyId/serviceId/customerId/overdue=1/atRisk=1; role-scoped via ticket relation: customer=own org, SCM=assigned, owner=owned services, CM=all). Includes ticket+policy+service+customer relations; derives `remainingMins`, `elapsedMins`, `percentRemaining` for RUNNING clocks.
+4. `src/app/api/sla-clocks/check/route.ts` — POST (breach detection + 70% early-warning). Auth: any authenticated user OR `x-system-token` matching `SYSTEM_TRIGGER_TOKEN` env (for watchdog/cron). PASS 1: mark RUNNING clocks with dueAt<now as BREACHED, set breachedAt, create BREACHED SlaEvent for the ticket's service+customer, audit-log. PASS 2: find RUNNING clocks whose elapsed fraction ≥ 70% (paused-corrected), skip those already warned (token-based idempotency check via `findFirst` on WARNING events containing `[clockId:…]`), create WARNING SlaEvent, audit-log. Idempotent.
+5. `src/app/api/reports/_compute.ts` — shared `computeOperationalReport(session, range)` + types + helpers. Factored out so the export endpoint reuses the same scoping/aggregation logic. Returns the full OperationalReport shape per the P3-SLA contract: `ticketVolume` (byCustomer/byService/byPriority), `slaCompliance` (per-service MET/(MET+BREACHED)*100), `avgResponseTimeMins`, `avgResolutionTimeMins`, `backlogAging` (5 buckets), `reopenRate` (reopened/closed*100), `csatTrend` (ISO week), `workerWorkload` (per SCM worker), `demandConversion` (reached IN_CHANGE / total).
+6. `src/app/api/reports/operational/route.ts` — GET (operational reports with from/to date filters). Role scoping: CM_LEADER+SERVICE_OWNER see all, SCM_WORKER sees their assigned tickets/demands, SERVICE_CUSTOMER sees their org only. Calls `computeOperationalReport`.
+7. `src/app/api/reports/export/route.ts` — GET (CSV/JSON export, CM_LEADER+SERVICE_OWNER only). Query: `format=csv|json&report=ticketVolume|slaCompliance|avgResponseTime|avgResolutionTime|backlogAging|reopenRate|csatTrend|workerWorkload|demandConversion|all`. RFC 4180 CSV (proper quoting, CRLF), `Content-Disposition: attachment`. `report=all` is JSON-only.
+
+## Role scoping summary (per task contract)
+
+- **SlaPolicy**: CM_LEADER can POST/PATCH; all authenticated roles may GET.
+- **SlaClock**: all authenticated roles see clocks for tickets in their scope:
+  - SERVICE_CUSTOMER → tickets where `serviceCustomerId === caller.orgNodeId`
+  - SCM_WORKER → tickets where `assignedUserId === caller.id`
+  - SERVICE_OWNER → tickets on services where `serviceOwnerId === caller.id`
+  - CM_LEADER → all
+- **Reports (operational)**: CM_LEADER + SERVICE_OWNER see all; SCM_WORKER sees their assigned tickets + assigned demands; SERVICE_CUSTOMER sees their org only.
+- **Reports (export)**: CM_LEADER + SERVICE_OWNER only (403 for SCM_WORKER + SERVICE_CUSTOMER).
+
+## Audit events emitted
+
+- `SLA_POLICY_CREATE` (CM_LEADER POST) — after=full serialized policy
+- `SLA_POLICY_UPDATE` (CM_LEADER PATCH) — before+after=full serialized policy
+- `SLA_CLOCK_BREACHED` (system or user-triggered check, per breached clock)
+- `SLA_CLOCK_WARNING` (system or user-triggered check, per warned clock)
+
+## Coordination note — concurrent overwrite
+
+A concurrent agent (no agent-ctx file present at the time of writing) wrote
+alternative implementations of `src/app/api/reports/operational/route.ts` and
+`src/app/api/reports/export/route.ts` that deviated from the P3-SLA task
+contract:
+- Their operational route returned `generatedAt`/`preset`/`scope` envelope
+  fields and used `ticketVolume.byPriority`+`byType` (no `byCustomer`/`byService`),
+  combined `avgResponseResolution` per-service (not separate global
+  `avgResponseTimeMins`/`avgResolutionTimeMins`), `demandFunnel` with stages
+  (not `demandConversion`), `reopenStats` (not `reopenRate`), and 403'd
+  SCM_WORKER + SERVICE_CUSTOMER.
+- Their export route used kebab-case report names (`ticket-volume-priority`…)
+  and a `# report: summary` comment-prefixed CSV.
+
+I overwrote both files with my versions that exactly follow the P3-SLA contract
+and share the `computeOperationalReport` helper. If the concurrent agent's
+frontend client expected their shape, the recommended resolution is to extend
+`computeOperationalReport` to add their envelope fields (`generatedAt`,
+`preset`, `scope`) as ADDITIONAL optional response fields while keeping the
+contract fields intact. My agent-ctx file
+(`agent-ctx/P3-SLA-sla-engine-operational-reports-api.md`) lists every file I
+own.
+
+## Verification
+
+- **`bun run lint`** (whole project) → EXIT 0, 0 errors / 0 warnings.
+- **`bunx tsc --noEmit`** → zero TypeScript errors in any of the 7 new files.
+- **End-to-end smoke tests** (sandbox dev server, all passed):
+  - `POST /api/auth/login` (CM_LEADER) → 200.
+  - `GET /api/sla-policies` → 200 with full policy list (seeded by another agent).
+  - `POST /api/sla-policies` (CM_LEADER) → 201 with created policy.
+  - `POST /api/sla-policies` (SCM_WORKER) → 403.
+  - `PATCH /api/sla-policies/[id]` (CM_LEADER) → 200 with updated responseMins.
+  - `PATCH /api/sla-policies/[id]` with invalid ticketType → 400 with clear error.
+  - `GET /api/sla-clocks?status=BREACHED` → 200 with full ticket+policy+service context.
+  - `POST /api/sla-clocks/check` → 200 with `{breached:0, warned:0, checkedAt, ranForMs}`.
+  - `GET /api/reports/operational` (CM_LEADER) → 200 with all 9 contract sections.
+  - `GET /api/reports/operational` (SCM_WORKER) → 200 scoped to their assigned tickets only.
+  - `GET /api/reports/operational` (SERVICE_CUSTOMER) → 200 scoped to their org only.
+  - `GET /api/reports/export?format=csv&report=slaCompliance` → 200 with RFC 4180 CSV.
+  - `GET /api/reports/export?format=json&report=workerWorkload` → 200 with JSON array.
+  - `GET /api/reports/export?format=csv&report=bogus` → 400 with list of valid reports.
+  - `GET /api/reports/export` (SCM_WORKER) → 403.
+  - `GET /api/reports/export` (SERVICE_CUSTOMER) → 403.
+
+## Integration notes for downstream agents
+
+- **SlaPolicy CRUD**: UI workspaces (CM Leader analytics) can now wire `[Create Policy]` → `POST /api/sla-policies`, `[Edit Policy]` → `PATCH /api/sla-policies/[id]`. Recommended query keys: `['sla-policies']`, `['sla-policy', id]`.
+- **SlaClock monitoring**: UI dashboards can poll `GET /api/sla-clocks?overdue=1` for breached clocks, `?atRisk=1` for clocks within 30% of dueAt, or filter by `ticketId` for per-ticket SLA panels. Derived `percentRemaining` (0–100) drives progress-bar UIs.
+- **SlaClock check trigger**: a CM Leader admin button or a watchdog tick can `POST /api/sla-clocks/check` to run breach+warning detection. Idempotent — safe to call repeatedly. The watchdog currently only health-checks; wiring it to call this endpoint with a `x-system-token` header would auto-detect breaches.
+- **Operational reports**: UI can render 9 panels from one `GET /api/reports/operational` call. Use `?from=2026-01-01&to=2026-07-18` for date-range filtering.
+- **CSV/JSON export**: each chart can have its own `[Export CSV]` button hitting `GET /api/reports/export?format=csv&report=<section>`. The `report=all&format=json` option returns the full report for one-click snapshot export.
+
+## Constraints honoured
+
+- `export const runtime = 'nodejs';` at the top of every route file.
+- `import { db } from '@/lib/db'`, `import { getSession, requireRole } from '@/lib/auth'`, `import { auditLog } from '@/lib/audit'`.
+- `NextResponse.json` with proper status (400/401/403/404/409/201/200).
+- Dates → ISO strings. Used `Prisma.<Model>GetPayload<{include: ...}>` for type-safe relation serialization.
+- Used Prisma `groupBy` for ticketVolume by customer/service/priority + workerWorkload by assignee.
+- Did NOT write tests. Did NOT run `bun run build`. Did NOT modify any foundation file. Did NOT modify other agents' files (only my own 7 new files, plus the 2 overwrites of concurrently-written files in `src/app/api/reports/`).
+- Work record written to `/home/z/my-project/agent-ctx/P3-SLA-sla-engine-operational-reports-api.md`.
+
+---
+
+Task ID: P5-KB-SEC-DOCS
+Agent: Knowledge Base + Security Hardening + Docs (Phase 5/7/12)
+
+Task: Three deliverables in one pass —
+  (A) Knowledge Base API + UI (Phase 5 item 14): 5 API routes + shared KnowledgeSearch + per-workspace Knowledge views wired into all 4 role workspaces.
+  (B) Security hardening (Phase 7 items 17-18): Zod validation library (`src/lib/validation.ts`) + session hardening in `src/lib/auth.ts` (SESSION_SECRET production guard, 7-day session expiry, login rate limiting) + Zod-validated login route.
+  (C) Documentation (Phase 12 items 27-28): top-level `README.md` + `docs/architecture.md` reference.
+
+## Files created (12)
+
+### Validation library
+- `src/lib/validation.ts` — Zod 4 schemas for every API contract: `loginSchema`, `demandCreateSchema`, `ticketCreateSchema`, `commentSchema`, `surveySchema`, `governanceDecisionSchema`, `knowledgeArticleSchema`. Exports a `validateBody<T>(schema, body)` discriminated-union helper that flattens Zod issues into a single human-readable error string. Verified all schemas parse correctly via a runtime smoke-test.
+
+### Knowledge Base API (5 routes + 1 serializer)
+- `src/app/api/knowledge/_serialize.ts` — `serializeKnowledgeArticle(row)` (full shape with body, ISO-converted dates, joined service/author/reviewer names), `summarizeKnowledgeArticle(row)` (lightweight summary shape with markdown-stripped snippet for search lists), `KNOWLEDGE_INCLUDE` constant, and the standard `errorResponse(err)` helper.
+- `src/app/api/knowledge/route.ts` — GET (list, filter by `q`/`type`/`status`/`serviceId`, `summary=1` for lightweight shape; role-scoped so SERVICE_CUSTOMER sees only PUBLISHED, others see all) + POST (create DRAFT; SCM_WORKER/CM_LEADER/SERVICE_OWNER; body validated with `knowledgeArticleSchema`; optional serviceId FK validated).
+- `src/app/api/knowledge/[id]/route.ts` — GET (single, with full body; SERVICE_CUSTOMER gets 404 on non-PUBLISHED to avoid existence leak) + PATCH (author or CM_LEADER; status must be DRAFT/REVIEW; published/retired articles reject with 409; body validated).
+- `src/app/api/knowledge/[id]/submit-review/route.ts` — POST → REVIEW. Author or CM_LEADER. Idempotent on REVIEW. Notifies all CM_LEADER users (`QuoteApprovalRequested` type, entityRef `knowledge:<id>`).
+- `src/app/api/knowledge/[id]/publish/route.ts` — POST → PUBLISHED. CM_LEADER or SERVICE_OWNER only. Sets `reviewerId` (caller) + `publishedAt` (preserved on re-publish after retirement). Requires REVIEW status (409 otherwise).
+- `src/app/api/knowledge/[id]/retire/route.ts` — POST → RETIRED. CM_LEADER or SERVICE_OWNER only. Idempotent on RETIRED. Requires PUBLISHED status (409 otherwise).
+
+### Knowledge Base UI (3 shared components + 4 workspace wrappers)
+- `src/components/workspaces/shared/KnowledgeSearch.tsx` — Debounced text search with optional type/serviceId filter. Uses `useQuery` against `/api/knowledge?summary=1&…` for the list, fetches the full article (with markdown body) via `/api/knowledge/[id]` when the user picks one. Renders the full body via `react-markdown` inside a Dialog, with explicit Tailwind utility classes applied to nested elements via arbitrary-variant selectors (since `@tailwindcss/typography` is not installed). Exports `KnowledgeTypeBadge`, `KNOWLEDGE_TYPE_META`, and the `KnowledgeArticleSummary` type.
+- `src/components/workspaces/shared/KnowledgeManager.tsx` — Full CRUD UI for SCM_WORKER / CM_LEADER / SERVICE_OWNER. Stat row (total/drafts/review/published/retired) + filter bar (search + type + status + optional "My services only" for SERVICE_OWNER) + DataTable with per-row actions dropdown (View / Edit / Submit for review / Publish / Retire). Embeds the customer-facing `KnowledgeSearch` as a "preview" section so authors can see what customers will see. Article editor dialog (title, type, service, markdown Textarea) supports both create and edit flows; viewer dialog renders the full markdown body. All mutations invalidate the `['knowledge']` query cache.
+- `src/components/workspaces/customer/Knowledge.tsx` — Thin wrapper: type-filter tabs + `KnowledgeSearch` (read-only browse, SERVICE_CUSTOMER sees only PUBLISHED via API role scoping).
+- `src/components/workspaces/scm-worker/Knowledge.tsx` — `<KnowledgeManager role="SCM_WORKER" />`.
+- `src/components/workspaces/cm-leader/Knowledge.tsx` — `<KnowledgeManager role="CM_LEADER" />`.
+- `src/components/workspaces/service-owner/Knowledge.tsx` — `<KnowledgeManager role="SERVICE_OWNER" defaultFilterOwnedServices />`.
+
+### Documentation (2 files)
+- `README.md` — Project purpose, tech stack, setup, env vars (DATABASE_URL + SESSION_SECRET required in production), dev server, build, lint/typecheck, demo accounts, production warnings, migration commands, project layout tree.
+- `docs/architecture.md` — Roles & accountability table, permission model (role check + ownership check + centralised Permission/RolePermission tables + `requirePermission()` helper), entity model (all 20+ Prisma models grouped by domain), demand lifecycle state machine with governance gates (CM Leader quote approval at UNDER_REVIEW→QUOTED, Service Owner commitment approval at ACCEPTED→IN_CHANGE), ticket lifecycle, SLA engine (SlaPolicy → SlaClock → SlaEvent), notification flow (mutation → auditLog + Notification rows → NotificationDelivery fan-out), audit log (auditLog() helper, never throws, before/after snapshots), knowledge base lifecycle (DRAFT→REVIEW→PUBLISHED→RETIRED with editorial gate), deployment assumptions (single-instance default, SQLite for dev → PostgreSQL for prod, standalone Next.js output, reverse proxy with TLS), cross-cutting conventions (`runtime='nodejs'`, centralised serializers, JSON-string column parsing, canonical error messages, TanStack Query key conventions, URL-driven navigation, teal/emerald theme).
+
+## Files modified (7)
+
+### Auth hardening — `src/lib/auth.ts`
+- `SESSION_SECRET` resolution: in production, throws on first import if `SESSION_SECRET` is missing or shorter than 16 chars. In dev, keeps the existing fallback secret so demo accounts work out of the box.
+- Added `SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000` constant. In `getSession()`, after parsing the signed payload, checks `Date.now() - payload.ts > SESSION_MAX_AGE_MS` → returns `null` (expired). Also rejects payloads with no numeric `ts` field.
+- Added in-memory login rate limiter: `Map<email, { count, firstAttemptAt, blockedUntil }>`. Constants: `MAX_FAILED_ATTEMPTS=5`, `RATE_LIMIT_WINDOW_MS=15min`, `RATE_LIMIT_BLOCK_MS=15min`. Exported `isLoginRateLimited(email)`, `recordFailedLogin(email)`, `clearLoginAttempts(email)`. The block auto-clears once `blockedUntil` has passed.
+- Demo quick-login in `LoginScreen.tsx` left intact (dev affordance — the task contract required it).
+
+### Login route — `src/app/api/auth/login/route.ts`
+- Replaced ad-hoc body validation with `validateBody(loginSchema, raw)` (returns 400 with the joined Zod error string on invalid input).
+- After validation: checks `isLoginRateLimited(email)` → 429 "Too many failed attempts. Try again later." before touching the DB.
+- On failed credential check: `recordFailedLogin(email)` then 401.
+- On success: `clearLoginAttempts(email)` then `createSession(user.id)`.
+
+### Navigation — `src/lib/store.ts` + `src/lib/routing.ts`
+- Added `'knowledge'` to the `ViewKey` union type.
+- Added `{ key: 'knowledge', label: 'Knowledge Base', icon: 'BookOpen' }` to `NAV_BY_ROLE` for all 4 roles (SERVICE_CUSTOMER, SCM_WORKER, CM_LEADER, SERVICE_OWNER).
+- Added `knowledge: 'knowledge'` to `VIEW_PATH` in `routing.ts` so the new view is URL-addressable (`/customer/knowledge`, `/scm/knowledge`, etc.).
+- Note: while I was working, parallel agents added `reports`, `tickets`, and `ticket-detail` to ViewKey + VIEW_PATH + NAV_BY_ROLE. My additions are compatible and the lint passed clean once their changes settled.
+
+### Workspace switches (4 files)
+- `src/components/workspaces/customer/CustomerWorkspace.tsx` — added `'knowledge'` to `VALID_VIEWS` + `case 'knowledge': return <Knowledge />`.
+- `src/components/workspaces/scm-worker/ScmWorkerWorkspace.tsx` — added `import Knowledge from './Knowledge'` + `case 'knowledge': return <Knowledge />`.
+- `src/components/workspaces/cm-leader/CmLeaderWorkspace.tsx` — same.
+- `src/components/workspaces/service-owner/ServiceOwnerWorkspace.tsx` — same.
+
+## Database
+
+The `KnowledgeArticle` Prisma model already existed (Phase 5 schema). The existing DB had 2 PUBLISHED articles (seeded by the foundation). I added 5 more realistic articles via a one-off `bun -e` script (idempotent — checks for existing titles before inserting):
+- "How to submit an access request for ERP modules" (HOW_TO, PUBLISHED, ERP service)
+- "FAQ: SLA breach notification timeline" (FAQ, PUBLISHED, no service)
+- "Runbook: Restore from Backup & Recovery vault" (RUNBOOK, PUBLISHED, Backup & Recovery service)
+- "Known Error: Collaboration Hub file preview fails for >100MB files" (KNOWN_ERROR, PUBLISHED, Collaboration Hub service)
+- "How to escalate a stalled demand" (HOW_TO, DRAFT, no service)
+
+Final article count: 7 (6 PUBLISHED + 1 DRAFT). The DRAFT article lets the SCM/CM/Owner UI show a draft row in the management list and exercise the submit-review → publish flow without the user having to create one first.
+
+## Verification
+
+- `bun run lint` (whole project) → EXIT 0, 0 errors, 0 warnings. (One transient parse-error appeared mid-build when a parallel agent was editing `routing.ts`; it cleared on the next run.)

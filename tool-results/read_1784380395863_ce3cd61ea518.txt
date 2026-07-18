@@ -1,0 +1,699 @@
+     1→'use client';
+     2→
+     3→import { useMemo, useState } from 'react';
+     4→import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+     5→import { useApp } from '@/lib/store';
+     6→import { apiGet, apiPost } from '@/lib/api';
+     7→import { toast } from 'sonner';
+     8→import {
+     9→  PageHeader,
+    10→  StatCard,
+    11→  SectionCard,
+    12→  EmptyState,
+    13→  LoadingState,
+    14→  SlaClassBadge,
+    15→  SlaHealthBadge,
+    16→  DemandStatusBadge,
+    17→  RelativeTime,
+    18→  FormattedDate,
+    19→  Button,
+    20→  Badge,
+    21→} from '@/components/shared';
+    22→import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+    23→import {
+    24→  Dialog,
+    25→  DialogContent,
+    26→  DialogHeader,
+    27→  DialogTitle,
+    28→  DialogDescription,
+    29→  DialogFooter,
+    30→} from '@/components/ui/dialog';
+    31→import { Textarea } from '@/components/ui/textarea';
+    32→import { Label } from '@/components/ui/label';
+    33→import { Input } from '@/components/ui/input';
+    34→import {
+    35→  Select,
+    36→  SelectContent,
+    37→  SelectItem,
+    38→  SelectTrigger,
+    39→  SelectValue,
+    40→} from '@/components/ui/select';
+    41→import {
+    42→  Briefcase,
+    43→  TriangleAlert,
+    44→  ShieldAlert,
+    45→  Bug,
+    46→  Gavel,
+    47→  ArrowRight,
+    48→  ClipboardList,
+    49→  BookOpen,
+    50→  Activity,
+    51→  ChevronRight,
+    52→  Clock,
+    53→  CheckCircle2,
+    54→  Gavel as GavelIcon,
+    55→} from 'lucide-react';
+    56→import {
+    57→  useOwnerServices,
+    58→  useSlaEvents,
+    59→  useOwnerProblems,
+    60→  useAcceptedDemands,
+    61→  deriveHealth,
+    62→} from './_hooks';
+    63→
+    64→/* --------------------- Governance decision type --------------------- */
+    65→
+    66→interface GovernanceDecision {
+    67→  id: string;
+    68→  serviceId: string;
+    69→  demandId: string | null;
+    70→  slaEventId: string | null;
+    71→  problemId: string | null;
+    72→  decisionType: string;
+    73→  decision: string;
+    74→  rationale: string;
+    75→  resourcesAuthorized: string | null;
+    76→  followUpOwner: string | null;
+    77→  followUpDate: string | null;
+    78→  decidedById: string;
+    79→  decidedByName: string;
+    80→  createdAt: string;
+    81→}
+    82→
+    83→type BreachDecision = 'REMEDIATION_AUTHORIZED' | 'RESOURCES_AUTHORIZED' | 'EMERGENCY_CHANGE_DIRECTED';
+    84→
+    85→const BREACH_DECISION_LABELS: Record<BreachDecision, string> = {
+    86→  REMEDIATION_AUTHORIZED: 'Remediation Authorized',
+    87→  RESOURCES_AUTHORIZED: 'Resources Authorized',
+    88→  EMERGENCY_CHANGE_DIRECTED: 'Emergency Change Directed',
+    89→};
+    90→
+    91→/* --------------------- Breach Response Dialog --------------------- */
+    92→
+    93→function BreachResponseDialog({
+    94→  open,
+    95→  onOpenChange,
+    96→  serviceName,
+    97→  breachMessage,
+    98→  breachDate,
+    99→  pending,
+   100→  onConfirm,
+   101→}: {
+   102→  open: boolean;
+   103→  onOpenChange: (v: boolean) => void;
+   104→  serviceName: string;
+   105→  breachMessage: string;
+   106→  breachDate: string;
+   107→  pending: boolean;
+   108→  onConfirm: (decision: BreachDecision, rationale: string, resourcesAuthorized: string) => void;
+   109→}) {
+   110→  const [decision, setDecision] = useState<BreachDecision | ''>('');
+   111→  const [rationale, setRationale] = useState('');
+   112→  const [resourcesAuthorized, setResourcesAuthorized] = useState('');
+   113→
+   114→  const handleClose = (v: boolean) => {
+   115→    if (!v) {
+   116→      setDecision('');
+   117→      setRationale('');
+   118→      setResourcesAuthorized('');
+   119→    }
+   120→    onOpenChange(v);
+   121→  };
+   122→
+   123→  return (
+   124→    <Dialog open={open} onOpenChange={handleClose}>
+   125→      <DialogContent className="sm:max-w-lg">
+   126→        <DialogHeader>
+   127→          <DialogTitle className="flex items-center gap-2">
+   128→            <ShieldAlert className="h-5 w-5 text-rose-600" /> Record Breach Response
+   129→          </DialogTitle>
+   130→          <DialogDescription>
+   131→            Record your governance response to this SLA breach on <span className="font-medium">{serviceName}</span>. The decision is persisted to the audit trail and CM Leaders are notified.
+   132→          </DialogDescription>
+   133→        </DialogHeader>
+   134→        <div className="space-y-3">
+   135→          <div className="rounded-md border border-rose-200 dark:border-rose-900/40 bg-rose-50/40 dark:bg-rose-950/20 p-3 text-xs">
+   136→            <div className="font-medium text-rose-800 dark:text-rose-300">{serviceName}</div>
+   137→            <div className="text-rose-900/80 dark:text-rose-200/80 mt-1">{breachMessage}</div>
+   138→            <div className="text-muted-foreground mt-1">
+   139→              Detected <FormattedDate date={breachDate} />
+   140→            </div>
+   141→          </div>
+   142→
+   143→          <div className="space-y-1.5">
+   144→            <Label htmlFor="breach-decision">Governance decision (required)</Label>
+   145→            <Select value={decision} onValueChange={(v) => setDecision(v as BreachDecision)}>
+   146→              <SelectTrigger id="breach-decision" className="w-full">
+   147→                <SelectValue placeholder="Select a response type…" />
+   148→              </SelectTrigger>
+   149→              <SelectContent>
+   150→                {(Object.keys(BREACH_DECISION_LABELS) as BreachDecision[]).map((k) => (
+   151→                  <SelectItem key={k} value={k}>
+   152→                    {BREACH_DECISION_LABELS[k]}
+   153→                  </SelectItem>
+   154→                ))}
+   155→              </SelectContent>
+   156→            </Select>
+   157→          </div>
+   158→
+   159→          <div className="space-y-1.5">
+   160→            <Label htmlFor="breach-rationale">Rationale (required)</Label>
+   161→            <Textarea
+   162→              id="breach-rationale"
+   163→              rows={4}
+   164→              placeholder="Explain the breach context, root cause hypothesis, and why this response is the right governance action."
+   165→              value={rationale}
+   166→              onChange={(e) => setRationale(e.target.value)}
+   167→            />
+   168→          </div>
+   169→
+   170→          <div className="space-y-1.5">
+   171→            <Label htmlFor="breach-resources">Resources authorized (optional)</Label>
+   172→            <Input
+   173→              id="breach-resources"
+   174→              placeholder="e.g. 2 FTE for 5 days, $25k remediation budget"
+   175→              value={resourcesAuthorized}
+   176→              onChange={(e) => setResourcesAuthorized(e.target.value)}
+   177→            />
+   178→          </div>
+   179→        </div>
+   180→        <DialogFooter>
+   181→          <Button variant="outline" onClick={() => handleClose(false)} disabled={pending}>
+   182→            Cancel
+   183→          </Button>
+   184→          <Button
+   185→            onClick={() =>
+   186→              onConfirm(decision as BreachDecision, rationale.trim(), resourcesAuthorized.trim())
+   187→            }
+   188→            disabled={pending || !decision || !rationale.trim()}
+   189→          >
+   190→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+   191→            {pending ? 'Recording…' : 'Record Response'}
+   192→          </Button>
+   193→        </DialogFooter>
+   194→      </DialogContent>
+   195→    </Dialog>
+   196→  );
+   197→}
+   198→
+   199→/* --------------------- Main --------------------- */
+   200→
+   201→export default function Dashboard() {
+   202→  const { navigate } = useApp();
+   203→  const qc = useQueryClient();
+   204→  const servicesQ = useOwnerServices();
+   205→  const slaQ = useSlaEvents();
+   206→  const problemsQ = useOwnerProblems();
+   207→  const demandsQ = useAcceptedDemands();
+   208→
+   209→  // Open tickets on services owned by this Service Owner (server enforces
+   210→  // the owned-service scope based on the caller's id).
+   211→  const openTicketsQ = useQuery<Array<{ id: string; status: string }>>({
+   212→    queryKey: ['tickets', 'owner-dashboard', 'open'],
+   213→    queryFn: () =>
+   214→      apiGet('/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER'),
+   215→    staleTime: 30_000,
+   216→  });
+   217→  const openTicketCount = openTicketsQ.data?.length ?? 0;
+   218→
+   219→  const services = servicesQ.data ?? [];
+   220→  const myServiceIds = useMemo(() => new Set(services.map((s) => s.id)), [services]);
+   221→
+   222→  const mySlaEvents = useMemo(
+   223→    () => (slaQ.data ?? []).filter((e) => myServiceIds.has(e.serviceId)),
+   224→    [slaQ.data, myServiceIds],
+   225→  );
+   226→
+   227→  const openBreaches = useMemo(
+   228→    () => mySlaEvents.filter((e) => e.eventType === 'BREACHED' && !e.resolvedAt),
+   229→    [mySlaEvents],
+   230→  );
+   231→  const openWarnings = useMemo(
+   232→    () => mySlaEvents.filter((e) => e.eventType === 'WARNING' && !e.resolvedAt),
+   233→    [mySlaEvents],
+   234→  );
+   235→
+   236→  const problems = problemsQ.data ?? [];
+   237→  const knownErrors = problems.filter((p) => p.knownErrorId || p.status === 'KNOWN_ERROR');
+   238→
+   239→  // Demands awaiting commitment approval on MY services
+   240→  const governanceDemands = useMemo(
+   241→    () =>
+   242→      (demandsQ.data ?? []).filter((d) => d.relatedServiceIds.some((sid) => myServiceIds.has(sid))),
+   243→    [demandsQ.data, myServiceIds],
+   244→  );
+   245→
+   246→  const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? 'Service';
+   247→
+   248→  /* --- Governance decisions for breach responses (per service) --- */
+   249→  const breachDecisionsQ = useQuery({
+   250→    queryKey: ['governance-decisions', 'breach', Array.from(myServiceIds).sort().join(',')] as const,
+   251→    queryFn: async (): Promise<GovernanceDecision[]> => {
+   252→      if (myServiceIds.size === 0) return [];
+   253→      const results = await Promise.all(
+   254→        Array.from(myServiceIds).map((sid) =>
+   255→          apiGet<GovernanceDecision[]>(
+   256→            `/api/governance-decisions?serviceId=${encodeURIComponent(sid)}&decisionType=BREACH_RESPONSE`,
+   257→          ),
+   258→        ),
+   259→      );
+   260→      return results.flat();
+   261→    },
+   262→    enabled: myServiceIds.size > 0,
+   263→    staleTime: 30_000,
+   264→  });
+   265→
+   266→  // Set of slaEventIds that already have a BREACH_RESPONSE decision recorded
+   267→  const respondedBreachEventIds = useMemo(() => {
+   268→    const s = new Set<string>();
+   269→    for (const d of breachDecisionsQ.data ?? []) {
+   270→      if (d.slaEventId) s.add(d.slaEventId);
+   271→    }
+   272→    return s;
+   273→  }, [breachDecisionsQ.data]);
+   274→
+   275→  /* --- Breach response dialog state --- */
+   276→  const [breachTarget, setBreachTarget] = useState<{
+   277→    eventId: string;
+   278→    serviceId: string;
+   279→    serviceName: string;
+   280→    message: string;
+   281→    createdAt: string;
+   282→  } | null>(null);
+   283→
+   284→  const breachResponseMutation = useMutation({
+   285→    mutationFn: (args: {
+   286→      serviceId: string;
+   287→      slaEventId: string;
+   288→      decision: BreachDecision;
+   289→      rationale: string;
+   290→      resourcesAuthorized: string;
+   291→    }) =>
+   292→      apiPost('/api/governance-decisions', {
+   293→        serviceId: args.serviceId,
+   294→        slaEventId: args.slaEventId,
+   295→        decisionType: 'BREACH_RESPONSE',
+   296→        decision: args.decision,
+   297→        rationale: args.rationale,
+   298→        resourcesAuthorized: args.resourcesAuthorized || undefined,
+   299→      }),
+   300→    onSuccess: (_data, vars) => {
+   301→      toast.success('Governance response recorded', {
+   302→        description: `Breach response "${BREACH_DECISION_LABELS[vars.decision]}" recorded for ${serviceName(vars.serviceId)}.`,
+   303→      });
+   304→      qc.invalidateQueries({ queryKey: ['governance-decisions'] });
+   305→      setBreachTarget(null);
+   306→    },
+   307→    onError: (e: Error) => toast.error(e.message),
+   308→  });
+   309→
+   310→  const loading =
+   311→    servicesQ.isLoading || slaQ.isLoading || problemsQ.isLoading || demandsQ.isLoading;
+   312→
+   313→  return (
+   314→    <div className="space-y-6">
+   315→      <PageHeader
+   316→        title="Service Owner — Accountability Dashboard"
+   317→        description="What you see creates governance obligations. Breach notifications and accepted commitments are accountability events that require your response."
+   318→        icon={<Briefcase className="h-6 w-6" />}
+   319→      />
+   320→
+   321→      {loading ? (
+   322→        <LoadingState rows={5} />
+   323→      ) : (
+   324→        <>
+   325→          {/* Top stat cards */}
+   326→          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+   327→            <StatCard
+   328→              label="My Services"
+   329→              value={services.length}
+   330→              icon={<Briefcase className="h-4 w-4" />}
+   331→              hint="Active portfolio under your ownership"
+   332→              onClick={() => navigate('portfolio')}
+   333→            />
+   334→            <StatCard
+   335→              label="Open Tickets"
+   336→              value={openTicketCount}
+   337→              icon={<Activity className="h-4 w-4" />}
+   338→              hint="On your owned services"
+   339→              tone={openTicketCount > 0 ? 'warning' : 'default'}
+   340→              onClick={() => navigate('tickets')}
+   341→            />
+   342→            <StatCard
+   343→              label="SLA Warnings"
+   344→              value={openWarnings.length}
+   345→              icon={<TriangleAlert className="h-4 w-4" />}
+   346→              tone="warning"
+   347→              hint="Approaching threshold — review before breach"
+   348→              onClick={() => navigate('sla')}
+   349→            />
+   350→            <StatCard
+   351→              label="SLA Breaches"
+   352→              value={openBreaches.length}
+   353→              icon={<ShieldAlert className="h-4 w-4" />}
+   354→              tone="danger"
+   355→              hint="REQUIRES YOUR RESPONSE"
+   356→              onClick={() => navigate('sla')}
+   357→            />
+   358→            <StatCard
+   359→              label="Open Problems"
+   360→              value={problems.length}
+   361→              icon={<Bug className="h-4 w-4" />}
+   362→              hint="Under investigation on your services"
+   363→              onClick={() => navigate('problems')}
+   364→            />
+   365→            <StatCard
+   366→              label="Governance Approvals"
+   367→              value={governanceDemands.length}
+   368→              icon={<Gavel className="h-4 w-4" />}
+   369→              tone="success"
+   370→              hint="Accepted demands awaiting commitment"
+   371→              onClick={() => navigate('governance')}
+   372→            />
+   373→          </div>
+   374→
+   375→          {/* Breach notifications → governance responses */}
+   376→          <SectionCard
+   377→            title="Breach Notifications → Governance Responses"
+   378→            description="A breach notification is an accountability event that requires your response. Each unresolved breach on your services is listed here — record a governance response to close the accountability loop."
+   379→            actions={
+   380→              <Button variant="outline" size="sm" onClick={() => navigate('sla')}>
+   381→                Open SLA view <ArrowRight className="h-3.5 w-3.5 ml-1" />
+   382→              </Button>
+   383→            }
+   384→          >
+   385→            {openBreaches.length === 0 ? (
+   386→              <EmptyState
+   387→                icon={<ShieldAlert className="h-8 w-8" />}
+   388→                title="No active breaches on your services"
+   389→                description="All SLA commitments within target. Continue monitoring warnings."
+   390→              />
+   391→            ) : (
+   392→              <div className="space-y-2.5">
+   393→                {openBreaches.map((b) => {
+   394→                  const responded = respondedBreachEventIds.has(b.id);
+   395→                  return (
+   396→                    <Alert
+   397→                      key={b.id}
+   398→                      variant="destructive"
+   399→                      className={
+   400→                        responded
+   401→                          ? 'border-emerald-300 dark:border-emerald-900/70 bg-emerald-50/40 dark:bg-emerald-950/20'
+   402→                          : 'border-rose-300 dark:border-rose-900/70 bg-rose-50/60 dark:bg-rose-950/30'
+   403→                      }
+   404→                    >
+   405→                      {responded ? (
+   406→                        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+   407→                      ) : (
+   408→                        <ShieldAlert className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+   409→                      )}
+   410→                      <AlertTitle
+   411→                        className={
+   412→                          responded
+   413→                            ? 'flex flex-wrap items-center gap-2 text-emerald-800 dark:text-emerald-300'
+   414→                            : 'flex flex-wrap items-center gap-2 text-rose-800 dark:text-rose-300'
+   415→                        }
+   416→                      >
+   417→                        <span className="font-semibold">{serviceName(b.serviceId)}</span>
+   418→                        <span
+   419→                          className={
+   420→                            responded
+   421→                              ? 'text-xs font-normal text-emerald-600/80 dark:text-emerald-400/80'
+   422→                              : 'text-xs font-normal text-rose-600/80 dark:text-rose-400/80'
+   423→                          }
+   424→                        >
+   425→                          {responded ? 'response recorded' : 'breached'} <RelativeTime date={b.createdAt} />
+   426→                        </span>
+   427→                        {responded && (
+   428→                          <Badge
+   429→                            variant="outline"
+   430→                            className="border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+   431→                          >
+   432→                            Governance response recorded
+   433→                          </Badge>
+   434→                        )}
+   435→                      </AlertTitle>
+   436→                      <AlertDescription
+   437→                        className={
+   438→                          responded
+   439→                            ? 'text-emerald-900/80 dark:text-emerald-200/80'
+   440→                            : 'text-rose-900/80 dark:text-rose-200/80'
+   441→                        }
+   442→                      >
+   443→                        {b.message}
+   444→                        <div className="mt-2">
+   445→                          {responded ? (
+   446→                            <Button
+   447→                              size="sm"
+   448→                              variant="outline"
+   449→                              className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950"
+   450→                              onClick={() => navigate('governance')}
+   451→                            >
+   452→                              View governance history <ArrowRight className="h-3 w-3 ml-1" />
+   453→                            </Button>
+   454→                          ) : (
+   455→                            <Button
+   456→                              size="sm"
+   457→                              variant="default"
+   458→                              className="h-7 gap-1.5"
+   459→                              onClick={() =>
+   460→                                setBreachTarget({
+   461→                                  eventId: b.id,
+   462→                                  serviceId: b.serviceId,
+   463→                                  serviceName: serviceName(b.serviceId),
+   464→                                  message: b.message,
+   465→                                  createdAt: b.createdAt,
+   466→                                })
+   467→                              }
+   468→                            >
+   469→                              <GavelIcon className="h-3 w-3" /> Review &amp; Respond
+   470→                            </Button>
+   471→                          )}
+   472→                        </div>
+   473→                      </AlertDescription>
+   474→                    </Alert>
+   475→                  );
+   476→                })}
+   477→              </div>
+   478→            )}
+   479→          </SectionCard>
+   480→
+   481→          {/* Two-column: portfolio snapshot + governance approvals */}
+   482→          <div className="grid gap-4 lg:grid-cols-2">
+   483→            <SectionCard
+   484→              title="Service Portfolio Snapshot"
+   485→              description="Current health of services under your ownership."
+   486→              actions={
+   487→                <Button variant="ghost" size="sm" onClick={() => navigate('portfolio')}>
+   488→                  All services <ChevronRight className="h-3.5 w-3.5" />
+   489→                </Button>
+   490→              }
+   491→            >
+   492→              {services.length === 0 ? (
+   493→                <EmptyState
+   494→                  icon={<Briefcase className="h-7 w-7" />}
+   495→                  title="No services in your portfolio"
+   496→                  description="Services you own will appear here."
+   497→                />
+   498→              ) : (
+   499→                <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+   500→                  {services.map((s) => {
+   501→                    const sEvents = mySlaEvents.filter((e) => e.serviceId === s.id);
+   502→                    const health = deriveHealth(sEvents);
+   503→                    const openIncidents = sEvents.filter(
+   504→                      (e) => !e.resolvedAt && (e.eventType === 'BREACHED' || e.eventType === 'WARNING'),
+   505→                    ).length;
+   506→                    return (
+   507→                      <li
+   508→                        key={s.id}
+   509→                        className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+   510→                        onClick={() => navigate('portfolio')}
+   511→                      >
+   512→                        <div className="min-w-0 flex-1">
+   513→                          <div className="flex items-center gap-2 flex-wrap">
+   514→                            <span className="text-sm font-medium truncate">{s.name}</span>
+   515→                            <SlaClassBadge slaClass={s.slaClass} />
+   516→                          </div>
+   517→                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+   518→                            {s.chapter} · {s.layer}
+   519→                          </p>
+   520→                        </div>
+   521→                        <div className="flex items-center gap-2 shrink-0">
+   522→                          {openIncidents > 0 && (
+   523→                            <span className="inline-flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+   524→                              <Activity className="h-3 w-3" /> {openIncidents}
+   525→                            </span>
+   526→                          )}
+   527→                          <SlaHealthBadge health={health} />
+   528→                        </div>
+   529→                      </li>
+   530→                    );
+   531→                  })}
+   532→                </ul>
+   533→              )}
+   534→            </SectionCard>
+   535→
+   536→            <SectionCard
+   537→              title="Pending Governance Approvals"
+   538→              description="Accepted demands on your services — service commitments requiring your approval."
+   539→              actions={
+   540→                <Button variant="ghost" size="sm" onClick={() => navigate('governance')}>
+   541→                  Open <ChevronRight className="h-3.5 w-3.5" />
+   542→                </Button>
+   543→              }
+   544→            >
+   545→              {governanceDemands.length === 0 ? (
+   546→                <EmptyState
+   547→                  icon={<Gavel className="h-7 w-7" />}
+   548→                  title="No commitments awaiting approval"
+   549→                  description="When a demand on your service is accepted, you approve the service commitment here."
+   550→                />
+   551→              ) : (
+   552→                <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+   553→                  {governanceDemands.map((d) => (
+   554→                    <li
+   555→                      key={d.id}
+   556→                      className="py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+   557→                      onClick={() => navigate('demand-detail', { id: d.id })}
+   558→                    >
+   559→                      <div className="flex items-start justify-between gap-2">
+   560→                        <div className="min-w-0 flex-1">
+   561→                          <div className="text-sm font-medium truncate">{d.title}</div>
+   562→                          <div className="text-xs text-muted-foreground mt-0.5 truncate">
+   563→                            {d.serviceCustomerName} · SCM: {d.assignedScmWorkerName ?? 'Unassigned'}
+   564→                          </div>
+   565→                          {d.commitmentNotes && (
+   566→                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2 italic">
+   567→                              “{d.commitmentNotes}”
+   568→                            </p>
+   569→                          )}
+   570→                        </div>
+   571→                        <DemandStatusBadge status={d.status} className="shrink-0" />
+   572→                      </div>
+   573→                    </li>
+   574→                  ))}
+   575→                </ul>
+   576→              )}
+   577→            </SectionCard>
+   578→          </div>
+   579→
+   580→          {/* Two-column: open problems + known errors */}
+   581→          <div className="grid gap-4 lg:grid-cols-3">
+   582→            <SectionCard
+   583→              className="lg:col-span-2"
+   584→              title="Open Problems on Your Services"
+   585→              description="When Problem Management investigates a recurring failure, that context feeds your SLA governance communication."
+   586→              actions={
+   587→                <Button variant="ghost" size="sm" onClick={() => navigate('problems')}>
+   588→                  All problems <ChevronRight className="h-3.5 w-3.5" />
+   589→                </Button>
+   590→              }
+   591→            >
+   592→              {problems.length === 0 ? (
+   593→                <EmptyState
+   594→                  icon={<Bug className="h-7 w-7" />}
+   595→                  title="No open problem records"
+   596→                  description="Active problems on your services will be listed here."
+   597→                />
+   598→              ) : (
+   599→                <ul className="divide-y">
+   600→                  {problems.map((p) => (
+   601→                    <li
+   602→                      key={p.id}
+   603→                      className="py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
+   604→                      onClick={() => navigate('problems')}
+   605→                    >
+   606→                      <div className="flex items-start justify-between gap-2">
+   607→                        <div className="min-w-0 flex-1">
+   608→                          <div className="text-sm font-medium truncate">{p.title}</div>
+   609→                          <div className="text-xs text-muted-foreground mt-0.5">
+   610→                            {p.serviceName ?? serviceName(p.serviceId)} · {p.status.replace(/_/g, ' ').toLowerCase()}
+   611→                          </div>
+   612→                          {p.rootCauseDescription && (
+   613→                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+   614→                              Root cause: {p.rootCauseDescription}
+   615→                            </p>
+   616→                          )}
+   617→                        </div>
+   618→                        <RelativeTime date={p.createdAt} className="text-xs text-muted-foreground shrink-0" />
+   619→                      </div>
+   620→                    </li>
+   621→                  ))}
+   622→                </ul>
+   623→              )}
+   624→            </SectionCard>
+   625→
+   626→            <SectionCard
+   627→              title="Active Known Errors"
+   628→              description="Problems with documented workarounds awaiting permanent fix."
+   629→            >
+   630→              {knownErrors.length === 0 ? (
+   631→                <EmptyState
+   632→                  icon={<BookOpen className="h-7 w-7" />}
+   633→                  title="No active known errors"
+   634→                  description="Known errors for your services will surface here with workaround context."
+   635→                />
+   636→              ) : (
+   637→                <ul className="space-y-2.5">
+   638→                  {knownErrors.map((p) => (
+   639→                    <li
+   640→                      key={p.id}
+   641→                      className="rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 p-3"
+   642→                    >
+   643→                      <div className="flex items-center gap-2">
+   644→                        <BookOpen className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+   645→                        <span className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+   646→                          Known Error
+   647→                        </span>
+   648→                      </div>
+   649→                      <div className="text-sm font-medium mt-1.5">{p.title}</div>
+   650→                      <div className="text-xs text-muted-foreground mt-0.5">
+   651→                        {p.serviceName ?? serviceName(p.serviceId)}
+   652→                      </div>
+   653→                      {p.workaroundDescription && (
+   654→                        <p className="text-xs text-foreground/80 mt-1.5 leading-relaxed">
+   655→                          <span className="font-medium">Workaround:</span> {p.workaroundDescription}
+   656→                        </p>
+   657→                      )}
+   658→                    </li>
+   659→                  ))}
+   660→                </ul>
+   661→              )}
+   662→
+   663→              <div className="mt-4 pt-3 border-t">
+   664→                <div className="flex items-start gap-2 text-xs text-muted-foreground">
+   665→                  <ClipboardList className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+   666→                  <p className="leading-relaxed">
+   667→                    Known errors stay visible to your customers through the SCM communications
+   668→                    thread. Ensure workarounds are accurate before publication.
+   669→                  </p>
+   670→                </div>
+   671→              </div>
+   672→            </SectionCard>
+   673→          </div>
+   674→        </>
+   675→      )}
+   676→
+   677→      {/* Breach response dialog */}
+   678→      <BreachResponseDialog
+   679→        open={!!breachTarget}
+   680→        onOpenChange={(v) => !v && setBreachTarget(null)}
+   681→        serviceName={breachTarget?.serviceName ?? ''}
+   682→        breachMessage={breachTarget?.message ?? ''}
+   683→        breachDate={breachTarget?.createdAt ?? ''}
+   684→        pending={breachResponseMutation.isPending}
+   685→        onConfirm={(decision, rationale, resourcesAuthorized) => {
+   686→          if (!breachTarget) return;
+   687→          breachResponseMutation.mutate({
+   688→            serviceId: breachTarget.serviceId,
+   689→            slaEventId: breachTarget.eventId,
+   690→            decision,
+   691→            rationale,
+   692→            resourcesAuthorized,
+   693→          });
+   694→        }}
+   695→      />
+   696→    </div>
+   697→  );
+   698→}
+   699→

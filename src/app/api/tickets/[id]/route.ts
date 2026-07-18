@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { canReadTicket, isAgent } from '../_helpers';
+import { requireEntityAccess } from '@/lib/entity-access';
+import { isAgent } from '../_helpers';
 import {
   TICKET_INCLUDE,
   serializeTicket,
@@ -15,7 +16,7 @@ export const runtime = 'nodejs';
 // ---- GET /api/tickets/[id] -------------------------------------------------
 //
 // Fetch a single ticket with events, slaClocks, service, customer, assignee.
-// All authenticated roles; scoping enforced via `canReadTicket`.
+// All authenticated roles; scoping enforced via the entity-access helper.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -33,13 +34,9 @@ export async function GET(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    const allowed = await canReadTicket(session, {
-      id: ticket.id,
-      serviceCustomerId: ticket.serviceCustomerId,
-      serviceId: ticket.serviceId,
-      assignedUserId: ticket.assignedUserId,
-    });
-    if (!allowed) {
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'read');
+    } catch {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -51,11 +48,12 @@ export async function GET(
 
 // ---- PATCH /api/tickets/[id] -----------------------------------------------
 //
-// Update editable fields. Role gating:
-//   - title, description, type, priority, impact, urgency, serviceId, serviceCustomerId
-//     (and assignmentGroupId): SCM_WORKER (must be in scope) or CM_LEADER.
-//   - assignedUserId: use the dedicated /assign endpoint (this PATCH accepts
-//     it for backward compat but the canonical path is /assign).
+// Update editable fields. Direct `status` writes are FORBIDDEN — transitions
+// must go through the dedicated action routes (/assign, /triage, /progress,
+// /waiting, /resume, /resolve, /close, /reopen). Role gating:
+//   - title, description, priority, impact, urgency, serviceId,
+//     assignedUserId, assignmentGroupId, resolutionCode, resolutionNotes:
+//     SCM_WORKER (must be in scope) or CM_LEADER.
 //   - SERVICE_CUSTOMER: cannot PATCH tickets.
 //   - SERVICE_OWNER: cannot PATCH tickets (read-only).
 export async function PATCH(
@@ -73,40 +71,57 @@ export async function PATCH(
     }
     const { id } = await params;
 
-    const ticket = await db.ticket.findUnique({ where: { id } });
-    if (!ticket) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
-
-    const allowed = await canReadTicket(session, {
-      id: ticket.id,
-      serviceCustomerId: ticket.serviceCustomerId,
-      serviceId: ticket.serviceId,
-      assignedUserId: ticket.assignedUserId,
-    });
-    if (!allowed) {
+    // Entity-access gate (write).
+    try {
+      await requireEntityAccess(session, 'TICKET', id, 'write');
+    } catch {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const existingTicket = await db.ticket.findUnique({ where: { id } });
+    if (!existingTicket) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const body = await req.json().catch(() => ({}));
+
+    // Direct status writes are forbidden — transitions must go through the
+    // dedicated action routes.
+    if (body.status !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            'Direct status changes are forbidden — use the dedicated transition endpoints (/assign, /triage, /progress, /waiting, /resume, /resolve, /close, /reopen).',
+        },
+        { status: 400 },
+      );
+    }
+
     const data: Record<string, unknown> = {};
     const before: Record<string, unknown> = {};
 
     const VALID_TYPES = ['INCIDENT', 'SERVICE_REQUEST', 'QUESTION', 'COMPLAINT'];
     const VALID_PRIORITIES = ['P1', 'P2', 'P3', 'P4'];
     const VALID_IMPACT = ['LOW', 'MEDIUM', 'HIGH'];
+    const VALID_RESOLUTION_CODES = [
+      'FIXED',
+      'WORKAROUND',
+      'DUPLICATE',
+      'NOT_REPRODUCIBLE',
+      'OUT_OF_SCOPE',
+    ];
 
     if (body.title !== undefined) {
       const v = typeof body.title === 'string' ? body.title.trim() : '';
       if (!v) return NextResponse.json({ error: 'title cannot be empty' }, { status: 400 });
       if (v.length > 200)
         return NextResponse.json({ error: 'title must be ≤200 chars' }, { status: 400 });
-      before.title = ticket.title;
+      before.title = existingTicket.title;
       data.title = v;
     }
     if (body.description !== undefined) {
       const v = typeof body.description === 'string' ? body.description : '';
-      before.description = ticket.description;
+      before.description = existingTicket.description;
       data.description = v;
     }
     if (body.type !== undefined) {
@@ -114,7 +129,7 @@ export async function PATCH(
       if (!VALID_TYPES.includes(v)) {
         return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 });
       }
-      before.type = ticket.type;
+      before.type = existingTicket.type;
       data.type = v;
     }
     if (body.priority !== undefined) {
@@ -122,7 +137,7 @@ export async function PATCH(
       if (!VALID_PRIORITIES.includes(v)) {
         return NextResponse.json({ error: `priority must be one of: ${VALID_PRIORITIES.join(', ')}` }, { status: 400 });
       }
-      before.priority = ticket.priority;
+      before.priority = existingTicket.priority;
       data.priority = v;
     }
     if (body.impact !== undefined) {
@@ -130,7 +145,7 @@ export async function PATCH(
       if (v !== null && !VALID_IMPACT.includes(v)) {
         return NextResponse.json({ error: `impact must be one of: ${VALID_IMPACT.join(', ')}` }, { status: 400 });
       }
-      before.impact = ticket.impact;
+      before.impact = existingTicket.impact;
       data.impact = v;
     }
     if (body.urgency !== undefined) {
@@ -138,7 +153,7 @@ export async function PATCH(
       if (v !== null && !VALID_IMPACT.includes(v)) {
         return NextResponse.json({ error: `urgency must be one of: ${VALID_IMPACT.join(', ')}` }, { status: 400 });
       }
-      before.urgency = ticket.urgency;
+      before.urgency = existingTicket.urgency;
       data.urgency = v;
     }
     if (body.serviceId !== undefined) {
@@ -149,7 +164,7 @@ export async function PATCH(
           return NextResponse.json({ error: 'serviceId does not reference a known service' }, { status: 400 });
         }
       }
-      before.serviceId = ticket.serviceId;
+      before.serviceId = existingTicket.serviceId;
       data.serviceId = v;
     }
     if (body.assignedUserId !== undefined) {
@@ -166,7 +181,7 @@ export async function PATCH(
           );
         }
       }
-      before.assignedUserId = ticket.assignedUserId;
+      before.assignedUserId = existingTicket.assignedUserId;
       data.assignedUserId = v;
     }
     if (body.assignmentGroupId !== undefined) {
@@ -182,15 +197,41 @@ export async function PATCH(
           return NextResponse.json({ error: 'assignmentGroupId does not reference a known group' }, { status: 400 });
         }
       }
-      before.assignmentGroupId = ticket.assignmentGroupId;
+      before.assignmentGroupId = existingTicket.assignmentGroupId;
       data.assignmentGroupId = v;
+    }
+    if (body.resolutionCode !== undefined) {
+      const v =
+        body.resolutionCode === null
+          ? null
+          : typeof body.resolutionCode === 'string'
+            ? body.resolutionCode.toUpperCase()
+            : '';
+      if (v !== null && !VALID_RESOLUTION_CODES.includes(v)) {
+        return NextResponse.json(
+          { error: `resolutionCode must be one of: ${VALID_RESOLUTION_CODES.join(', ')}` },
+          { status: 400 },
+        );
+      }
+      before.resolutionCode = existingTicket.resolutionCode;
+      data.resolutionCode = v;
+    }
+    if (body.resolutionNotes !== undefined) {
+      const v =
+        body.resolutionNotes === null
+          ? null
+          : typeof body.resolutionNotes === 'string'
+            ? body.resolutionNotes
+            : '';
+      before.resolutionNotes = existingTicket.resolutionNotes;
+      data.resolutionNotes = v;
     }
 
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ error: 'No updatable fields provided' }, { status: 400 });
     }
 
-    const updated = await db.ticket.update({
+    const updatedTicket = await db.ticket.update({
       where: { id },
       data,
       include: TICKET_INCLUDE,
@@ -210,14 +251,14 @@ export async function PATCH(
 
     await auditLog({
       actor: session,
-      action: 'TICKET_UPDATE',
+      action: 'TICKET_UPDATED',
       entityType: 'Ticket',
       entityId: id,
-      before,
-      after: data,
+      before: { ...before, id: existingTicket.id, number: existingTicket.number },
+      after: { ...data, id: existingTicket.id, number: existingTicket.number },
     });
 
-    return NextResponse.json(serializeTicket(updated as TicketWithRelations));
+    return NextResponse.json(serializeTicket(updatedTicket as TicketWithRelations));
   } catch (err) {
     return errorResponse(err);
   }
