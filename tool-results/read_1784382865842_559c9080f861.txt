@@ -1,0 +1,729 @@
+     1→'use client';
+     2→
+     3→import { useMemo, useState } from 'react';
+     4→import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+     5→import { useApp } from '@/lib/store';
+     6→import { apiGet, apiPost } from '@/lib/api';
+     7→import { toast } from 'sonner';
+     8→import type { Demand } from '@/lib/types';
+     9→import {
+    10→  PageHeader,
+    11→  SectionCard,
+    12→  EmptyState,
+    13→  LoadingState,
+    14→  SlaClassBadge,
+    15→  ChangeStatusBadge,
+    16→  DemandStatusBadge,
+    17→  RelativeTime,
+    18→  FormattedDate,
+    19→  Button,
+    20→  Badge,
+    21→} from '@/components/shared';
+    22→import {
+    23→  Dialog,
+    24→  DialogContent,
+    25→  DialogHeader,
+    26→  DialogTitle,
+    27→  DialogDescription,
+    28→  DialogFooter,
+    29→} from '@/components/ui/dialog';
+    30→import { Textarea } from '@/components/ui/textarea';
+    31→import { Label } from '@/components/ui/label';
+    32→import { Input } from '@/components/ui/input';
+    33→import {
+    34→  ShieldCheck,
+    35→  Gavel,
+    36→  CheckCircle2,
+    37→  ArrowUpCircle,
+    38→  FileText,
+    39→  GitBranch,
+    40→  Users,
+    41→  ArrowRight,
+    42→  Clock,
+    43→  History,
+    44→} from 'lucide-react';
+    45→import { useOwnerServices, useAcceptedDemands, useAllChanges } from './_hooks';
+    46→
+    47→/* --------------------- Governance decision type --------------------- */
+    48→
+    49→interface GovernanceDecision {
+    50→  id: string;
+    51→  serviceId: string;
+    52→  demandId: string | null;
+    53→  slaEventId: string | null;
+    54→  problemId: string | null;
+    55→  decisionType: string;
+    56→  decision: string;
+    57→  rationale: string;
+    58→  resourcesAuthorized: string | null;
+    59→  followUpOwner: string | null;
+    60→  followUpDate: string | null;
+    61→  decidedById: string;
+    62→  decidedByName: string;
+    63→  createdAt: string;
+    64→}
+    65→
+    66→const DECISION_TYPE_LABELS: Record<string, string> = {
+    67→  COMMITMENT_APPROVAL: 'Commitment Approval',
+    68→  COMMITMENT_ESCALATION: 'Commitment Escalation',
+    69→  BREACH_RESPONSE: 'Breach Response',
+    70→  LIFECYCLE_DIRECTION: 'Lifecycle Direction',
+    71→  CATALOG_ACCURACY: 'Catalog Accuracy',
+    72→};
+    73→
+    74→const DECISION_TYPE_BADGE_CLS: Record<string, string> = {
+    75→  COMMITMENT_APPROVAL:
+    76→    'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900',
+    77→  COMMITMENT_ESCALATION:
+    78→    'bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-900',
+    79→  BREACH_RESPONSE:
+    80→    'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900',
+    81→  LIFECYCLE_DIRECTION:
+    82→    'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300 dark:border-teal-900',
+    83→  CATALOG_ACCURACY:
+    84→    'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900',
+    85→};
+    86→
+    87→/* --------------------- Approve dialog --------------------- */
+    88→
+    89→function ApproveCommitmentDialog({
+    90→  open,
+    91→  onOpenChange,
+    92→  demand,
+    93→  serviceName,
+    94→  pending,
+    95→  onConfirm,
+    96→}: {
+    97→  open: boolean;
+    98→  onOpenChange: (v: boolean) => void;
+    99→  demand: Demand | null;
+   100→  serviceName: string;
+   101→  pending: boolean;
+   102→  onConfirm: (rationale: string, followUpOwner: string, followUpDate: string) => void;
+   103→}) {
+   104→  const [rationale, setRationale] = useState('');
+   105→  const [followUpOwner, setFollowUpOwner] = useState('');
+   106→  const [followUpDate, setFollowUpDate] = useState('');
+   107→
+   108→  // Reset on close
+   109→  const handleClose = (v: boolean) => {
+   110→    if (!v) {
+   111→      setRationale('');
+   112→      setFollowUpOwner('');
+   113→      setFollowUpDate('');
+   114→    }
+   115→    onOpenChange(v);
+   116→  };
+   117→
+   118→  return (
+   119→    <Dialog open={open} onOpenChange={handleClose}>
+   120→      <DialogContent className="sm:max-w-lg">
+   121→        <DialogHeader>
+   122→          <DialogTitle className="flex items-center gap-2">
+   123→            <CheckCircle2 className="h-5 w-5 text-emerald-600" /> Approve Service Commitment
+   124→          </DialogTitle>
+   125→          <DialogDescription>
+   126→            {demand
+   127→              ? `You are approving the service commitment for "${demand.title}" on ${serviceName}. This decision is recorded in the governance audit trail.`
+   128→              : 'Loading demand…'}
+   129→          </DialogDescription>
+   130→        </DialogHeader>
+   131→        <div className="space-y-3">
+   132→          <div className="space-y-1.5">
+   133→            <Label htmlFor="approve-rationale">Rationale (required)</Label>
+   134→            <Textarea
+   135→              id="approve-rationale"
+   136→              rows={5}
+   137→              placeholder="Explain the basis for approval — SLA class confirmation, capacity check, support model alignment, dependencies reviewed…"
+   138→              value={rationale}
+   139→              onChange={(e) => setRationale(e.target.value)}
+   140→            />
+   141→            <p className="text-xs text-muted-foreground">
+   142→              This rationale is recorded in the governance decision audit trail and visible to CM Leaders.
+   143→            </p>
+   144→          </div>
+   145→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   146→            <div className="space-y-1.5">
+   147→              <Label htmlFor="follow-up-owner">Follow-up owner (optional)</Label>
+   148→              <Input
+   149→                id="follow-up-owner"
+   150→                placeholder="e.g. CE Worker name"
+   151→                value={followUpOwner}
+   152→                onChange={(e) => setFollowUpOwner(e.target.value)}
+   153→              />
+   154→            </div>
+   155→            <div className="space-y-1.5">
+   156→              <Label htmlFor="follow-up-date">Follow-up date (optional)</Label>
+   157→              <Input
+   158→                id="follow-up-date"
+   159→                type="date"
+   160→                value={followUpDate}
+   161→                onChange={(e) => setFollowUpDate(e.target.value)}
+   162→              />
+   163→            </div>
+   164→          </div>
+   165→        </div>
+   166→        <DialogFooter>
+   167→          <Button variant="outline" onClick={() => handleClose(false)} disabled={pending}>
+   168→            Cancel
+   169→          </Button>
+   170→          <Button
+   171→            onClick={() => onConfirm(rationale.trim(), followUpOwner.trim(), followUpDate)}
+   172→            disabled={pending || !rationale.trim()}
+   173→          >
+   174→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+   175→            {pending ? 'Recording…' : 'Approve Commitment'}
+   176→          </Button>
+   177→        </DialogFooter>
+   178→      </DialogContent>
+   179→    </Dialog>
+   180→  );
+   181→}
+   182→
+   183→/* --------------------- Escalate dialog --------------------- */
+   184→
+   185→function EscalateDialog({
+   186→  open,
+   187→  onOpenChange,
+   188→  demand,
+   189→  serviceName,
+   190→  pending,
+   191→  onConfirm,
+   192→}: {
+   193→  open: boolean;
+   194→  onOpenChange: (v: boolean) => void;
+   195→  demand: Demand | null;
+   196→  serviceName: string;
+   197→  pending: boolean;
+   198→  onConfirm: (rationale: string) => void;
+   199→}) {
+   200→  const [rationale, setRationale] = useState('');
+   201→
+   202→  const handleClose = (v: boolean) => {
+   203→    if (!v) setRationale('');
+   204→    onOpenChange(v);
+   205→  };
+   206→
+   207→  return (
+   208→    <Dialog open={open} onOpenChange={handleClose}>
+   209→      <DialogContent className="sm:max-w-lg">
+   210→        <DialogHeader>
+   211→          <DialogTitle className="flex items-center gap-2">
+   212→            <ArrowUpCircle className="h-5 w-5 text-violet-600" /> Escalate to Governance Owner
+   213→          </DialogTitle>
+   214→          <DialogDescription>
+   215→            {demand
+   216→              ? `Escalating "${demand.title}" on ${serviceName} beyond your Service Owner authority to the Governance Owner (enterprise risk).`
+   217→              : 'Loading demand…'}
+   218→          </DialogDescription>
+   219→        </DialogHeader>
+   220→        <div className="space-y-1.5">
+   221→          <Label htmlFor="escalate-rationale">Rationale (required)</Label>
+   222→          <Textarea
+   223→            id="escalate-rationale"
+   224→            rows={5}
+   225→            placeholder="Explain why this commitment exceeds your authority — enterprise risk, cross-domain impact, regulatory exposure, cost beyond threshold…"
+   226→            value={rationale}
+   227→            onChange={(e) => setRationale(e.target.value)}
+   228→          />
+   229→          <p className="text-xs text-muted-foreground">
+   230→            The escalation is recorded in the audit trail and CM Leaders are notified.
+   231→          </p>
+   232→        </div>
+   233→        <DialogFooter>
+   234→          <Button variant="outline" onClick={() => handleClose(false)} disabled={pending}>
+   235→            Cancel
+   236→          </Button>
+   237→          <Button
+   238→            variant="default"
+   239→            onClick={() => onConfirm(rationale.trim())}
+   240→            disabled={pending || !rationale.trim()}
+   241→          >
+   242→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <ArrowUpCircle className="h-4 w-4 mr-1.5" />}
+   243→            {pending ? 'Escalating…' : 'Escalate to Governance Owner'}
+   244→          </Button>
+   245→        </DialogFooter>
+   246→      </DialogContent>
+   247→    </Dialog>
+   248→  );
+   249→}
+   250→
+   251→/* --------------------- Main --------------------- */
+   252→
+   253→export default function Governance() {
+   254→  const { navigate } = useApp();
+   255→  const qc = useQueryClient();
+   256→
+   257→  const servicesQ = useOwnerServices();
+   258→  const demandsQ = useAcceptedDemands();
+   259→  const changesQ = useAllChanges();
+   260→
+   261→  const services = servicesQ.data ?? [];
+   262→  const myServiceIds = useMemo(() => new Set(services.map((s) => s.id)), [services]);
+   263→
+   264→  const demandsAwaiting = useMemo(
+   265→    () =>
+   266→      (demandsQ.data ?? []).filter((d) =>
+   267→        d.relatedServiceIds.some((sid) => myServiceIds.has(sid)),
+   268→      ),
+   269→    [demandsQ.data, myServiceIds],
+   270→  );
+   271→
+   272→  const myChanges = useMemo(
+   273→    () =>
+   274→      (changesQ.data ?? []).filter((c) => c.affectedServiceIds.some((sid) => myServiceIds.has(sid))),
+   275→    [changesQ.data, myServiceIds],
+   276→  );
+   277→
+   278→  const catalogProposals = myChanges.filter((c) => c.status === 'PLANNING');
+   279→  const changeBoardItems = myChanges.filter((c) => c.complexity === 'COMPLEX');
+   280→
+   281→  const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? 'Service';
+   282→  const serviceSlaClass = (id: string) => services.find((s) => s.id === id)?.slaClass;
+   283→
+   284→  /* --- Governance decisions history --- */
+   285→  // Fetch decisions for each owned service (one query per service is OK; owners usually own ≤ 5 services)
+   286→  const decisionsQueries = useQuery({
+   287→    queryKey: ['governance-decisions', 'owner', Array.from(myServiceIds).sort().join(',')] as const,
+   288→    queryFn: async (): Promise<GovernanceDecision[]> => {
+   289→      if (myServiceIds.size === 0) return [];
+   290→      // We fetch one service at a time and merge — the GET endpoint accepts a single serviceId.
+   291→      const results = await Promise.all(
+   292→        Array.from(myServiceIds).map((sid) =>
+   293→          apiGet<GovernanceDecision[]>(`/api/governance-decisions?serviceId=${encodeURIComponent(sid)}`),
+   294→        ),
+   295→      );
+   296→      return results.flat().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+   297→    },
+   298→    enabled: myServiceIds.size > 0,
+   299→    staleTime: 30_000,
+   300→  });
+   301→
+   302→  const decisions: GovernanceDecision[] = decisionsQueries.data ?? [];
+   303→
+   304→  // Map of demandId → decision, so we can hide demands that have already been approved/escalated
+   305→  const decisionsByDemandId = useMemo(() => {
+   306→    const m = new Map<string, GovernanceDecision[]>();
+   307→    for (const d of decisions) {
+   308→      if (!d.demandId) continue;
+   309→      const arr = m.get(d.demandId) ?? [];
+   310→      arr.push(d);
+   311→      m.set(d.demandId, arr);
+   312→    }
+   313→    return m;
+   314→  }, [decisions]);
+   315→
+   316→  // Hide demands that already have a final COMMITMENT_APPROVAL or COMMITMENT_ESCALATION decision
+   317→  const pendingDemands = useMemo(
+   318→    () =>
+   319→      demandsAwaiting.filter((d) => {
+   320→        const existing = decisionsByDemandId.get(d.id) ?? [];
+   321→        return !existing.some(
+   322→          (dec) =>
+   323→            dec.decisionType === 'COMMITMENT_APPROVAL' ||
+   324→            dec.decisionType === 'COMMITMENT_ESCALATION',
+   325→        );
+   326→      }),
+   327→    [demandsAwaiting, decisionsByDemandId],
+   328→  );
+   329→
+   330→  /* --- Dialog state --- */
+   331→  const [approveTarget, setApproveTarget] = useState<Demand | null>(null);
+   332→  const [escalateTarget, setEscalateTarget] = useState<Demand | null>(null);
+   333→
+   334→  const invalidateAll = () => {
+   335→    qc.invalidateQueries({ queryKey: ['governance-decisions'] });
+   336→    qc.invalidateQueries({ queryKey: ['demands-accepted'] });
+   337→    qc.invalidateQueries({ queryKey: ['demand'] });
+   338→    qc.invalidateQueries({ queryKey: ['demands'] });
+   339→  };
+   340→
+   341→  const approveMutation = useMutation({
+   342→    mutationFn: (args: {
+   343→      demand: Demand;
+   344→      serviceId: string;
+   345→      rationale: string;
+   346→      followUpOwner: string;
+   347→      followUpDate: string;
+   348→    }) =>
+   349→      apiPost('/api/governance-decisions', {
+   350→        serviceId: args.serviceId,
+   351→        demandId: args.demand.id,
+   352→        decisionType: 'COMMITMENT_APPROVAL',
+   353→        decision: 'APPROVED',
+   354→        rationale: args.rationale,
+   355→        followUpOwner: args.followUpOwner || undefined,
+   356→        followUpDate: args.followUpDate || undefined,
+   357→      }),
+   358→    onSuccess: (_data, vars) => {
+   359→      toast.success('Service commitment approved', {
+   360→        description: `"${vars.demand.title}" — commitment recorded for ${serviceName(vars.serviceId)}.`,
+   361→      });
+   362→      invalidateAll();
+   363→      setApproveTarget(null);
+   364→    },
+   365→    onError: (e: Error) => toast.error(e.message),
+   366→  });
+   367→
+   368→  const escalateMutation = useMutation({
+   369→    mutationFn: (args: { demand: Demand; serviceId: string; rationale: string }) =>
+   370→      apiPost('/api/governance-decisions', {
+   371→        serviceId: args.serviceId,
+   372→        demandId: args.demand.id,
+   373→        decisionType: 'COMMITMENT_ESCALATION',
+   374→        decision: 'ESCALATED',
+   375→        rationale: args.rationale,
+   376→      }),
+   377→    onSuccess: (_data, vars) => {
+   378→      toast.info('Demand escalated to Governance Owner', {
+   379→        description: `"${vars.demand.title}" escalated beyond Service Owner authority.`,
+   380→      });
+   381→      invalidateAll();
+   382→      setEscalateTarget(null);
+   383→    },
+   384→    onError: (e: Error) => toast.error(e.message),
+   385→  });
+   386→
+   387→  const loading =
+   388→    servicesQ.isLoading || demandsQ.isLoading || changesQ.isLoading || decisionsQueries.isLoading;
+   389→
+   390→  return (
+   391→    <div className="space-y-6">
+   392→      <PageHeader
+   393→        title="Governance Approvals"
+   394→        description="As Service Owner you approve service commitments at demand acceptance, review catalog change proposals, and sit on the Change Board for complex changes on your services."
+   395→        icon={<ShieldCheck className="h-6 w-6" />}
+   396→      />
+   397→
+   398→      {/* Escalation chain reference */}
+   399→      <SectionCard
+   400→        title="Escalation Chain"
+   401→        description="Your accountability sits between the CM Leader (who authorises quotes) and the Governance Owner (who holds enterprise risk authority)."
+   402→      >
+   403→        <div className="flex flex-wrap items-center gap-3 text-sm">
+   404→          <div className="flex items-center gap-2 rounded-lg border border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20 px-3 py-2">
+   405→            <div className="h-7 w-7 rounded-full bg-rose-500/20 flex items-center justify-center">
+   406→              <Users className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
+   407→            </div>
+   408→            <div>
+   409→              <div className="text-xs font-semibold text-rose-800 dark:text-rose-300">CM Leader</div>
+   410→              <div className="text-[11px] text-muted-foreground">Quote authorisation gate</div>
+   411→            </div>
+   412→          </div>
+   413→
+   414→          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+   415→
+   416→          <div className="flex items-center gap-2 rounded-lg border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 px-3 py-2">
+   417→            <div className="h-7 w-7 rounded-full bg-emerald-500/30 flex items-center justify-center">
+   418→              <ShieldCheck className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-300" />
+   419→            </div>
+   420→            <div>
+   421→              <div className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+   422→                You · Service Owner
+   423→              </div>
+   424→              <div className="text-[11px] text-muted-foreground">Commitment & catalog approval</div>
+   425→            </div>
+   426→          </div>
+   427→
+   428→          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+   429→
+   430→          <div className="flex items-center gap-2 rounded-lg border border-violet-200 dark:border-violet-900/60 bg-violet-50/40 dark:bg-violet-950/20 px-3 py-2">
+   431→            <div className="h-7 w-7 rounded-full bg-violet-500/20 flex items-center justify-center">
+   432→              <Gavel className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+   433→            </div>
+   434→            <div>
+   435→              <div className="text-xs font-semibold text-violet-800 dark:text-violet-300">
+   436→                Governance Owner
+   437→              </div>
+   438→              <div className="text-[11px] text-muted-foreground">Enterprise risk authority</div>
+   439→            </div>
+   440→          </div>
+   441→        </div>
+   442→      </SectionCard>
+   443→
+   444→      {loading ? (
+   445→        <LoadingState rows={5} />
+   446→      ) : (
+   447→        <>
+   448→          {/* Demand commitments awaiting approval */}
+   449→          <SectionCard
+   450→            title="Service Commitments Awaiting Your Approval"
+   451→            description="Accepted demands on your services — the customer has accepted the quote and you must approve the service commitment (SLA class, delivery window, support model) before the change is created."
+   452→            actions={
+   453→              pendingDemands.length > 0 ? (
+   454→                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+   455→                  {pendingDemands.length} pending
+   456→                </Badge>
+   457→              ) : undefined
+   458→            }
+   459→          >
+   460→            {pendingDemands.length === 0 ? (
+   461→              <EmptyState
+   462→                icon={<Gavel className="h-8 w-8" />}
+   463→                title="No commitments awaiting approval"
+   464→                description="When a customer accepts a quote on your service, the commitment request appears here. Decisions you have already recorded appear in the Governance Decision History below."
+   465→              />
+   466→            ) : (
+   467→              <div className="space-y-3">
+   468→                {pendingDemands.map((d) => {
+   469→                  const myServiceId = d.relatedServiceIds.find((sid) => myServiceIds.has(sid));
+   470→                  const slaClass = myServiceId ? serviceSlaClass(myServiceId) : undefined;
+   471→                  return (
+   472→                    <div
+   473→                      key={d.id}
+   474→                      className="rounded-lg border p-4 hover:shadow-sm transition-shadow"
+   475→                    >
+   476→                      <div className="flex items-start justify-between gap-3 flex-wrap">
+   477→                        <div className="min-w-0 flex-1">
+   478→                          <div className="flex items-center gap-2 flex-wrap">
+   479→                            <h3 className="text-sm font-semibold">{d.title}</h3>
+   480→                            <DemandStatusBadge status={d.status} />
+   481→                            {slaClass && <SlaClassBadge slaClass={slaClass} />}
+   482→                          </div>
+   483→                          <div className="mt-1.5 flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+   484→                            <span className="flex items-center gap-1">
+   485→                              <Users className="h-3 w-3" /> {d.serviceCustomerName ?? 'Customer'}
+   486→                            </span>
+   487→                            <span>·</span>
+   488→                            <span>SCM: {d.assignedScmWorkerName ?? 'Unassigned'}</span>
+   489→                            <span>·</span>
+   490→                            <span>Service: {myServiceId ? serviceName(myServiceId) : '—'}</span>
+   491→                            <span>·</span>
+   492→                            <RelativeTime date={d.acceptedAt ?? d.createdAt} />
+   493→                          </div>
+   494→                          {d.commitmentNotes && (
+   495→                            <div className="mt-2.5 rounded-md bg-muted/60 p-2.5">
+   496→                              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+   497→                                Proposed Commitment
+   498→                              </div>
+   499→                              <p className="text-xs leading-relaxed text-foreground/90">
+   500→                                {d.commitmentNotes}
+   501→                              </p>
+   502→                            </div>
+   503→                          )}
+   504→                          {d.estimatedEffortDays != null && (
+   505→                            <div className="mt-2 text-xs text-muted-foreground">
+   506→                              Estimated effort: {d.estimatedEffortDays} days
+   507→                              {d.estimatedCost != null && ` · est. cost $${d.estimatedCost.toLocaleString()}`}
+   508→                            </div>
+   509→                          )}
+   510→                        </div>
+   511→                        <div className="flex flex-col gap-2 shrink-0">
+   512→                          <Button
+   513→                            size="sm"
+   514→                            className="gap-1.5"
+   515→                            onClick={() => setApproveTarget(d)}
+   516→                          >
+   517→                            <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+   518→                          </Button>
+   519→                          <Button
+   520→                            size="sm"
+   521→                            variant="outline"
+   522→                            className="gap-1.5"
+   523→                            onClick={() => setEscalateTarget(d)}
+   524→                          >
+   525→                            <ArrowUpCircle className="h-3.5 w-3.5" /> Escalate
+   526→                          </Button>
+   527→                          <Button
+   528→                            size="sm"
+   529→                            variant="ghost"
+   530→                            className="gap-1.5 text-xs"
+   531→                            onClick={() => navigate('demand-detail', { id: d.id })}
+   532→                          >
+   533→                            <FileText className="h-3.5 w-3.5" /> View detail
+   534→                          </Button>
+   535→                        </div>
+   536→                      </div>
+   537→                    </div>
+   538→                  );
+   539→                })}
+   540→              </div>
+   541→            )}
+   542→          </SectionCard>
+   543→
+   544→          {/* Governance Decision History */}
+   545→          <SectionCard
+   546→            title="Governance Decision History"
+   547→            description="Every commitment approval, escalation, and breach response you record is persisted here as a governance audit trail."
+   548→            actions={
+   549→              decisions.length > 0 ? (
+   550→                <Badge variant="outline" className="border-teal-200 bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300">
+   551→                  <History className="h-3 w-3 mr-1" /> {decisions.length} recorded
+   552→                </Badge>
+   553→              ) : undefined
+   554→            }
+   555→          >
+   556→            {decisions.length === 0 ? (
+   557→              <EmptyState
+   558→                icon={<History className="h-7 w-7" />}
+   559→                title="No governance decisions recorded yet"
+   560→                description="Your commitment approvals, escalations, and breach responses will appear here as a permanent audit trail."
+   561→              />
+   562→            ) : (
+   563→              <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
+   564→                {decisions.map((dec) => {
+   565→                  const cls = DECISION_TYPE_BADGE_CLS[dec.decisionType] ?? '';
+   566→                  return (
+   567→                    <li key={dec.id} className="py-3">
+   568→                      <div className="flex items-start justify-between gap-3 flex-wrap">
+   569→                        <div className="min-w-0 flex-1">
+   570→                          <div className="flex items-center gap-2 flex-wrap">
+   571→                            <Badge variant="outline" className={cls}>
+   572→                              {DECISION_TYPE_LABELS[dec.decisionType] ?? dec.decisionType}
+   573→                            </Badge>
+   574→                            <Badge
+   575→                              variant="outline"
+   576→                              className={
+   577→                                dec.decision === 'APPROVED'
+   578→                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+   579→                                  : dec.decision === 'ESCALATED'
+   580→                                    ? 'border-violet-200 bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300'
+   581→                                    : 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+   582→                              }
+   583→                            >
+   584→                              {dec.decision.replace(/_/g, ' ').toLowerCase()}
+   585→                            </Badge>
+   586→                            <span className="text-xs text-muted-foreground">
+   587→                              on <span className="font-medium text-foreground/80">{serviceName(dec.serviceId)}</span>
+   588→                            </span>
+   589→                          </div>
+   590→                          <p className="mt-1.5 text-xs leading-relaxed text-foreground/90">
+   591→                            {dec.rationale}
+   592→                          </p>
+   593→                          {(dec.resourcesAuthorized || dec.followUpOwner || dec.followUpDate) && (
+   594→                            <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+   595→                              {dec.resourcesAuthorized && (
+   596→                                <span>Resources: {dec.resourcesAuthorized}</span>
+   597→                              )}
+   598→                              {dec.followUpOwner && <span>Follow-up: {dec.followUpOwner}</span>}
+   599→                              {dec.followUpDate && (
+   600→                                <span>By <FormattedDate date={dec.followUpDate} /></span>
+   601→                              )}
+   602→                            </div>
+   603→                          )}
+   604→                          <div className="mt-1 text-[11px] text-muted-foreground">
+   605→                            Decided by {dec.decidedByName} · <RelativeTime date={dec.createdAt} />
+   606→                          </div>
+   607→                        </div>
+   608→                      </div>
+   609→                    </li>
+   610→                  );
+   611→                })}
+   612→              </ul>
+   613→            )}
+   614→          </SectionCard>
+   615→
+   616→          <div className="grid gap-4 lg:grid-cols-2">
+   617→            {/* Catalog change proposals */}
+   618→            <SectionCard
+   619→              title="Catalog Change Proposals"
+   620→              description="Changes in PLANNING status affecting your services — review proposed catalog updates before approval."
+   621→            >
+   622→              {catalogProposals.length === 0 ? (
+   623→                <EmptyState
+   624→                  icon={<GitBranch className="h-7 w-7" />}
+   625→                  title="No catalog proposals in planning"
+   626→                  description="Catalog changes in PLANNING status on your services will appear here."
+   627→                />
+   628→              ) : (
+   629→                <ul className="divide-y">
+   630→                  {catalogProposals.map((c) => (
+   631→                    <li key={c.id} className="py-2.5">
+   632→                      <div className="flex items-start justify-between gap-2">
+   633→                        <div className="min-w-0 flex-1">
+   634→                          <div className="text-sm font-medium truncate">{c.title}</div>
+   635→                          <div className="text-xs text-muted-foreground mt-0.5">
+   636→                            Affects:{' '}
+   637→                            {c.affectedServiceIds
+   638→                              .filter((sid) => myServiceIds.has(sid))
+   639→                              .map((sid) => serviceName(sid))
+   640→                              .join(', ')}
+   641→                          </div>
+   642→                        </div>
+   643→                        <ChangeStatusBadge status={c.status} className="shrink-0" />
+   644→                      </div>
+   645→                    </li>
+   646→                  ))}
+   647→                </ul>
+   648→              )}
+   649→            </SectionCard>
+   650→
+   651→            {/* Change Board items */}
+   652→            <SectionCard
+   653→              title="Change Board Items"
+   654→              description="Complex changes on your services requiring Change Board review."
+   655→            >
+   656→              {changeBoardItems.length === 0 ? (
+   657→                <EmptyState
+   658→                  icon={<Gavel className="h-7 w-7" />}
+   659→                  title="No complex changes pending"
+   660→                  description="Complex changes affecting your services will surface here for Change Board review."
+   661→                />
+   662→              ) : (
+   663→                <ul className="divide-y">
+   664→                  {changeBoardItems.map((c) => (
+   665→                    <li key={c.id} className="py-2.5">
+   666→                      <div className="flex items-start justify-between gap-2">
+   667→                        <div className="min-w-0 flex-1">
+   668→                          <div className="text-sm font-medium truncate">{c.title}</div>
+   669→                          <div className="text-xs text-muted-foreground mt-0.5">
+   670→                            CE: {c.assignedCeWorkerName ?? 'Unassigned'} ·{' '}
+   671→                            <RelativeTime date={c.createdAt} />
+   672→                          </div>
+   673→                        </div>
+   674→                        <Badge
+   675→                          variant="outline"
+   676→                          className="bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300 shrink-0"
+   677→                        >
+   678→                          {c.complexity}
+   679→                        </Badge>
+   680→                      </div>
+   681→                    </li>
+   682→                  ))}
+   683→                </ul>
+   684→              )}
+   685→            </SectionCard>
+   686→          </div>
+   687→        </>
+   688→      )}
+   689→
+   690→      {/* Approve dialog */}
+   691→      <ApproveCommitmentDialog
+   692→        open={!!approveTarget}
+   693→        onOpenChange={(v) => !v && setApproveTarget(null)}
+   694→        demand={approveTarget}
+   695→        serviceName={approveTarget ? serviceName(approveTarget.relatedServiceIds.find((sid) => myServiceIds.has(sid)) ?? '') : ''}
+   696→        pending={approveMutation.isPending}
+   697→        onConfirm={(rationale, followUpOwner, followUpDate) => {
+   698→          if (!approveTarget) return;
+   699→          const serviceId = approveTarget.relatedServiceIds.find((sid) => myServiceIds.has(sid));
+   700→          if (!serviceId) {
+   701→            toast.error('Could not determine the service to record the decision against.');
+   702→            return;
+   703→          }
+   704→          approveMutation.mutate({ demand: approveTarget, serviceId, rationale, followUpOwner, followUpDate });
+   705→        }}
+   706→      />
+   707→
+   708→      {/* Escalate dialog */}
+   709→      <EscalateDialog
+   710→        open={!!escalateTarget}
+   711→        onOpenChange={(v) => !v && setEscalateTarget(null)}
+   712→        demand={escalateTarget}
+   713→        serviceName={escalateTarget ? serviceName(escalateTarget.relatedServiceIds.find((sid) => myServiceIds.has(sid)) ?? '') : ''}
+   714→        pending={escalateMutation.isPending}
+   715→        onConfirm={(rationale) => {
+   716→          if (!escalateTarget) return;
+   717→          const serviceId = escalateTarget.relatedServiceIds.find((sid) => myServiceIds.has(sid));
+   718→          if (!serviceId) {
+   719→            toast.error('Could not determine the service to record the decision against.');
+   720→            return;
+   721→          }
+   722→          escalateMutation.mutate({ demand: escalateTarget, serviceId, rationale });
+   723→        }}
+   724→      />
+   725→    </div>
+   726→  );
+   727→}
+   728→
+   729→

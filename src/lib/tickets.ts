@@ -138,6 +138,16 @@ export interface SlaClockRow {
   remainingMins: number | null; // minutes remaining until dueAt (negative if overdue); null when not RUNNING
   elapsedMins: number; // minutes elapsed since startedAt (excluding paused)
   percentRemaining: number | null; // 0..100 of clock time remaining; null when not RUNNING or dueAt<=startedAt
+  // Optional context fields joined by /api/sla-clocks (ticket/policy/service/customer)
+  ticketNumber?: string;
+  ticketTitle?: string;
+  ticketStatus?: string;
+  ticketPriority?: string;
+  ticketType?: string;
+  serviceId?: string | null;
+  serviceName?: string | null;
+  serviceCustomerId?: string;
+  serviceCustomerName?: string | null;
 }
 
 export interface Ticket {

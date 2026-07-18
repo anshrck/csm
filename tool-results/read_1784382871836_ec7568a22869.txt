@@ -1,0 +1,1126 @@
+     1→'use client';
+     2→
+     3→/**
+     4→ * TicketDetail — shared ticket work surface used by all 4 role workspaces.
+     5→ *
+     6→ * Renders:
+     7→ *   - Header: number, title, priority + status badges, SLA countdown timers.
+     8→ *   - Description.
+     9→ *   - SLA clock panels (Response + Resolution) with progress bars.
+    10→ *   - Work notes / activity log (TicketEvent timeline).
+    11→ *   - Action buttons by status + role (triage, assign, progress, waiting,
+    12→ *     resume, resolve, close, reopen).
+    13→ *   - Linked conversation thread placeholder (wired by a future agent).
+    14→ *
+    15→ * Export contract (other agents import this exact signature):
+    16→ *   export default function TicketDetail({ id, role }: { id: string; role: Role })
+    17→ */
+    18→
+    19→import * as React from 'react';
+    20→import { useMemo, useState } from 'react';
+    21→import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+    22→import { toast } from 'sonner';
+    23→
+    24→import { apiGet, apiPost, apiPatch } from '@/lib/api';
+    25→import { useApp } from '@/lib/store';
+    26→import type { Role } from '@/lib/types';
+    27→import {
+    28→  type Ticket,
+    29→  type TicketEventRow,
+    30→  type TicketPriority,
+    31→  type TicketStatus,
+    32→  type TicketType,
+    33→  type Impact,
+    34→  type ResolutionCode,
+    35→  type TicketSlaHealth,
+    36→  TICKET_TYPE_LABELS,
+    37→  TICKET_PRIORITY_LABELS,
+    38→  TICKET_PRIORITY_SHORT,
+    39→  TICKET_STATUS_LABELS,
+    40→  RESOLUTION_CODE_LABELS,
+    41→  IMPACT_LABELS,
+    42→  deriveSlaHealth,
+    43→} from '@/lib/tickets';
+    44→
+    45→import {
+    46→  PageHeader,
+    47→  SectionCard,
+    48→  EmptyState,
+    49→  LoadingState,
+    50→  UserAvatar,
+    51→  RelativeTime,
+    52→  FormattedDate,
+    53→  KeyValue,
+    54→  Badge,
+    55→  Button,
+    56→  Card,
+    57→  CardContent,
+    58→} from '@/components/shared';
+    59→import CommentThread from './CommentThread';
+    60→import AttachmentList from './AttachmentList';
+    61→import CsatWidget from './CsatWidget';
+    62→import { Input } from '@/components/ui/input';
+    63→import { Label } from '@/components/ui/label';
+    64→import { Textarea } from '@/components/ui/textarea';
+    65→import { Separator } from '@/components/ui/separator';
+    66→import {
+    67→  Select,
+    68→  SelectContent,
+    69→  SelectItem,
+    70→  SelectTrigger,
+    71→  SelectValue,
+    72→} from '@/components/ui/select';
+    73→import {
+    74→  Dialog,
+    75→  DialogContent,
+    76→  DialogDescription,
+    77→  DialogFooter,
+    78→  DialogHeader,
+    79→  DialogTitle,
+    80→} from '@/components/ui/dialog';
+    81→import { cn } from '@/lib/utils';
+    82→import EntityLinks from '@/components/workspaces/shared/EntityLinks';
+    83→import SlaClocksPanel from '@/components/workspaces/shared/SlaClockPanel';
+    84→import {
+    85→  Ticket as TicketIcon,
+    86→  ArrowLeft,
+    87→  Clock,
+    88→  Pause,
+    89→  Play,
+    90→  CheckCircle2,
+    91→  AlertTriangle,
+    92→  ShieldAlert,
+    93→  TimerReset,
+    94→  UserPlus,
+    95→  UserCog,
+    96→  Activity,
+    97→  RefreshCw,
+    98→  Ban,
+    99→  Send,
+   100→  MessageSquare,
+   101→  Flag,
+   102→  Stethoscope,
+   103→} from 'lucide-react';
+   104→
+   105→// ---- Status / priority / type badges (same styles as TicketList) -----------
+   106→
+   107→const statusStyles: Record<TicketStatus, string> = {
+   108→  NEW: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-300',
+   109→  TRIAGED: 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950 dark:text-cyan-300',
+   110→  ASSIGNED: 'bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300',
+   111→  IN_PROGRESS: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300',
+   112→  WAITING_CUSTOMER: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   113→  RESOLVED: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
+   114→  CLOSED: 'bg-muted text-muted-foreground border-border',
+   115→  CANCELED: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+   116→};
+   117→
+   118→function TicketStatusBadge({ status }: { status: TicketStatus }) {
+   119→  return (
+   120→    <Badge variant="outline" className={cn('font-medium border text-xs', statusStyles[status])}>
+   121→      {TICKET_STATUS_LABELS[status]}
+   122→    </Badge>
+   123→  );
+   124→}
+   125→
+   126→const priorityStyles: Record<TicketPriority, string> = {
+   127→  P1: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+   128→  P2: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+   129→  P3: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300',
+   130→  P4: 'bg-muted text-muted-foreground border-border',
+   131→};
+   132→
+   133→function TicketPriorityBadge({ priority }: { priority: TicketPriority }) {
+   134→  return (
+   135→    <Badge variant="outline" className={cn('font-semibold border text-xs tabular-nums', priorityStyles[priority])}>
+   136→      {TICKET_PRIORITY_LABELS[priority]}
+   137→    </Badge>
+   138→  );
+   139→}
+   140→
+   141→const typeStyles: Record<TicketType, string> = {
+   142→  INCIDENT: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300',
+   143→  SERVICE_REQUEST: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-300',
+   144→  QUESTION: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/50 dark:text-sky-300',
+   145→  COMPLAINT: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300',
+   146→};
+   147→
+   148→function TicketTypeBadge({ type }: { type: TicketType }) {
+   149→  return (
+   150→    <Badge variant="outline" className={cn('font-medium border text-xs', typeStyles[type])}>
+   151→      {TICKET_TYPE_LABELS[type]}
+   152→    </Badge>
+   153→  );
+   154→}
+   155→
+   156→// ---- SLA clock panel -------------------------------------------------------
+   157→// The inline SlaClockPanel was replaced by the shared
+   158→// `@/components/workspaces/shared/SlaClockPanel` component (imported above as
+   159→// `SlaClocksPanel`). That shared component fetches its own clocks by ticketId.
+   160→// The activity log + remaining helpers below remain.
+   161→
+   162→// ---- Activity log (TicketEvent timeline) -----------------------------------
+   163→
+   164→const EVENT_LABELS: Record<string, string> = {
+   165→  CREATED: 'Ticket created',
+   166→  ASSIGNED: 'Assigned',
+   167→  TRIAGED: 'Triaged',
+   168→  IN_PROGRESS: 'Work started',
+   169→  WAITING: 'Set to waiting on customer',
+   170→  RESUMED: 'Work resumed',
+   171→  RESOLVED: 'Resolved',
+   172→  CLOSED: 'Closed',
+   173→  REOPENED: 'Reopened',
+   174→  CANCELED: 'Canceled',
+   175→  COMMENT: 'Comment',
+   176→};
+   177→
+   178→const EVENT_ICONS: Record<string, React.ReactNode> = {
+   179→  CREATED: <TicketIcon className="h-3 w-3" />,
+   180→  ASSIGNED: <UserCog className="h-3 w-3" />,
+   181→  TRIAGED: <Stethoscope className="h-3 w-3" />,
+   182→  IN_PROGRESS: <Play className="h-3 w-3" />,
+   183→  WAITING: <Pause className="h-3 w-3" />,
+   184→  RESUMED: <RefreshCw className="h-3 w-3" />,
+   185→  RESOLVED: <CheckCircle2 className="h-3 w-3" />,
+   186→  CLOSED: <CheckCircle2 className="h-3 w-3" />,
+   187→  REOPENED: <RefreshCw className="h-3 w-3" />,
+   188→  CANCELED: <Ban className="h-3 w-3" />,
+   189→  COMMENT: <MessageSquare className="h-3 w-3" />,
+   190→};
+   191→
+   192→function ActivityTimeline({ events }: { events: TicketEventRow[] }) {
+   193→  if (events.length === 0) {
+   194→    return (
+   195→      <EmptyState
+   196→        icon={<Activity className="h-7 w-7 text-muted-foreground/60" />}
+   197→        title="No activity yet"
+   198→        description="Work notes and lifecycle events will appear here."
+   199→      />
+   200→    );
+   201→  }
+   202→  return (
+   203→    <ol className="relative space-y-4">
+   204→      {events.map((e, i) => (
+   205→        <li key={e.id} className="relative flex gap-3">
+   206→          <div className="flex flex-col items-center">
+   207→            <div
+   208→              className={cn(
+   209→                'flex items-center justify-center h-6 w-6 rounded-full border bg-card',
+   210→                i === 0 ? 'border-primary text-primary' : 'border-muted-foreground/30 text-muted-foreground',
+   211→              )}
+   212→            >
+   213→              {EVENT_ICONS[e.eventType] ?? <Activity className="h-3 w-3" />}
+   214→            </div>
+   215→            {i < events.length - 1 && <div className="w-px flex-1 bg-border" />}
+   216→          </div>
+   217→          <div className="flex-1 pb-1 min-w-0">
+   218→            <div className="flex items-baseline justify-between gap-2">
+   219→              <span className="text-sm font-medium">
+   220→                {EVENT_LABELS[e.eventType] ?? e.eventType}
+   221→              </span>
+   222→              <RelativeTime date={e.createdAt} className="text-xs text-muted-foreground shrink-0" />
+   223→            </div>
+   224→            <p className="text-xs text-muted-foreground">by {e.actorName}</p>
+   225→            {e.notes && <p className="text-sm text-foreground/80 mt-1 leading-relaxed whitespace-pre-wrap">{e.notes}</p>}
+   226→          </div>
+   227→        </li>
+   228→      ))}
+   229→    </ol>
+   230→  );
+   231→}
+   232→
+   233→// ---- Action button helpers -------------------------------------------------
+   234→
+   235→function ActionButton({
+   236→  onClick,
+   237→  pending,
+   238→  disabled,
+   239→  variant = 'default',
+   240→  icon,
+   241→  children,
+   242→}: {
+   243→  onClick: () => void;
+   244→  pending?: boolean;
+   245→  disabled?: boolean;
+   246→  variant?: 'default' | 'outline' | 'secondary' | 'destructive';
+   247→  icon: React.ReactNode;
+   248→  children: React.ReactNode;
+   249→}) {
+   250→  return (
+   251→    <Button
+   252→      size="sm"
+   253→      variant={variant}
+   254→      onClick={onClick}
+   255→      disabled={disabled || pending}
+   256→      className="gap-1.5"
+   257→    >
+   258→      {pending ? <Clock className="h-3.5 w-3.5 animate-pulse" /> : icon}
+   259→      {children}
+   260→    </Button>
+   261→  );
+   262→}
+   263→
+   264→// ---- Triage dialog ---------------------------------------------------------
+   265→
+   266→function TriageDialog({
+   267→  open,
+   268→  onOpenChange,
+   269→  ticket,
+   270→  onConfirm,
+   271→  pending,
+   272→}: {
+   273→  open: boolean;
+   274→  onOpenChange: (v: boolean) => void;
+   275→  ticket: Ticket;
+   276→  onConfirm: (payload: {
+   277→    priority: TicketPriority;
+   278→    impact: Impact | null;
+   279→    urgency: Impact | null;
+   280→    serviceId: string | null;
+   281→    notes?: string;
+   282→  }) => void;
+   283→  pending: boolean;
+   284→}) {
+   285→  const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
+   286→  const [impact, setImpact] = useState<Impact | '__none'>(ticket.impact ?? '__none');
+   287→  const [urgency, setUrgency] = useState<Impact | '__none'>(ticket.urgency ?? '__none');
+   288→  const [serviceId, setServiceId] = useState<string>(ticket.serviceId ?? '__none');
+   289→  const [notes, setNotes] = useState('');
+   290→
+   291→  React.useEffect(() => {
+   292→    if (open) {
+   293→      setPriority(ticket.priority);
+   294→      setImpact(ticket.impact ?? '__none');
+   295→      setUrgency(ticket.urgency ?? '__none');
+   296→      setServiceId(ticket.serviceId ?? '__none');
+   297→      setNotes('');
+   298→    }
+   299→  }, [open, ticket]);
+   300→
+   301→  return (
+   302→    <Dialog open={open} onOpenChange={onOpenChange}>
+   303→      <DialogContent className="sm:max-w-lg">
+   304→        <DialogHeader>
+   305→          <DialogTitle className="flex items-center gap-2">
+   306→            <Stethoscope className="h-4 w-4" /> Triage ticket {ticket.number}
+   307→          </DialogTitle>
+   308→          <DialogDescription>
+   309→            Assign priority, impact, urgency, and the affected service. This is the SCM Worker&apos;s
+   310→            classification step before work begins.
+   311→          </DialogDescription>
+   312→        </DialogHeader>
+   313→        <div className="space-y-3 py-1">
+   314→          <div className="grid grid-cols-3 gap-3">
+   315→            <div className="space-y-1.5">
+   316→              <Label htmlFor="t-priority">Priority</Label>
+   317→              <Select value={priority} onValueChange={(v) => setPriority(v as TicketPriority)}>
+   318→                <SelectTrigger id="t-priority" className="w-full"><SelectValue /></SelectTrigger>
+   319→                <SelectContent>
+   320→                  {(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => (
+   321→                    <SelectItem key={p} value={p}>{TICKET_PRIORITY_SHORT[p]}</SelectItem>
+   322→                  ))}
+   323→                </SelectContent>
+   324→              </Select>
+   325→            </div>
+   326→            <div className="space-y-1.5">
+   327→              <Label htmlFor="t-impact">Impact</Label>
+   328→              <Select value={impact} onValueChange={(v) => setImpact(v as Impact | '__none')}>
+   329→                <SelectTrigger id="t-impact" className="w-full"><SelectValue /></SelectTrigger>
+   330→                <SelectContent>
+   331→                  <SelectItem value="__none">—</SelectItem>
+   332→                  {(['LOW', 'MEDIUM', 'HIGH'] as Impact[]).map((v) => (
+   333→                    <SelectItem key={v} value={v}>{IMPACT_LABELS[v]}</SelectItem>
+   334→                  ))}
+   335→                </SelectContent>
+   336→              </Select>
+   337→            </div>
+   338→            <div className="space-y-1.5">
+   339→              <Label htmlFor="t-urgency">Urgency</Label>
+   340→              <Select value={urgency} onValueChange={(v) => setUrgency(v as Impact | '__none')}>
+   341→                <SelectTrigger id="t-urgency" className="w-full"><SelectValue /></SelectTrigger>
+   342→                <SelectContent>
+   343→                  <SelectItem value="__none">—</SelectItem>
+   344→                  {(['LOW', 'MEDIUM', 'HIGH'] as Impact[]).map((v) => (
+   345→                    <SelectItem key={v} value={v}>{IMPACT_LABELS[v]}</SelectItem>
+   346→                  ))}
+   347→                </SelectContent>
+   348→              </Select>
+   349→            </div>
+   350→          </div>
+   351→          <div className="space-y-1.5">
+   352→            <Label htmlFor="t-service">Affected service</Label>
+   353→            <Select value={serviceId} onValueChange={setServiceId}>
+   354→              <SelectTrigger id="t-service" className="w-full"><SelectValue /></SelectTrigger>
+   355→              <SelectContent>
+   356→                <SelectItem value="__none">No specific service</SelectItem>
+   357→                <SelectItem value={ticket.serviceId ?? '__none__'} disabled>
+   358→                  {ticket.serviceName ?? 'Current service'}
+   359→                </SelectItem>
+   360→              </SelectContent>
+   361→            </Select>
+   362→            <p className="text-[11px] text-muted-foreground">
+   363→              Service catalog lookup is limited to the ticket&apos;s current service in this dialog. Use the full ticket PATCH for re-routing.
+   364→            </p>
+   365→          </div>
+   366→          <div className="space-y-1.5">
+   367→            <Label htmlFor="t-notes">Triage notes (optional)</Label>
+   368→            <Textarea
+   369→              id="t-notes"
+   370→              value={notes}
+   371→              onChange={(e) => setNotes(e.target.value)}
+   372→              rows={3}
+   373→              placeholder="Initial assessment, suspected cause, scope…"
+   374→            />
+   375→          </div>
+   376→        </div>
+   377→        <DialogFooter>
+   378→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>
+   379→          <Button
+   380→            disabled={pending}
+   381→            onClick={() =>
+   382→              onConfirm({
+   383→                priority,
+   384→                impact: impact === '__none' ? null : impact,
+   385→                urgency: urgency === '__none' ? null : urgency,
+   386→                serviceId: serviceId === '__none' ? null : serviceId,
+   387→                notes: notes.trim() || undefined,
+   388→              })
+   389→            }
+   390→          >
+   391→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <Stethoscope className="h-4 w-4 mr-1.5" />}
+   392→            {pending ? 'Triaging…' : 'Triage'}
+   393→          </Button>
+   394→        </DialogFooter>
+   395→      </DialogContent>
+   396→    </Dialog>
+   397→  );
+   398→}
+   399→
+   400→// ---- Assign dialog ---------------------------------------------------------
+   401→
+   402→function AssignDialog({
+   403→  open,
+   404→  onOpenChange,
+   405→  ticket,
+   406→  workers,
+   407→  onConfirm,
+   408→  pending,
+   409→}: {
+   410→  open: boolean;
+   411→  onOpenChange: (v: boolean) => void;
+   412→  ticket: Ticket;
+   413→  workers: Array<{ id: string; name: string }>;
+   414→  onConfirm: (workerId: string | null) => void;
+   415→  pending: boolean;
+   416→}) {
+   417→  const [workerId, setWorkerId] = useState<string>(ticket.assignedUserId ?? '__unassigned');
+   418→  React.useEffect(() => {
+   419→    if (open) setWorkerId(ticket.assignedUserId ?? '__unassigned');
+   420→  }, [open, ticket]);
+   421→
+   422→  return (
+   423→    <Dialog open={open} onOpenChange={onOpenChange}>
+   424→      <DialogContent className="sm:max-w-md">
+   425→        <DialogHeader>
+   426→          <DialogTitle className="flex items-center gap-2">
+   427→            <UserPlus className="h-4 w-4" /> Assign ticket {ticket.number}
+   428→          </DialogTitle>
+   429→          <DialogDescription>
+   430→            Choose an SCM Worker to own this ticket. The ticket status will advance to ASSIGNED if it is currently NEW or TRIAGED.
+   431→          </DialogDescription>
+   432→        </DialogHeader>
+   433→        <div className="space-y-3 py-1">
+   434→          <div className="space-y-1.5">
+   435→            <Label htmlFor="a-worker">Assignee</Label>
+   436→            <Select value={workerId} onValueChange={setWorkerId}>
+   437→              <SelectTrigger id="a-worker" className="w-full"><SelectValue /></SelectTrigger>
+   438→              <SelectContent>
+   439→                <SelectItem value="__unassigned">— Unassigned —</SelectItem>
+   440→                {workers.map((w) => (
+   441→                  <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+   442→                ))}
+   443→              </SelectContent>
+   444→            </Select>
+   445→          </div>
+   446→        </div>
+   447→        <DialogFooter>
+   448→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>
+   449→          <Button
+   450→            disabled={pending}
+   451→            onClick={() => onConfirm(workerId === '__unassigned' ? null : workerId)}
+   452→          >
+   453→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <UserPlus className="h-4 w-4 mr-1.5" />}
+   454→            {pending ? 'Assigning…' : 'Assign'}
+   455→          </Button>
+   456→        </DialogFooter>
+   457→      </DialogContent>
+   458→    </Dialog>
+   459→  );
+   460→}
+   461→
+   462→// ---- Resolve dialog --------------------------------------------------------
+   463→
+   464→function ResolveDialog({
+   465→  open,
+   466→  onOpenChange,
+   467→  ticket,
+   468→  onConfirm,
+   469→  pending,
+   470→}: {
+   471→  open: boolean;
+   472→  onOpenChange: (v: boolean) => void;
+   473→  ticket: Ticket;
+   474→  onConfirm: (payload: { resolutionCode: ResolutionCode; resolutionNotes: string }) => void;
+   475→  pending: boolean;
+   476→}) {
+   477→  const [code, setCode] = useState<ResolutionCode>('FIXED');
+   478→  const [notes, setNotes] = useState('');
+   479→  React.useEffect(() => {
+   480→    if (open) {
+   481→      setCode('FIXED');
+   482→      setNotes('');
+   483→    }
+   484→  }, [open]);
+   485→
+   486→  return (
+   487→    <Dialog open={open} onOpenChange={onOpenChange}>
+   488→      <DialogContent className="sm:max-w-lg">
+   489→        <DialogHeader>
+   490→          <DialogTitle className="flex items-center gap-2">
+   491→            <CheckCircle2 className="h-4 w-4 text-emerald-600" /> Resolve ticket {ticket.number}
+   492→          </DialogTitle>
+   493→          <DialogDescription>
+   494→            Mark this ticket as resolved. Both SLA clocks (Response + Resolution) will be marked as MET and the customer will be notified.
+   495→          </DialogDescription>
+   496→        </DialogHeader>
+   497→        <div className="space-y-3 py-1">
+   498→          <div className="space-y-1.5">
+   499→            <Label htmlFor="r-code">Resolution code (required)</Label>
+   500→            <Select value={code} onValueChange={(v) => setCode(v as ResolutionCode)}>
+   501→              <SelectTrigger id="r-code" className="w-full"><SelectValue /></SelectTrigger>
+   502→              <SelectContent>
+   503→                {(['FIXED', 'WORKAROUND', 'DUPLICATE', 'NOT_REPRODUCIBLE', 'OUT_OF_SCOPE'] as ResolutionCode[]).map((c) => (
+   504→                  <SelectItem key={c} value={c}>{RESOLUTION_CODE_LABELS[c]}</SelectItem>
+   505→                ))}
+   506→              </SelectContent>
+   507→            </Select>
+   508→          </div>
+   509→          <div className="space-y-1.5">
+   510→            <Label htmlFor="r-notes">Resolution notes (required)</Label>
+   511→            <Textarea
+   512→              id="r-notes"
+   513→              value={notes}
+   514→              onChange={(e) => setNotes(e.target.value)}
+   515→              rows={5}
+   516→              placeholder="What was the root cause? What fix was applied? Any follow-up actions for the customer?"
+   517→            />
+   518→          </div>
+   519→        </div>
+   520→        <DialogFooter>
+   521→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>
+   522→          <Button
+   523→            disabled={pending || !notes.trim()}
+   524→            onClick={() => onConfirm({ resolutionCode: code, resolutionNotes: notes.trim() })}
+   525→          >
+   526→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+   527→            {pending ? 'Resolving…' : 'Resolve'}
+   528→          </Button>
+   529→        </DialogFooter>
+   530→      </DialogContent>
+   531→    </Dialog>
+   532→  );
+   533→}
+   534→
+   535→// ---- Notes dialog (used by progress/waiting/resume/close/reopen) -----------
+   536→
+   537→function NotesDialog({
+   538→  open,
+   539→  onOpenChange,
+   540→  title,
+   541→  description,
+   542→  confirmLabel,
+   543→  confirmIcon,
+   544→  onConfirm,
+   545→  pending,
+   546→  destructive,
+   547→}: {
+   548→  open: boolean;
+   549→  onOpenChange: (v: boolean) => void;
+   550→  title: string;
+   551→  description: string;
+   552→  confirmLabel: string;
+   553→  confirmIcon: React.ReactNode;
+   554→  onConfirm: (notes: string) => void;
+   555→  pending: boolean;
+   556→  destructive?: boolean;
+   557→}) {
+   558→  const [notes, setNotes] = useState('');
+   559→  React.useEffect(() => {
+   560→    if (!open) setNotes('');
+   561→  }, [open]);
+   562→
+   563→  return (
+   564→    <Dialog open={open} onOpenChange={onOpenChange}>
+   565→      <DialogContent className="sm:max-w-md">
+   566→        <DialogHeader>
+   567→          <DialogTitle>{title}</DialogTitle>
+   568→          <DialogDescription>{description}</DialogDescription>
+   569→        </DialogHeader>
+   570→        <div className="space-y-3 py-1">
+   571→          <div className="space-y-1.5">
+   572→            <Label htmlFor="n-notes">Notes (optional)</Label>
+   573→            <Textarea
+   574→              id="n-notes"
+   575→              value={notes}
+   576→              onChange={(e) => setNotes(e.target.value)}
+   577→              rows={4}
+   578→              placeholder="Add a work note for the activity log…"
+   579→            />
+   580→          </div>
+   581→        </div>
+   582→        <DialogFooter>
+   583→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>
+   584→          <Button
+   585→            disabled={pending}
+   586→            variant={destructive ? 'destructive' : 'default'}
+   587→            onClick={() => onConfirm(notes.trim())}
+   588→          >
+   589→            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : confirmIcon}
+   590→            {pending ? 'Working…' : confirmLabel}
+   591→          </Button>
+   592→        </DialogFooter>
+   593→      </DialogContent>
+   594→    </Dialog>
+   595→  );
+   596→}
+   597→
+   598→// ---- Main component --------------------------------------------------------
+   599→
+   600→interface TicketDetailProps {
+   601→  id: string;
+   602→  role: Role;
+   603→}
+   604→
+   605→export default function TicketDetail({ id, role }: TicketDetailProps) {
+   606→  const { navigate, session } = useApp();
+   607→  const qc = useQueryClient();
+   608→
+   609→  // ---- Data ---------------------------------------------------------------
+   610→  const ticketQ = useQuery<Ticket>({
+   611→    queryKey: ['ticket', id],
+   612→    queryFn: () => apiGet<Ticket>(`/api/tickets/${id}`),
+   613→    enabled: !!id,
+   614→  });
+   615→
+   616→  // Workers for the assign dialog (roster from /api/stats workloadByWorker).
+   617→  const workersQ = useQuery<Array<{ id: string; name: string }>>({
+   618→    queryKey: ['stats', 'scm-workers', 'ticket-detail'],
+   619→    queryFn: async () => {
+   620→      const stats = await apiGet<{
+   621→        workloadByWorker?: Array<{ workerId: string; workerName: string }>;
+   622→      }>('/api/stats');
+   623→      return (stats.workloadByWorker ?? []).map((w) => ({ id: w.workerId, name: w.workerName }));
+   624→    },
+   625→    staleTime: 60_000,
+   626→  });
+   627→
+   628→  const ticket = ticketQ.data;
+   629→  const events = ticket?.events ?? [];
+   630→  const clocks = ticket?.slaClocks ?? [];
+   631→  const slaHealth = deriveSlaHealth(clocks);
+   632→
+   633→  // ---- Action state + dialogs ---------------------------------------------
+   634→  const [triageOpen, setTriageOpen] = useState(false);
+   635→  const [assignOpen, setAssignOpen] = useState(false);
+   636→  const [resolveOpen, setResolveOpen] = useState(false);
+   637→  const [progressOpen, setProgressOpen] = useState(false);
+   638→  const [waitingOpen, setWaitingOpen] = useState(false);
+   639→  const [resumeOpen, setResumeOpen] = useState(false);
+   640→  const [closeOpen, setCloseOpen] = useState(false);
+   641→  const [reopenOpen, setReopenOpen] = useState(false);
+   642→
+   643→  // ---- Mutation helpers ---------------------------------------------------
+   644→  const afterMutate = (msg: string) => {
+   645→    toast.success(msg);
+   646→    qc.invalidateQueries({ queryKey: ['ticket', id] });
+   647→    qc.invalidateQueries({ queryKey: ['tickets'] });
+   648→  };
+   649→
+   650→  const triageMut = useMutation({
+   651→    mutationFn: (payload: {
+   652→      priority: TicketPriority;
+   653→      impact: Impact | null;
+   654→      urgency: Impact | null;
+   655→      serviceId: string | null;
+   656→      notes?: string;
+   657→    }) => apiPost<Ticket>(`/api/tickets/${id}/triage`, payload),
+   658→    onSuccess: (_t, vars) => {
+   659→      afterMutate('Ticket triaged');
+   660→      setTriageOpen(false);
+   661→      // If priority/serviceId changed, the SLA clocks may need re-evaluation —
+   662→      // the API doesn't currently re-create clocks on triage (only on create).
+   663→      // That's acceptable for v1.
+   664→      void vars;
+   665→    },
+   666→    onError: (e: Error) => toast.error(e.message || 'Triage failed'),
+   667→  });
+   668→
+   669→  const assignMut = useMutation({
+   670→    mutationFn: (workerId: string | null) =>
+   671→      apiPost<Ticket>(`/api/tickets/${id}/assign`, { assignedUserId: workerId }),
+   672→    onSuccess: (_t, vars) => {
+   673→      afterMutate(vars ? 'Ticket assigned' : 'Ticket unassigned');
+   674→      setAssignOpen(false);
+   675→    },
+   676→    onError: (e: Error) => toast.error(e.message || 'Assign failed'),
+   677→  });
+   678→
+   679→  const progressMut = useMutation({
+   680→    mutationFn: (notes?: string) => apiPost<Ticket>(`/api/tickets/${id}/progress`, { notes }),
+   681→    onSuccess: () => {
+   682→      afterMutate('Work started — SLA clocks resumed');
+   683→      setProgressOpen(false);
+   684→    },
+   685→    onError: (e: Error) => toast.error(e.message || 'Could not start work'),
+   686→  });
+   687→
+   688→  const waitingMut = useMutation({
+   689→    mutationFn: (notes?: string) => apiPost<Ticket>(`/api/tickets/${id}/waiting`, { notes }),
+   690→    onSuccess: () => {
+   691→      afterMutate('Ticket set to waiting — SLA clocks paused');
+   692→      setWaitingOpen(false);
+   693→    },
+   694→    onError: (e: Error) => toast.error(e.message || 'Could not set to waiting'),
+   695→  });
+   696→
+   697→  const resumeMut = useMutation({
+   698→    mutationFn: (notes?: string) => apiPost<Ticket>(`/api/tickets/${id}/resume`, { notes }),
+   699→    onSuccess: () => {
+   700→      afterMutate('Work resumed — SLA clocks running');
+   701→      setResumeOpen(false);
+   702→    },
+   703→    onError: (e: Error) => toast.error(e.message || 'Could not resume'),
+   704→  });
+   705→
+   706→  const resolveMut = useMutation({
+   707→    mutationFn: (payload: { resolutionCode: ResolutionCode; resolutionNotes: string }) =>
+   708→      apiPost<Ticket>(`/api/tickets/${id}/resolve`, payload),
+   709→    onSuccess: () => {
+   710→      afterMutate('Ticket resolved — SLA clocks marked MET');
+   711→      setResolveOpen(false);
+   712→    },
+   713→    onError: (e: Error) => toast.error(e.message || 'Could not resolve'),
+   714→  });
+   715→
+   716→  const closeMut = useMutation({
+   717→    mutationFn: (notes?: string) => apiPost<Ticket>(`/api/tickets/${id}/close`, { notes }),
+   718→    onSuccess: () => {
+   719→      afterMutate('Ticket closed');
+   720→      setCloseOpen(false);
+   721→    },
+   722→    onError: (e: Error) => toast.error(e.message || 'Could not close ticket'),
+   723→  });
+   724→
+   725→  const reopenMut = useMutation({
+   726→    mutationFn: (notes?: string) => apiPost<Ticket>(`/api/tickets/${id}/reopen`, { notes }),
+   727→    onSuccess: () => {
+   728→      afterMutate('Ticket reopened — SLA clocks restarted');
+   729→      setReopenOpen(false);
+   730→    },
+   731→    onError: (e: Error) => toast.error(e.message || 'Could not reopen'),
+   732→  });
+   733→
+   734→  // ---- Role gating --------------------------------------------------------
+   735→  const isAgent = role === 'SCM_WORKER' || role === 'CM_LEADER';
+   736→  const isCustomer = role === 'SERVICE_CUSTOMER';
+   737→  const isOwner = role === 'SERVICE_OWNER';
+   738→  const canMutate = isAgent; // owners + customers have narrower paths
+   739→
+   740→  // ---- Loading / error states --------------------------------------------
+   741→  if (ticketQ.isLoading) {
+   742→    return (
+   743→      <div className="space-y-5">
+   744→        <Button variant="ghost" size="sm" onClick={() => navigate('tickets')} className="gap-1.5">
+   745→          <ArrowLeft className="h-3.5 w-3.5" /> Back to tickets
+   746→        </Button>
+   747→        <LoadingState rows={6} />
+   748→      </div>
+   749→    );
+   750→  }
+   751→  if (ticketQ.isError || !ticket) {
+   752→    return (
+   753→      <div className="space-y-5">
+   754→        <Button variant="ghost" size="sm" onClick={() => navigate('tickets')} className="gap-1.5">
+   755→          <ArrowLeft className="h-3.5 w-3.5" /> Back to tickets
+   756→        </Button>
+   757→        <EmptyState
+   758→          icon={<TicketIcon className="h-10 w-10 text-muted-foreground/50" />}
+   759→          title="Ticket not found"
+   760→          description="This ticket may have been deleted, or you may not have access to it."
+   761→          action={<Button onClick={() => navigate('tickets')}>Back to tickets</Button>}
+   762→        />
+   763→      </div>
+   764→    );
+   765→  }
+   766→
+   767→  // ---- SLA health pill (for header) --------------------------------------
+   768→  const slaPill = (() => {
+   769→    const meta: Record<TicketSlaHealth, { cls: string; icon: React.ReactNode; label: string }> = {
+   770→      on_track: { cls: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300', icon: <CheckCircle2 className="h-3 w-3" />, label: 'SLA on track' },
+   771→      at_risk: { cls: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300', icon: <AlertTriangle className="h-3 w-3" />, label: 'SLA at risk' },
+   772→      breached: { cls: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300', icon: <ShieldAlert className="h-3 w-3" />, label: 'SLA breached' },
+   773→      met: { cls: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300', icon: <CheckCircle2 className="h-3 w-3" />, label: 'SLA met' },
+   774→      paused: { cls: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300', icon: <Pause className="h-3 w-3" />, label: 'SLA paused' },
+   775→      none: { cls: 'bg-muted text-muted-foreground border-border', icon: <Clock className="h-3 w-3" />, label: 'No SLA' },
+   776→    };
+   777→    const m = meta[slaHealth];
+   778→    return (
+   779→      <Badge variant="outline" className={cn('text-xs gap-1', m.cls)}>
+   780→        {m.icon} {m.label}
+   781→      </Badge>
+   782→    );
+   783→  })();
+   784→
+   785→  // ---- Action button set (by status + role) ------------------------------
+   786→  const status = ticket.status;
+   787→  const actions: React.ReactNode[] = [];
+   788→
+   789→  if (isAgent) {
+   790→    if (status === 'NEW' || status === 'TRIAGED') {
+   791→      actions.push(
+   792→        <ActionButton
+   793→          key="triage"
+   794→          icon={<Stethoscope className="h-3.5 w-3.5" />}
+   795→          onClick={() => setTriageOpen(true)}
+   796→        >
+   797→          Triage
+   798→        </ActionButton>,
+   799→      );
+   800→    }
+   801→    if (status !== 'CLOSED' && status !== 'CANCELED' && status !== 'RESOLVED') {
+   802→      actions.push(
+   803→        <ActionButton
+   804→          key="assign"
+   805→          icon={<UserPlus className="h-3.5 w-3.5" />}
+   806→          onClick={() => setAssignOpen(true)}
+   807→          variant="outline"
+   808→        >
+   809→          {ticket.assignedUserId ? 'Reassign' : 'Assign'}
+   810→        </ActionButton>,
+   811→      );
+   812→    }
+   813→    if (status === 'NEW' || status === 'TRIAGED' || status === 'ASSIGNED') {
+   814→      actions.push(
+   815→        <ActionButton
+   816→          key="progress"
+   817→          icon={<Play className="h-3.5 w-3.5" />}
+   818→          onClick={() => setProgressOpen(true)}
+   819→        >
+   820→          Start work
+   821→        </ActionButton>,
+   822→      );
+   823→    }
+   824→    if (status === 'IN_PROGRESS' || status === 'ASSIGNED' || status === 'TRIAGED') {
+   825→      actions.push(
+   826→        <ActionButton
+   827→          key="waiting"
+   828→          icon={<Pause className="h-3.5 w-3.5" />}
+   829→          onClick={() => setWaitingOpen(true)}
+   830→          variant="outline"
+   831→        >
+   832→          Waiting on customer
+   833→        </ActionButton>,
+   834→      );
+   835→    }
+   836→    if (status === 'WAITING_CUSTOMER') {
+   837→      actions.push(
+   838→        <ActionButton
+   839→          key="resume"
+   840→          icon={<Play className="h-3.5 w-3.5" />}
+   841→          onClick={() => setResumeOpen(true)}
+   842→        >
+   843→          Resume work
+   844→        </ActionButton>,
+   845→      );
+   846→    }
+   847→    if (status !== 'RESOLVED' && status !== 'CLOSED' && status !== 'CANCELED') {
+   848→      actions.push(
+   849→        <ActionButton
+   850→          key="resolve"
+   851→          icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+   852→          onClick={() => setResolveOpen(true)}
+   853→          variant="outline"
+   854→        >
+   855→          Resolve
+   856→        </ActionButton>,
+   857→      );
+   858→    }
+   859→  }
+   860→
+   861→  // Customer + agent can close
+   862→  if ((isAgent || isCustomer) && status === 'RESOLVED') {
+   863→    actions.push(
+   864→      <ActionButton
+   865→        key="close"
+   866→        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+   867→        onClick={() => setCloseOpen(true)}
+   868→      >
+   869→        Close ticket
+   870→      </ActionButton>,
+   871→    );
+   872→  }
+   873→  // Customer + agent can reopen (resolved OR closed)
+   874→  if ((isAgent || isCustomer) && (status === 'RESOLVED' || status === 'CLOSED')) {
+   875→    actions.push(
+   876→      <ActionButton
+   877→        key="reopen"
+   878→        icon={<RefreshCw className="h-3.5 w-3.5" />}
+   879→        onClick={() => setReopenOpen(true)}
+   880→        variant="outline"
+   881→      >
+   882→        Reopen
+   883→      </ActionButton>,
+   884→    );
+   885→  }
+   886→
+   887→  // Service Owner: read-only — no action buttons.
+   888→  if (isOwner) {
+   889→    actions.push(
+   890→      <Badge key="ro" variant="outline" className="text-xs text-muted-foreground">
+   891→        Read-only
+   892→      </Badge>,
+   893→    );
+   894→  }
+   895→
+   896→  // ---- Render -------------------------------------------------------------
+   897→  return (
+   898→    <div className="space-y-5">
+   899→      {/* Back link */}
+   900→      <Button variant="ghost" size="sm" onClick={() => navigate('tickets')} className="gap-1.5 -ml-1">
+   901→        <ArrowLeft className="h-3.5 w-3.5" /> Back to tickets
+   902→      </Button>
+   903→
+   904→      <PageHeader
+   905→        title={ticket.title}
+   906→        description={`Ticket ${ticket.number} · Raised as ${TICKET_TYPE_LABELS[ticket.type]} by ${ticket.requesterName ?? '—'}`}
+   907→        icon={<TicketIcon className="h-5 w-5" />}
+   908→        actions={<div className="flex items-center gap-1.5 flex-wrap">{actions}</div>}
+   909→      />
+   910→
+   911→      {/* Status / priority / SLA summary row */}
+   912→      <div className="flex flex-wrap items-center gap-2">
+   913→        <TicketStatusBadge status={ticket.status} />
+   914→        <TicketPriorityBadge priority={ticket.priority} />
+   915→        <TicketTypeBadge type={ticket.type} />
+   916→        {slaPill}
+   917→        {ticket.impact && (
+   918→          <Badge variant="outline" className="text-xs">
+   919→            Impact: {IMPACT_LABELS[ticket.impact]}
+   920→          </Badge>
+   921→        )}
+   922→        {ticket.urgency && (
+   923→          <Badge variant="outline" className="text-xs">
+   924→            Urgency: {IMPACT_LABELS[ticket.urgency]}
+   925→          </Badge>
+   926→        )}
+   927→      </div>
+   928→
+   929→      {/* Main layout: left = description + activity, right = SLA + meta */}
+   930→      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+   931→        {/* Left column */}
+   932→        <div className="lg:col-span-2 space-y-5">
+   933→          <SectionCard title="Description" description="As submitted by the requester.">
+   934→            <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+   935→              {ticket.description}
+   936→            </div>
+   937→          </SectionCard>
+   938→
+   939→          {ticket.resolutionNotes && (
+   940→            <SectionCard
+   941→              title="Resolution"
+   942→              description={`Resolved as ${ticket.resolutionCode ? RESOLUTION_CODE_LABELS[ticket.resolutionCode] : '—'} at ${ticket.resolvedAt ? new Date(ticket.resolvedAt).toLocaleString() : '—'}`}
+   943→            >
+   944→              <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+   945→                {ticket.resolutionNotes}
+   946→              </div>
+   947→            </SectionCard>
+   948→          )}
+   949→
+   950→          <SectionCard
+   951→            title="Activity Log"
+   952→            description="Lifecycle events and work notes — the ticket audit trail."
+   953→          >
+   954→            <ActivityTimeline events={events} />
+   955→          </SectionCard>
+   956→
+   957→          {/* Conversation thread — customer-visible + internal comments. */}
+   958→          <SectionCard
+   959→            title="Conversation"
+   960→            description="Discuss this case with the customer and team. Comments support CUSTOMER_VISIBLE and INTERNAL visibility (internal is hidden from customers)."
+   961→          >
+   962→            <CommentThread entityType="TICKET" entityId={ticket.id} />
+   963→          </SectionCard>
+   964→
+   965→          {/* Attachments — drop-in widget. */}
+   966→          <SectionCard
+   967→            title="Attachments"
+   968→            description="Files uploaded on this ticket. Max 10 MB each; supported: images, PDF, text, Office docs."
+   969→          >
+   970→            <AttachmentList entityType="TICKET" entityId={ticket.id} />
+   971→          </SectionCard>
+   972→
+   973→          {/* CSAT — customers can submit; agents/owners see read-only summaries. */}
+   974→          <SectionCard
+   975→            title="Customer Satisfaction"
+   976→            description={
+   977→              isCustomer
+   978→                ? 'Rate your experience with how this case was handled. Your feedback goes directly to leadership.'
+   979→                : 'Customer satisfaction score for this ticket. Low scores (1–2★) trigger a follow-up workflow.'
+   980→            }
+   981→          >
+   982→            <CsatWidget entityType="TICKET" entityId={ticket.id} />
+   983→          </SectionCard>
+   984→        </div>
+   985→
+   986→        {/* Right column */}
+   987→        <div className="space-y-5">
+   988→          {/* SLA Clocks — shared, self-contained component */}
+   989→          <SlaClocksPanel ticketId={id} />
+   990→
+   991→          {/* Related entities (tickets, demands, changes, problems) */}
+   992→          <EntityLinks entityType="TICKET" entityId={id} />
+   993→
+   994→          <SectionCard title="Ticket Details">
+   995→            <dl className="grid grid-cols-2 gap-3 text-sm">
+   996→              <KeyValue label="Customer" value={ticket.serviceCustomerName ?? '—'} />
+   997→              <KeyValue label="Service" value={ticket.serviceName ?? '—'} />
+   998→              <KeyValue
+   999→                label="Requester"
+  1000→                value={
+  1001→                  <span className="flex items-center gap-1.5">
+  1002→                    {ticket.requesterName && <UserAvatar name={ticket.requesterName} size="sm" />}
+  1003→                    {ticket.requesterName ?? '—'}
+  1004→                  </span>
+  1005→                }
+  1006→              />
+  1007→              <KeyValue
+  1008→                label="Assignee"
+  1009→                value={
+  1010→                  ticket.assignedUserName ? (
+  1011→                    <span className="flex items-center gap-1.5">
+  1012→                      <UserAvatar name={ticket.assignedUserName} size="sm" />
+  1013→                      {ticket.assignedUserName}
+  1014→                    </span>
+  1015→                  ) : (
+  1016→                    <span className="text-muted-foreground italic">Unassigned</span>
+  1017→                  )
+  1018→                }
+  1019→              />
+  1020→              <KeyValue label="Created" value={<RelativeTime date={ticket.createdAt} />} />
+  1021→              <KeyValue label="Last update" value={<RelativeTime date={ticket.updatedAt} />} />
+  1022→              {ticket.resolvedAt && (
+  1023→                <KeyValue label="Resolved" value={<RelativeTime date={ticket.resolvedAt} />} />
+  1024→              )}
+  1025→              {ticket.closedAt && (
+  1026→                <KeyValue label="Closed" value={<RelativeTime date={ticket.closedAt} />} />
+  1027→              )}
+  1028→            </dl>
+  1029→          </SectionCard>
+  1030→
+  1031→          {canMutate && (
+  1032→            <SectionCard
+  1033→              title="Governance Actions"
+  1034→              description="Status-aware actions available to your role."
+  1035→            >
+  1036→              <div className="flex flex-col gap-2">
+  1037→                {/* Compact action list (mirrors the header buttons) */}
+  1038→                {actions.length === 0 && (
+  1039→                  <p className="text-xs text-muted-foreground">No actions available in this state.</p>
+  1040→                )}
+  1041→                {actions.map((a, i) => (
+  1042→                  <React.Fragment key={i}>{a}</React.Fragment>
+  1043→                ))}
+  1044→              </div>
+  1045→            </SectionCard>
+  1046→          )}
+  1047→        </div>
+  1048→      </div>
+  1049→
+  1050→      {/* Dialogs */}
+  1051→      <TriageDialog
+  1052→        open={triageOpen}
+  1053→        onOpenChange={setTriageOpen}
+  1054→        ticket={ticket}
+  1055→        onConfirm={(payload) => triageMut.mutate(payload)}
+  1056→        pending={triageMut.isPending}
+  1057→      />
+  1058→      <AssignDialog
+  1059→        open={assignOpen}
+  1060→        onOpenChange={setAssignOpen}
+  1061→        ticket={ticket}
+  1062→        workers={workersQ.data ?? []}
+  1063→        onConfirm={(workerId) => assignMut.mutate(workerId)}
+  1064→        pending={assignMut.isPending}
+  1065→      />
+  1066→      <ResolveDialog
+  1067→        open={resolveOpen}
+  1068→        onOpenChange={setResolveOpen}
+  1069→        ticket={ticket}
+  1070→        onConfirm={(payload) => resolveMut.mutate(payload)}
+  1071→        pending={resolveMut.isPending}
+  1072→      />
+  1073→      <NotesDialog
+  1074→        open={progressOpen}
+  1075→        onOpenChange={setProgressOpen}
+  1076→        title={`Start work on ${ticket.number}`}
+  1077→        description="Mark this ticket as IN_PROGRESS. Any paused SLA clocks will resume."
+  1078→        confirmLabel="Start work"
+  1079→        confirmIcon={<Play className="h-4 w-4 mr-1.5" />}
+  1080→        onConfirm={(notes) => progressMut.mutate(notes || undefined)}
+  1081→        pending={progressMut.isPending}
+  1082→      />
+  1083→      <NotesDialog
+  1084→        open={waitingOpen}
+  1085→        onOpenChange={setWaitingOpen}
+  1086→        title={`Set ${ticket.number} to waiting on customer`}
+  1087→        description="Pause SLA clocks. The customer will be notified that their input is needed."
+  1088→        confirmLabel="Set to waiting"
+  1089→        confirmIcon={<Pause className="h-4 w-4 mr-1.5" />}
+  1090→        onConfirm={(notes) => waitingMut.mutate(notes || undefined)}
+  1091→        pending={waitingMut.isPending}
+  1092→      />
+  1093→      <NotesDialog
+  1094→        open={resumeOpen}
+  1095→        onOpenChange={setResumeOpen}
+  1096→        title={`Resume work on ${ticket.number}`}
+  1097→        description="Move the ticket back to IN_PROGRESS. Paused SLA clocks will resume (due times extended by the paused duration)."
+  1098→        confirmLabel="Resume work"
+  1099→        confirmIcon={<Play className="h-4 w-4 mr-1.5" />}
+  1100→        onConfirm={(notes) => resumeMut.mutate(notes || undefined)}
+  1101→        pending={resumeMut.isPending}
+  1102→      />
+  1103→      <NotesDialog
+  1104→        open={closeOpen}
+  1105→        onOpenChange={setCloseOpen}
+  1106→        title={`Close ticket ${ticket.number}`}
+  1107→        description="Close this ticket — the lifecycle is complete. The ticket becomes read-only."
+  1108→        confirmLabel="Close ticket"
+  1109→        confirmIcon={<CheckCircle2 className="h-4 w-4 mr-1.5" />}
+  1110→        onConfirm={(notes) => closeMut.mutate(notes || undefined)}
+  1111→        pending={closeMut.isPending}
+  1112→      />
+  1113→      <NotesDialog
+  1114→        open={reopenOpen}
+  1115→        onOpenChange={setReopenOpen}
+  1116→        title={`Reopen ticket ${ticket.number}`}
+  1117→        description="Reopen this ticket — the prior resolution is cleared, status moves back to IN_PROGRESS, and SLA clocks are restarted from now."
+  1118→        confirmLabel="Reopen"
+  1119→        confirmIcon={<RefreshCw className="h-4 w-4 mr-1.5" />}
+  1120→        onConfirm={(notes) => reopenMut.mutate(notes || undefined)}
+  1121→        pending={reopenMut.isPending}
+  1122→      />
+  1123→    </div>
+  1124→  );
+  1125→}
+  1126→

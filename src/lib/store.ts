@@ -35,7 +35,16 @@ export type ViewKey =
   | 'csat-followup'
   // Enterprise Workflow Review — CM Leader oversight views
   | 'audit'
-  | 'delivery-failures';
+  | 'delivery-failures'
+  // Service Owner Enterprise
+  | 'service-health'
+  | 'known-errors'
+  | 'customer-impact'
+  | 'risk-register'
+  | 'lifecycle'
+  | 'owner-audit'
+  | 'service-detail'
+  | 'article-detail';
 
 interface AppState {
   session: SessionUser | null;
@@ -129,15 +138,20 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { key: 'knowledge', label: 'Knowledge Base', icon: 'BookOpen' },
   ],
   SERVICE_OWNER: [
-    { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
-    { key: 'portfolio', label: 'Service Portfolio', icon: 'Briefcase' },
-    { key: 'tickets', label: 'Service Tickets', icon: 'Ticket' },
-    { key: 'service-incidents', label: 'Service Incidents', icon: 'Siren' },
+    { key: 'dashboard', label: 'Command Center', icon: 'LayoutDashboard' },
+    { key: 'service-health', label: 'Service Health', icon: 'Activity' },
+    { key: 'service-incidents', label: 'Incidents', icon: 'Flame' },
     { key: 'sla', label: 'SLA Performance', icon: 'Gauge' },
-    { key: 'governance', label: 'Governance Approvals', icon: 'ShieldCheck' },
-    { key: 'problems', label: 'Problem Records', icon: 'Bug' },
+    { key: 'governance', label: 'Governance', icon: 'ShieldCheck' },
+    { key: 'problems', label: 'Problems', icon: 'Bug' },
+    { key: 'known-errors', label: 'Known Errors', icon: 'BookOpen' },
     { key: 'changes', label: 'Changes', icon: 'GitBranch' },
+    { key: 'customer-impact', label: 'Customer Impact', icon: 'Users' },
+    { key: 'risk-register', label: 'Risk Register', icon: 'TriangleAlert' },
+    { key: 'lifecycle', label: 'Lifecycle', icon: 'RefreshCw' },
+    { key: 'portfolio', label: 'Service Portfolio', icon: 'Briefcase' },
     { key: 'reports', label: 'Reports', icon: 'BarChart3' },
-    { key: 'knowledge', label: 'Knowledge Base', icon: 'BookOpen' },
+    { key: 'owner-audit', label: 'Audit Log', icon: 'ScrollText' },
+    { key: 'knowledge', label: 'Knowledge', icon: 'BookOpen' },
   ],
 };

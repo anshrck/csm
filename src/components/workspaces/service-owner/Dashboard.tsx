@@ -14,12 +14,16 @@ import {
   SlaClassBadge,
   SlaHealthBadge,
   DemandStatusBadge,
+  ChangeStatusBadge,
   RelativeTime,
   FormattedDate,
   Button,
   Badge,
+  DataTable,
+  type Column,
 } from '@/components/shared';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -54,7 +58,14 @@ import {
   Gavel as GavelIcon,
   GitBranch,
   Star,
-  TrendingUp,
+  AlertOctagon,
+  ListTodo,
+  Flame,
+  CalendarClock,
+  Stethoscope,
+  Megaphone,
+  HeartPulse,
+  History,
 } from 'lucide-react';
 import {
   useOwnerServices,
@@ -65,6 +76,11 @@ import {
   deriveHealth,
 } from './_hooks';
 import type { Ticket } from '@/lib/tickets';
+import type {
+  ServiceHealthSummary,
+  CustomerImpactSummary,
+  OwnerRiskItem,
+} from '@/lib/types';
 
 /* --------------------- Stats endpoint response types --------------------- */
 
@@ -107,26 +123,6 @@ interface CustomerHealthResponse {
   byCustomer: CustomerHealthEntry[];
 }
 
-/* --------------------- Inline helpers --------------------- */
-
-function PriorityDot({ priority }: { priority: string }) {
-  const cls =
-    priority === 'P1'
-      ? 'bg-rose-500'
-      : priority === 'P2'
-        ? 'bg-amber-500'
-        : priority === 'P3'
-          ? 'bg-teal-500'
-          : 'bg-sky-500';
-  return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full shrink-0 ${cls}`}
-      title={priority}
-      aria-label={`Priority ${priority}`}
-    />
-  );
-}
-
 /* --------------------- Governance decision type --------------------- */
 
 interface GovernanceDecision {
@@ -146,6 +142,18 @@ interface GovernanceDecision {
   createdAt: string;
 }
 
+const DECISION_TYPE_LABELS: Record<string, string> = {
+  COMMITMENT_APPROVAL: 'Commitment Approval',
+  COMMITMENT_ESCALATION: 'Commitment Escalation',
+  BREACH_RESPONSE: 'Breach Response',
+  LIFECYCLE_DIRECTION: 'Lifecycle Direction',
+  CATALOG_ACCURACY: 'Catalog Accuracy',
+  KNOWLEDGE_APPROVAL: 'Knowledge Approval',
+  CUSTOMER_RISK_ESCALATION: 'Customer Risk Escalation',
+  REMEDIATION_AUTHORIZATION: 'Remediation Authorization',
+  POST_IMPLEMENTATION_REVIEW: 'Post-Implementation Review',
+};
+
 type BreachDecision = 'REMEDIATION_AUTHORIZED' | 'RESOURCES_AUTHORIZED' | 'EMERGENCY_CHANGE_DIRECTED';
 
 const BREACH_DECISION_LABELS: Record<BreachDecision, string> = {
@@ -153,6 +161,80 @@ const BREACH_DECISION_LABELS: Record<BreachDecision, string> = {
   RESOURCES_AUTHORIZED: 'Resources Authorized',
   EMERGENCY_CHANGE_DIRECTED: 'Emergency Change Directed',
 };
+
+/* --------------------- Required action item types --------------------- */
+
+type RequiredActionType =
+  | 'BREACH_RESPONSE'
+  | 'COMMITMENT_APPROVAL'
+  | 'KNOWN_ERROR_REVIEW'
+  | 'CATALOG_REVIEW'
+  | 'EMERGENCY_PIR'
+  | 'LOW_CSAT'
+  | 'PROBLEM_DECISION';
+
+const ACTION_LABELS: Record<RequiredActionType, { label: string; tone: string; icon: React.ReactNode }> = {
+  BREACH_RESPONSE: {
+    label: 'Breach Response Missing',
+    tone: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+    icon: <ShieldAlert className="h-3.5 w-3.5" />,
+  },
+  COMMITMENT_APPROVAL: {
+    label: 'Commitment Approval',
+    tone: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
+    icon: <Gavel className="h-3.5 w-3.5" />,
+  },
+  KNOWN_ERROR_REVIEW: {
+    label: 'Known Error Review',
+    tone: 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-950 dark:text-orange-300',
+    icon: <BookOpen className="h-3.5 w-3.5" />,
+  },
+  CATALOG_REVIEW: {
+    label: 'Catalog Review Overdue',
+    tone: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300',
+    icon: <ClipboardList className="h-3.5 w-3.5" />,
+  },
+  EMERGENCY_PIR: {
+    label: 'Emergency PIR Due',
+    tone: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300',
+    icon: <Flame className="h-3.5 w-3.5" />,
+  },
+  LOW_CSAT: {
+    label: 'Low CSAT Review',
+    tone: 'bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300',
+    icon: <Star className="h-3.5 w-3.5" />,
+  },
+  PROBLEM_DECISION: {
+    label: 'Problem Decision',
+    tone: 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950 dark:text-teal-300',
+    icon: <Stethoscope className="h-3.5 w-3.5" />,
+  },
+};
+
+function riskTone(risk: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string) {
+  switch (risk) {
+    case 'CRITICAL':
+      return 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300';
+    case 'HIGH':
+      return 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300';
+    case 'MEDIUM':
+      return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300';
+    default:
+      return 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-300';
+  }
+}
+
+interface RequiredAction {
+  id: string;
+  type: RequiredActionType;
+  title: string;
+  service: string;
+  customerImpact?: string;
+  age: string;
+  risk: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  actionLabel: string;
+  onAction: () => void;
+}
 
 /* --------------------- Breach Response Dialog --------------------- */
 
@@ -194,7 +276,9 @@ function BreachResponseDialog({
             <ShieldAlert className="h-5 w-5 text-rose-600" /> Record Breach Response
           </DialogTitle>
           <DialogDescription>
-            Record your governance response to this SLA breach on <span className="font-medium">{serviceName}</span>. The decision is persisted to the audit trail and CM Leaders are notified.
+            Record your governance response to this SLA breach on{' '}
+            <span className="font-medium">{serviceName}</span>. The decision is persisted to the audit
+            trail and CM Leaders are notified.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -262,7 +346,7 @@ function BreachResponseDialog({
   );
 }
 
-/* --------------------- Main --------------------- */
+/* --------------------- Main Command Center --------------------- */
 
 export default function Dashboard() {
   const { navigate } = useApp();
@@ -273,7 +357,7 @@ export default function Dashboard() {
   const demandsQ = useAcceptedDemands();
   const changesQ = useAllChanges();
 
-  // Operational stats from the new split endpoints.
+  // Operational stats from the split endpoints (scoped to owned services).
   const ticketStatsQ = useQuery<TicketsStatsResponse>({
     queryKey: ['stats', 'tickets'],
     queryFn: () => apiGet<TicketsStatsResponse>('/api/stats/tickets'),
@@ -290,9 +374,24 @@ export default function Dashboard() {
     staleTime: 60_000,
   });
 
-  // Open tickets on services owned by this Service Owner (server enforces
-  // the owned-service scope based on the caller's id). Full ticket shape so
-  // we can group by priority for the "Incidents on My Services" panel.
+  // Service-health summary (per-service KPIs incl. CSAT, risk score, lastReviewed).
+  const serviceHealthQ = useQuery<ServiceHealthSummary[]>({
+    queryKey: ['service-owner', 'service-health'],
+    queryFn: () => apiGet<ServiceHealthSummary[]>('/api/service-owner/service-health'),
+    staleTime: 30_000,
+  });
+  const customerImpactQ = useQuery<CustomerImpactSummary[]>({
+    queryKey: ['service-owner', 'customer-impact'],
+    queryFn: () => apiGet<CustomerImpactSummary[]>('/api/service-owner/customer-impact'),
+    staleTime: 30_000,
+  });
+  const riskQ = useQuery<OwnerRiskItem[]>({
+    queryKey: ['service-owner', 'risk-register'],
+    queryFn: () => apiGet<OwnerRiskItem[]>('/api/service-owner/risk-register'),
+    staleTime: 30_000,
+  });
+
+  // Open tickets on owned services for P1/P2 incident counts.
   const openTicketsQ = useQuery<Ticket[]>({
     queryKey: ['tickets', 'owner-dashboard', 'open'],
     queryFn: () =>
@@ -301,7 +400,13 @@ export default function Dashboard() {
       ),
     staleTime: 30_000,
   });
-  const openTicketCount = openTicketsQ.data?.length ?? 0;
+
+  // Low-CSAT surveys on owned-service tickets.
+  const lowCsatQ = useQuery<Array<{ id: string; rating: number; comment: string | null; entityId: string; entityType: string; customerName?: string; createdAt: string }>>({
+    queryKey: ['surveys', 'low-csat', 'owner'],
+    queryFn: () => apiGet('/api/surveys'),
+    staleTime: 60_000,
+  });
 
   const services = servicesQ.data ?? [];
   const myServiceIds = useMemo(() => new Set(services.map((s) => s.id)), [services]);
@@ -322,26 +427,53 @@ export default function Dashboard() {
 
   const problems = problemsQ.data ?? [];
   const knownErrors = problems.filter((p) => p.knownErrorId || p.status === 'KNOWN_ERROR');
+  const decisionNeeded = problems.filter((p) => p.status === 'DECISION');
 
-  // Demands awaiting commitment approval on MY services
   const governanceDemands = useMemo(
     () =>
-      (demandsQ.data ?? []).filter((d) => d.relatedServiceIds.some((sid) => myServiceIds.has(sid))),
+      (demandsQ.data ?? []).filter((d) =>
+        d.relatedServiceIds.some((sid) => myServiceIds.has(sid)),
+      ),
     [demandsQ.data, myServiceIds],
   );
 
-  // Changes touching my services (open status only).
-  const changesTouchingMyServices = useMemo(() => {
+  // Changes touching my services.
+  const myChanges = useMemo(() => {
     const all = changesQ.data ?? [];
-    return all.filter(
-      (c) =>
-        c.status !== 'CLOSED' &&
-        c.status !== 'REJECTED' &&
-        c.affectedServiceIds.some((sid) => myServiceIds.has(sid)),
-    );
+    return all.filter((c) => c.affectedServiceIds.some((sid) => myServiceIds.has(sid)));
   }, [changesQ.data, myServiceIds]);
 
-  // Incidents on my services grouped by priority.
+  const highRiskChanges = useMemo(
+    () =>
+      myChanges.filter(
+        (c) =>
+          c.status !== 'CLOSED' &&
+          c.status !== 'REJECTED' &&
+          (c.type === 'EMERGENCY' || c.complexity === 'COMPLEX'),
+      ),
+    [myChanges],
+  );
+
+  const emergencyPirDue = useMemo(
+    () => myChanges.filter((c) => c.isEmergencyPostReviewDue),
+    [myChanges],
+  );
+
+  // Catalog review overdue (>90 days).
+  const catalogOverdue = useMemo(() => {
+    const ninetyDaysAgo = Date.now() - 90 * 86400000;
+    return (serviceHealthQ.data ?? []).filter((s) => {
+      const last = s.lastReviewedAt ? new Date(s.lastReviewedAt).getTime() : 0;
+      return last < ninetyDaysAgo;
+    });
+  }, [serviceHealthQ.data]);
+
+  // Low-CSAT (rating <= 2) on owned services.
+  const lowCsatSurveys = useMemo(() => {
+    return (lowCsatQ.data ?? []).filter((s) => s.rating <= 2);
+  }, [lowCsatQ.data]);
+
+  // Incidents by priority.
   const incidentsByPriority = useMemo(() => {
     const counts: Record<string, number> = { P1: 0, P2: 0, P3: 0, P4: 0 };
     for (const t of openTicketsQ.data ?? []) {
@@ -351,22 +483,11 @@ export default function Dashboard() {
     return counts;
   }, [openTicketsQ.data]);
 
-  // SLA breaches by service — from the new /api/stats/sla endpoint, scoped
-  // to owned services.
-  const slaBreachesByService = useMemo(() => {
-    return (slaStatsQ.data?.byService ?? [])
-      .filter((s) => myServiceIds.has(s.serviceId))
-      .filter((s) => s.breaches > 0 || s.warnings > 0)
-      .sort((a, b) => b.breaches - a.breaches || b.warnings - a.warnings);
-  }, [slaStatsQ.data, myServiceIds]);
-
-  // Customer sentiment — from /api/stats/customer-health, scoped to
-  // customers consuming my services.
-  const customerSentiment = customerHealthQ.data?.byCustomer ?? [];
+  const p1p2Count = incidentsByPriority.P1 + incidentsByPriority.P2;
 
   const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? 'Service';
 
-  /* --- Governance decisions for breach responses (per service) --- */
+  /* --- Governance decisions for breach responses --- */
   const breachDecisionsQ = useQuery({
     queryKey: ['governance-decisions', 'breach', Array.from(myServiceIds).sort().join(',')] as const,
     queryFn: async (): Promise<GovernanceDecision[]> => {
@@ -384,7 +505,6 @@ export default function Dashboard() {
     staleTime: 30_000,
   });
 
-  // Set of slaEventIds that already have a BREACH_RESPONSE decision recorded
   const respondedBreachEventIds = useMemo(() => {
     const s = new Set<string>();
     for (const d of breachDecisionsQ.data ?? []) {
@@ -392,6 +512,22 @@ export default function Dashboard() {
     }
     return s;
   }, [breachDecisionsQ.data]);
+
+  // Decisions history (last 10 for the governance history panel).
+  const ownerDecisionsQ = useQuery({
+    queryKey: ['governance-decisions', 'owner-history', Array.from(myServiceIds).sort().join(',')] as const,
+    queryFn: async (): Promise<GovernanceDecision[]> => {
+      if (myServiceIds.size === 0) return [];
+      const results = await Promise.all(
+        Array.from(myServiceIds).map((sid) =>
+          apiGet<GovernanceDecision[]>(`/api/governance-decisions?serviceId=${encodeURIComponent(sid)}`),
+        ),
+      );
+      return results.flat().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 10);
+    },
+    enabled: myServiceIds.size > 0,
+    staleTime: 30_000,
+  });
 
   /* --- Breach response dialog state --- */
   const [breachTarget, setBreachTarget] = useState<{
@@ -428,206 +564,557 @@ export default function Dashboard() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  /* --- Build the Required Actions list (primary section) --- */
+  const requiredActions: RequiredAction[] = useMemo(() => {
+    const actions: RequiredAction[] = [];
+
+    // 1. Breach response missing
+    for (const b of openBreaches) {
+      if (!respondedBreachEventIds.has(b.id)) {
+        actions.push({
+          id: `breach-${b.id}`,
+          type: 'BREACH_RESPONSE',
+          title: b.message.slice(0, 120) || `SLA breach on ${serviceName(b.serviceId)}`,
+          service: serviceName(b.serviceId),
+          customerImpact: b.serviceCustomerId ? 'Customer impacted' : 'Service-wide',
+          age: b.createdAt,
+          risk: 'CRITICAL',
+          actionLabel: 'Record Response',
+          onAction: () =>
+            setBreachTarget({
+              eventId: b.id,
+              serviceId: b.serviceId,
+              serviceName: serviceName(b.serviceId),
+              message: b.message,
+              createdAt: b.createdAt,
+            }),
+        });
+      }
+    }
+
+    // 2. Accepted demand needing commitment approval
+    for (const d of governanceDemands) {
+      actions.push({
+        id: `commit-${d.id}`,
+        type: 'COMMITMENT_APPROVAL',
+        title: d.title,
+        service: d.relatedServiceIds.map((sid) => serviceName(sid)).join(', '),
+        customerImpact: d.serviceCustomerName ?? undefined,
+        age: d.acceptedAt ?? d.createdAt,
+        risk: 'HIGH',
+        actionLabel: 'Review & Approve',
+        onAction: () => navigate('governance'),
+      });
+    }
+
+    // 3. Known error needing workaround approval (KNOWN_ERROR without workaroundDescription)
+    for (const p of knownErrors) {
+      if (!p.workaroundDescription) {
+        actions.push({
+          id: `ke-${p.id}`,
+          type: 'KNOWN_ERROR_REVIEW',
+          title: p.title,
+          service: p.serviceName ?? serviceName(p.serviceId),
+          customerImpact: 'Customers exposed to known error',
+          age: p.updatedAt,
+          risk: 'HIGH',
+          actionLabel: 'Review Workaround',
+          onAction: () => navigate('problems'),
+        });
+      }
+    }
+
+    // 4. Catalog review overdue
+    for (const s of catalogOverdue) {
+      actions.push({
+        id: `catalog-${s.serviceId}`,
+        type: 'CATALOG_REVIEW',
+        title: `Catalog entry for ${s.serviceName} not reviewed in 90+ days`,
+        service: s.serviceName,
+        customerImpact: 'Published catalog may be stale',
+        age: s.lastReviewedAt ?? new Date(0).toISOString(),
+        risk: 'MEDIUM',
+        actionLabel: 'Review Catalog',
+        onAction: () => navigate('portfolio'),
+      });
+    }
+
+    // 5. Emergency post-implementation review due
+    for (const c of emergencyPirDue) {
+      actions.push({
+        id: `pir-${c.id}`,
+        type: 'EMERGENCY_PIR',
+        title: c.title,
+        service: c.affectedServiceIds.map((sid) => serviceName(sid)).join(', '),
+        customerImpact: 'Emergency change awaiting post-implementation review',
+        age: c.createdAt,
+        risk: 'HIGH',
+        actionLabel: 'Conduct PIR',
+        onAction: () => navigate('changes'),
+      });
+    }
+
+    // 6. Low CSAT (rating <= 2) needing owner review
+    for (const s of lowCsatSurveys.slice(0, 5)) {
+      actions.push({
+        id: `csat-${s.id}`,
+        type: 'LOW_CSAT',
+        title: `CSAT rating ${s.rating}★ submitted${s.comment ? `: "${s.comment.slice(0, 80)}"` : ''}`,
+        service: serviceName(s.entityId),
+        customerImpact: s.customerName ?? 'Customer',
+        age: s.createdAt,
+        risk: 'HIGH',
+        actionLabel: 'Review Survey',
+        onAction: () => navigate('portfolio'),
+      });
+    }
+
+    // 7. Problem decision needed (status === DECISION)
+    for (const p of decisionNeeded) {
+      actions.push({
+        id: `pdec-${p.id}`,
+        type: 'PROBLEM_DECISION',
+        title: p.title,
+        service: p.serviceName ?? serviceName(p.serviceId),
+        customerImpact: 'Problem awaiting your governance direction',
+        age: p.updatedAt,
+        risk: 'HIGH',
+        actionLabel: 'Record Decision',
+        onAction: () => navigate('problems'),
+      });
+    }
+
+    // Sort by risk severity, then by age.
+    const severityOrder: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    return actions.sort((a, b) => {
+      const sev = (severityOrder[a.risk] ?? 4) - (severityOrder[b.risk] ?? 4);
+      if (sev !== 0) return sev;
+      return new Date(a.age).getTime() - new Date(b.age).getTime();
+    });
+  }, [
+    openBreaches,
+    respondedBreachEventIds,
+    governanceDemands,
+    knownErrors,
+    catalogOverdue,
+    emergencyPirDue,
+    lowCsatSurveys,
+    decisionNeeded,
+    serviceName,
+    navigate,
+  ]);
+
+  /* --- Service Health Heatmap rows --- */
+  const heatmapRows = useMemo(() => {
+    return (serviceHealthQ.data ?? []).map((s) => ({
+      id: s.serviceId,
+      service: s,
+      serviceName: s.serviceName,
+      slaClass: s.slaClass as 'A' | 'B' | 'C' | 'D',
+      health: s.health,
+      p1p2: s.p1p2Count,
+      openProblems: s.problems,
+      openChanges: s.highRiskChanges,
+      knownErrors: s.knownErrors,
+      csat: s.csat,
+      riskScore: s.riskScore,
+      lastReviewedAt: s.lastReviewedAt,
+    }));
+  }, [serviceHealthQ.data]);
+
+  const heatmapColumns: Column<(typeof heatmapRows)[number]>[] = [
+    {
+      key: 'service',
+      header: 'Service',
+      render: (r) => (
+        <div className="min-w-0">
+          <div className="font-medium truncate">{r.serviceName}</div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <SlaClassBadge slaClass={r.slaClass} />
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'health',
+      header: 'SLA Health',
+      render: (r) => <SlaHealthBadge health={r.health} />,
+    },
+    {
+      key: 'p1p2',
+      header: 'Open P1/P2',
+      render: (r) =>
+        r.p1p2 > 0 ? (
+          <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300 font-semibold">
+            {r.p1p2}
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">0</span>
+        ),
+    },
+    {
+      key: 'problems',
+      header: 'Problems',
+      render: (r) =>
+        r.openProblems > 0 ? (
+          <span className="text-sm tabular-nums font-medium text-amber-700 dark:text-amber-300">{r.openProblems}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">0</span>
+        ),
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+    },
+    {
+      key: 'changes',
+      header: 'Changes',
+      render: (r) =>
+        r.openChanges > 0 ? (
+          <span className="text-sm tabular-nums font-medium text-violet-700 dark:text-violet-300">{r.openChanges}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">0</span>
+        ),
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+    },
+    {
+      key: 'knownErrors',
+      header: 'Known Errors',
+      render: (r) =>
+        r.knownErrors > 0 ? (
+          <span className="text-sm tabular-nums font-medium text-orange-700 dark:text-orange-300">{r.knownErrors}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">0</span>
+        ),
+      className: 'hidden lg:table-cell',
+      headerClassName: 'hidden lg:table-cell',
+    },
+    {
+      key: 'csat',
+      header: 'CSAT',
+      render: (r) =>
+        r.csat != null ? (
+          <span className="inline-flex items-center gap-1 text-sm tabular-nums">
+            <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+            {r.csat}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+    },
+    {
+      key: 'riskScore',
+      header: 'Risk Score',
+      render: (r) => {
+        const tone =
+          r.riskScore >= 60
+            ? 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300'
+            : r.riskScore >= 30
+              ? 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300'
+              : 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300';
+        return (
+          <Badge variant="outline" className={`tabular-nums font-semibold ${tone}`}>
+            {r.riskScore}
+          </Badge>
+        );
+      },
+    },
+  ];
+
   const loading =
-    servicesQ.isLoading || slaQ.isLoading || problemsQ.isLoading || demandsQ.isLoading;
+    servicesQ.isLoading ||
+    slaQ.isLoading ||
+    problemsQ.isLoading ||
+    demandsQ.isLoading ||
+    serviceHealthQ.isLoading;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Service Owner — Accountability Dashboard"
-        description="What you see creates governance obligations. Breach notifications and accepted commitments are accountability events that require your response."
+        title="Service Owner — Command Center"
+        description="What you see creates governance obligations. Every breach notification, accepted commitment, and customer signal is an accountability event that requires your response."
         icon={<Briefcase className="h-6 w-6" />}
+        actions={
+          <Badge variant="outline" className="gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            <HeartPulse className="h-3 w-3" /> {services.length} owned services
+          </Badge>
+        }
       />
 
+      {/* Top Action Strip — 9 clickable StatCards */}
       {loading ? (
         <LoadingState rows={5} />
       ) : (
         <>
-          {/* Top stat cards — operational view */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-3">
             <StatCard
-              label="Incidents on My Services"
-              value={openTicketCount}
-              icon={<Activity className="h-4 w-4" />}
-              hint={`${incidentsByPriority.P1} P1 · ${incidentsByPriority.P2} P2`}
-              tone={incidentsByPriority.P1 > 0 ? 'danger' : openTicketCount > 0 ? 'warning' : 'default'}
-              onClick={() => navigate('tickets')}
+              label="Owned Services"
+              value={services.length}
+              icon={<Briefcase className="h-4 w-4" />}
+              hint="Services in your portfolio"
+              tone="default"
+              onClick={() => navigate('portfolio')}
             />
             <StatCard
-              label="SLA Breaches by Service"
-              value={slaBreachesByService.length}
+              label="Active P1/P2 Incidents"
+              value={p1p2Count}
+              icon={<Activity className="h-4 w-4" />}
+              hint={`${incidentsByPriority.P1} P1 · ${incidentsByPriority.P2} P2`}
+              tone={incidentsByPriority.P1 > 0 ? 'danger' : p1p2Count > 0 ? 'warning' : 'success'}
+              onClick={() => navigate('service-incidents')}
+            />
+            <StatCard
+              label="SLA Breaches"
+              value={openBreaches.length}
               icon={<ShieldAlert className="h-4 w-4" />}
-              hint="Services with active breaches or warnings"
-              tone={slaBreachesByService.length > 0 ? 'danger' : 'success'}
+              hint="Active breaches needing response"
+              tone={openBreaches.length > 0 ? 'danger' : 'success'}
+              onClick={() => navigate('sla')}
+            />
+            <StatCard
+              label="SLA Warnings"
+              value={openWarnings.length}
+              icon={<TriangleAlert className="h-4 w-4" />}
+              hint="Running clocks at risk"
+              tone={openWarnings.length > 0 ? 'warning' : 'default'}
               onClick={() => navigate('sla')}
             />
             <StatCard
               label="Open Problems"
               value={problems.length}
               icon={<Bug className="h-4 w-4" />}
-              hint="Under investigation on your services"
+              hint={`${decisionNeeded.length} awaiting decision`}
               tone={problems.length > 0 ? 'warning' : 'default'}
               onClick={() => navigate('problems')}
             />
             <StatCard
-              label="Changes Touching My Services"
-              value={changesTouchingMyServices.length}
+              label="Known Errors"
+              value={knownErrors.length}
+              icon={<BookOpen className="h-4 w-4" />}
+              hint="Workarounds in production"
+              tone={knownErrors.length > 0 ? 'warning' : 'default'}
+              onClick={() => navigate('problems')}
+            />
+            <StatCard
+              label="Pending Governance"
+              value={governanceDemands.length}
+              icon={<Gavel className="h-4 w-4" />}
+              hint="Commitments awaiting approval"
+              tone={governanceDemands.length > 0 ? 'success' : 'default'}
+              onClick={() => navigate('governance')}
+            />
+            <StatCard
+              label="High-Risk Changes"
+              value={highRiskChanges.length}
               icon={<GitBranch className="h-4 w-4" />}
-              hint="In-flight changes affecting your portfolio"
-              tone={changesTouchingMyServices.length > 0 ? 'warning' : 'default'}
+              hint="Emergency / complex in-flight"
+              tone={highRiskChanges.length > 0 ? 'danger' : 'default'}
               onClick={() => navigate('changes')}
             />
             <StatCard
-              label="Customer Sentiment"
-              value={
-                customerSentiment.length > 0
-                  ? `${customerSentiment.filter((c) => c.health === 'green').length}/${customerSentiment.length} green`
-                  : '—'
-              }
+              label="Low CSAT Reviews"
+              value={lowCsatSurveys.length}
               icon={<Star className="h-4 w-4" />}
-              hint="Customer health scorecards for your services"
-              tone="default"
-            />
-            <StatCard
-              label="Governance Approvals"
-              value={governanceDemands.length}
-              icon={<Gavel className="h-4 w-4" />}
-              tone="success"
-              hint="Accepted demands awaiting commitment"
-              onClick={() => navigate('governance')}
+              hint="Surveys rated 1-2 ★"
+              tone={lowCsatSurveys.length > 0 ? 'danger' : 'success'}
+              onClick={() => navigate('portfolio')}
             />
           </div>
 
-          {/* Incidents on My Services + SLA Breaches by Service */}
+          {/* My Required Actions (PRIMARY) */}
+          <SectionCard
+            title="My Required Actions"
+            description="Items where the Service Owner must act — breach responses, commitment approvals, catalog reviews, known-error reviews, post-implementation reviews, low-CSAT follow-ups, and problem decisions."
+            actions={
+              requiredActions.length > 0 ? (
+                <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                  <ListTodo className="h-3 w-3 mr-1" /> {requiredActions.length} open
+                </Badge>
+              ) : undefined
+            }
+          >
+            {requiredActions.length === 0 ? (
+              <EmptyState
+                icon={<CheckCircle2 className="h-8 w-8 text-emerald-500" />}
+                title="No required actions"
+                description="All governance obligations are met — no breach responses, commitment approvals, or catalog reviews are pending."
+              />
+            ) : (
+              <ul className="divide-y -mx-2 max-h-[460px] overflow-y-auto scrollbar-thin">
+                {requiredActions.map((a) => {
+                  const meta = ACTION_LABELS[a.type];
+                  return (
+                    <li
+                      key={a.id}
+                      className="px-2 py-3 hover:bg-muted/30 rounded-md transition-colors"
+                    >
+                      <div className="flex items-start gap-3 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <Badge variant="outline" className={`gap-1.5 ${meta.tone}`}>
+                              {meta.icon} {meta.label}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              <RelativeTime date={a.age} /> · {a.service}
+                            </span>
+                            <Badge variant="outline" className={`text-[10px] ${riskTone(a.risk)}`}>
+                              {a.risk}
+                            </Badge>
+                          </div>
+                          <div className="text-sm font-medium text-foreground/90">{a.title}</div>
+                          {a.customerImpact && (
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              Impact: {a.customerImpact}
+                            </div>
+                          )}
+                        </div>
+                        <div className="shrink-0 flex items-center gap-2">
+                          <Button size="sm" onClick={a.onAction} className="h-7 gap-1.5">
+                            {a.actionLabel} <ArrowRight className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </SectionCard>
+
+          {/* Service Health Heatmap */}
+          <SectionCard
+            title="Service Health Heatmap"
+            description="Per-service portfolio health at a glance — SLA health, open P1/P2, problems, changes, known errors, CSAT, and a derived risk score. Click a row for full service detail."
+            actions={
+              <Button variant="ghost" size="sm" onClick={() => navigate('portfolio')} className="gap-1">
+                Open portfolio <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            }
+          >
+            {serviceHealthQ.isLoading ? (
+              <LoadingState rows={4} />
+            ) : heatmapRows.length === 0 ? (
+              <EmptyState
+                icon={<Activity className="h-7 w-7" />}
+                title="No service health data"
+                description="Owned services will appear here once the service-health aggregator runs."
+              />
+            ) : (
+              <DataTable
+                columns={heatmapColumns}
+                rows={heatmapRows}
+                onRowClick={(r) => navigate('service-detail', { id: r.id })}
+                empty="No services."
+              />
+            )}
+          </SectionCard>
+
+          {/* Two-column: Customer Impact Feed + Governance History */}
           <div className="grid gap-4 lg:grid-cols-2">
             <SectionCard
-              title="Incidents on My Services"
-              description="Open tickets on services you own, grouped by priority. P1s demand your immediate attention."
+              title="Customer Impact Feed"
+              description="Impacted customers across your portfolio — active incidents, breach counts, and CSAT signals."
               actions={
-                <Button variant="ghost" size="sm" onClick={() => navigate('tickets')} className="gap-1">
-                  Open queue <ArrowRight className="h-3.5 w-3.5" />
+                <Button variant="ghost" size="sm" onClick={() => navigate('portfolio')} className="gap-1">
+                  Details <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               }
             >
-              {/* Priority buckets */}
-              <div className="grid grid-cols-4 gap-2 mb-4">
-                {([
-                  { key: 'P1', tone: 'rose' },
-                  { key: 'P2', tone: 'amber' },
-                  { key: 'P3', tone: 'teal' },
-                  { key: 'P4', tone: 'sky' },
-                ] as const).map((b) => {
-                  const cls = {
-                    rose: 'border-rose-200 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300',
-                    amber: 'border-amber-200 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300',
-                    teal: 'border-teal-200 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300',
-                    sky: 'border-sky-200 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300',
-                  }[b.tone];
-                  return (
-                    <div key={b.key} className={`rounded-md border p-2 text-center ${cls}`}>
-                      <div className="text-lg font-semibold tabular-nums">{incidentsByPriority[b.key]}</div>
-                      <div className="text-[10px] uppercase tracking-wide opacity-80">{b.key}</div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {(openTicketsQ.data ?? []).length === 0 ? (
+              {customerImpactQ.isLoading ? (
+                <LoadingState rows={3} />
+              ) : (customerImpactQ.data ?? []).length === 0 ? (
                 <EmptyState
-                  icon={<CheckCircle2 className="h-7 w-7 text-emerald-500" />}
-                  title="No open incidents"
-                  description="No tickets are currently open on your services."
+                  icon={<Megaphone className="h-7 w-7" />}
+                  title="No customer impact data"
+                  description="Customers consuming your services will appear here."
                 />
               ) : (
                 <ul className="divide-y -mx-2 max-h-80 overflow-y-auto scrollbar-thin">
-                  {(openTicketsQ.data ?? [])
-                    .slice()
-                    .sort((a, b) => {
-                      const order: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
-                      return (
-                        (order[a.priority] ?? 4) - (order[b.priority] ?? 4) ||
-                        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-                      );
-                    })
-                    .slice(0, 8)
-                    .map((t) => (
+                  {(customerImpactQ.data ?? []).map((c) => {
+                    const toneCls =
+                      c.activeBreaches > 0
+                        ? 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                        : c.p1p2Tickets > 0
+                          ? 'border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+                    return (
                       <li
-                        key={t.id}
-                        className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors cursor-pointer"
-                        onClick={() => navigate('ticket-detail', { id: t.id })}
+                        key={c.customerId}
+                        className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors"
                       >
-                        <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-mono text-muted-foreground">{t.number}</span>
-                              <PriorityDot priority={t.priority} />
-                              <span className="text-sm font-medium truncate">{t.title}</span>
-                            </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground truncate">
-                              {t.serviceName ?? serviceName(t.serviceId ?? '')} · {t.serviceCustomerName ?? '—'}
+                            <div className="text-sm font-medium truncate">{c.customerName}</div>
+                            <div className="mt-0.5 text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
+                              <span>{c.activeTickets} active tickets</span>
+                              <span>·</span>
+                              <span>{c.p1p2Tickets} P1/P2</span>
+                              {c.activeBreaches > 0 && (
+                                <>
+                                  <span>·</span>
+                                  <span className="text-rose-600 dark:text-rose-400 font-medium">
+                                    {c.activeBreaches} breach{c.activeBreaches > 1 ? 'es' : ''}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
-                          <Badge variant="outline" className="text-[10px] shrink-0">
-                            {t.status.replace(/_/g, ' ').toLowerCase()}
-                          </Badge>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {c.averageCsat != null && (
+                              <span className="inline-flex items-center gap-1 text-xs">
+                                <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                                {c.averageCsat}
+                              </span>
+                            )}
+                            <Badge variant="outline" className={`text-[10px] ${toneCls}`}>
+                              {c.activeBreaches > 0 ? 'breach' : c.p1p2Tickets > 0 ? 'risk' : 'ok'}
+                            </Badge>
+                          </div>
                         </div>
                       </li>
-                    ))}
+                    );
+                  })}
                 </ul>
               )}
             </SectionCard>
 
             <SectionCard
-              title="SLA Breaches by Service"
-              description="Per-service breach and warning counts on your owned services."
+              title="Governance History"
+              description="Your last 10 recorded governance decisions — commitment approvals, escalations, breach responses, lifecycle directions, and catalog accuracy attestations."
               actions={
-                <Button variant="ghost" size="sm" onClick={() => navigate('sla')} className="gap-1">
-                  Open SLA <ArrowRight className="h-3.5 w-3.5" />
+                <Button variant="ghost" size="sm" onClick={() => navigate('governance')} className="gap-1">
+                  Open governance <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               }
             >
-              {slaStatsQ.isLoading ? (
-                <LoadingState rows={3} />
-              ) : slaBreachesByService.length === 0 ? (
+              {(ownerDecisionsQ.data ?? []).length === 0 ? (
                 <EmptyState
-                  icon={<CheckCircle2 className="h-7 w-7 text-emerald-500" />}
-                  title="No active breaches or warnings"
-                  description="All SLA commitments on your services are within target."
+                  icon={<History className="h-7 w-7" />}
+                  title="No governance decisions recorded yet"
+                  description="Your commitment approvals, escalations, and breach responses will appear here."
                 />
               ) : (
                 <ul className="divide-y -mx-2 max-h-80 overflow-y-auto scrollbar-thin">
-                  {slaBreachesByService.map((s) => (
-                    <li
-                      key={s.serviceId}
-                      className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors cursor-pointer"
-                      onClick={() => navigate('sla')}
-                    >
-                      <div className="flex items-start justify-between gap-2">
+                  {(ownerDecisionsQ.data ?? []).map((dec) => (
+                    <li key={dec.id} className="px-2 py-2.5">
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium truncate">{s.serviceName}</span>
-                            <SlaClassBadge slaClass={s.slaClass as 'A' | 'B' | 'C' | 'D'} />
+                            <Badge variant="outline" className="text-[10px]">
+                              {DECISION_TYPE_LABELS[dec.decisionType] ?? dec.decisionType}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              on <span className="font-medium text-foreground/80">{serviceName(dec.serviceId)}</span>
+                            </span>
                           </div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">
-                            {s.breaches > 0 && (
-                              <span className="text-rose-600 dark:text-rose-400 font-medium">
-                                {s.breaches} breach{s.breaches > 1 ? 'es' : ''}
-                              </span>
-                            )}
-                            {s.breaches > 0 && s.warnings > 0 && <span> · </span>}
-                            {s.warnings > 0 && (
-                              <span className="text-amber-600 dark:text-amber-400 font-medium">
-                                {s.warnings} warning{s.warnings > 1 ? 's' : ''}
-                              </span>
-                            )}
-                            {s.compliancePct != null && (
-                              <span className="ml-2 text-muted-foreground/80">
-                                · {s.compliancePct}% compliance
-                              </span>
-                            )}
+                          <p className="mt-1 text-xs leading-relaxed text-foreground/80 line-clamp-2">
+                            {dec.rationale}
+                          </p>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {dec.decision.replace(/_/g, ' ').toLowerCase()} · {dec.decidedByName} · <RelativeTime date={dec.createdAt} />
                           </div>
                         </div>
-                        <SlaHealthBadge health={s.breaches > 0 ? 'red' : 'amber'} />
                       </div>
                     </li>
                   ))}
@@ -639,7 +1126,7 @@ export default function Dashboard() {
           {/* Breach notifications → governance responses */}
           <SectionCard
             title="Breach Notifications → Governance Responses"
-            description="A breach notification is an accountability event that requires your response. Each unresolved breach on your services is listed here — record a governance response to close the accountability loop."
+            description="Each unresolved breach on your services is listed here — record a governance response to close the accountability loop."
             actions={
               <Button variant="outline" size="sm" onClick={() => navigate('sla')}>
                 Open SLA view <ArrowRight className="h-3.5 w-3.5 ml-1" />
@@ -654,7 +1141,7 @@ export default function Dashboard() {
               />
             ) : (
               <div className="space-y-2.5">
-                {openBreaches.map((b) => {
+                {openBreaches.slice(0, 5).map((b) => {
                   const responded = respondedBreachEventIds.has(b.id);
                   return (
                     <Alert
@@ -739,268 +1226,6 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-            )}
-          </SectionCard>
-
-          {/* Two-column: portfolio snapshot + governance approvals */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard
-              title="Service Portfolio Snapshot"
-              description="Current health of services under your ownership."
-              actions={
-                <Button variant="ghost" size="sm" onClick={() => navigate('portfolio')}>
-                  All services <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              }
-            >
-              {services.length === 0 ? (
-                <EmptyState
-                  icon={<Briefcase className="h-7 w-7" />}
-                  title="No services in your portfolio"
-                  description="Services you own will appear here."
-                />
-              ) : (
-                <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
-                  {services.map((s) => {
-                    const sEvents = mySlaEvents.filter((e) => e.serviceId === s.id);
-                    const health = deriveHealth(sEvents);
-                    const openIncidents = sEvents.filter(
-                      (e) => !e.resolvedAt && (e.eventType === 'BREACHED' || e.eventType === 'WARNING'),
-                    ).length;
-                    return (
-                      <li
-                        key={s.id}
-                        className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
-                        onClick={() => navigate('portfolio')}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium truncate">{s.name}</span>
-                            <SlaClassBadge slaClass={s.slaClass} />
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                            {s.chapter} · {s.layer}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {openIncidents > 0 && (
-                            <span className="inline-flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
-                              <Activity className="h-3 w-3" /> {openIncidents}
-                            </span>
-                          )}
-                          <SlaHealthBadge health={health} />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </SectionCard>
-
-            <SectionCard
-              title="Pending Governance Approvals"
-              description="Accepted demands on your services — service commitments requiring your approval."
-              actions={
-                <Button variant="ghost" size="sm" onClick={() => navigate('governance')}>
-                  Open <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              }
-            >
-              {governanceDemands.length === 0 ? (
-                <EmptyState
-                  icon={<Gavel className="h-7 w-7" />}
-                  title="No commitments awaiting approval"
-                  description="When a demand on your service is accepted, you approve the service commitment here."
-                />
-              ) : (
-                <ul className="divide-y max-h-96 overflow-y-auto scrollbar-thin">
-                  {governanceDemands.map((d) => (
-                    <li
-                      key={d.id}
-                      className="py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
-                      onClick={() => navigate('demand-detail', { id: d.id })}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium truncate">{d.title}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5 truncate">
-                            {d.serviceCustomerName} · SCM: {d.assignedScmWorkerName ?? 'Unassigned'}
-                          </div>
-                          {d.commitmentNotes && (
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2 italic">
-                              “{d.commitmentNotes}”
-                            </p>
-                          )}
-                        </div>
-                        <DemandStatusBadge status={d.status} className="shrink-0" />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SectionCard>
-          </div>
-
-          {/* Two-column: open problems + known errors */}
-          <div className="grid gap-4 lg:grid-cols-3">
-            <SectionCard
-              className="lg:col-span-2"
-              title="Open Problems on Your Services"
-              description="When Problem Management investigates a recurring failure, that context feeds your SLA governance communication."
-              actions={
-                <Button variant="ghost" size="sm" onClick={() => navigate('problems')}>
-                  All problems <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              }
-            >
-              {problems.length === 0 ? (
-                <EmptyState
-                  icon={<Bug className="h-7 w-7" />}
-                  title="No open problem records"
-                  description="Active problems on your services will be listed here."
-                />
-              ) : (
-                <ul className="divide-y">
-                  {problems.map((p) => (
-                    <li
-                      key={p.id}
-                      className="py-2.5 cursor-pointer hover:bg-muted/40 -mx-2 px-2 rounded-md transition-colors"
-                      onClick={() => navigate('problems')}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium truncate">{p.title}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {p.serviceName ?? serviceName(p.serviceId)} · {p.status.replace(/_/g, ' ').toLowerCase()}
-                          </div>
-                          {p.rootCauseDescription && (
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                              Root cause: {p.rootCauseDescription}
-                            </p>
-                          )}
-                        </div>
-                        <RelativeTime date={p.createdAt} className="text-xs text-muted-foreground shrink-0" />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SectionCard>
-
-            <SectionCard
-              title="Active Known Errors"
-              description="Problems with documented workarounds awaiting permanent fix."
-            >
-              {knownErrors.length === 0 ? (
-                <EmptyState
-                  icon={<BookOpen className="h-7 w-7" />}
-                  title="No active known errors"
-                  description="Known errors for your services will surface here with workaround context."
-                />
-              ) : (
-                <ul className="space-y-2.5">
-                  {knownErrors.map((p) => (
-                    <li
-                      key={p.id}
-                      className="rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 p-3"
-                    >
-                      <div className="flex items-center gap-2">
-                        <BookOpen className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                        <span className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
-                          Known Error
-                        </span>
-                      </div>
-                      <div className="text-sm font-medium mt-1.5">{p.title}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {p.serviceName ?? serviceName(p.serviceId)}
-                      </div>
-                      {p.workaroundDescription && (
-                        <p className="text-xs text-foreground/80 mt-1.5 leading-relaxed">
-                          <span className="font-medium">Workaround:</span> {p.workaroundDescription}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <div className="mt-4 pt-3 border-t">
-                <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <ClipboardList className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <p className="leading-relaxed">
-                    Known errors stay visible to your customers through the SCM communications
-                    thread. Ensure workarounds are accurate before publication.
-                  </p>
-                </div>
-              </div>
-            </SectionCard>
-          </div>
-
-          {/* Customer Sentiment panel */}
-          <SectionCard
-            title="Customer Sentiment"
-            description="Per-customer health scorecard across your owned services. Green ≥80 · Amber 60-80 · Red <60."
-            actions={
-              <Button variant="ghost" size="sm" onClick={() => navigate('portfolio')} className="gap-1">
-                Open portfolio <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            }
-          >
-            {customerHealthQ.isLoading ? (
-              <LoadingState rows={3} />
-            ) : customerSentiment.length === 0 ? (
-              <EmptyState
-                icon={<Star className="h-8 w-8" />}
-                title="No customer sentiment data"
-                description="Customers consuming your services will appear here once they raise tickets or demands."
-              />
-            ) : (
-              <ul className="divide-y -mx-2 max-h-96 overflow-y-auto scrollbar-thin">
-                {customerSentiment.map((c) => {
-                  const toneCls =
-                    c.health === 'green'
-                      ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-                      : c.health === 'amber'
-                        ? 'border-amber-200 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
-                        : 'border-rose-200 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300';
-                  return (
-                    <li
-                      key={c.orgNodeId}
-                      className="px-2 py-2.5 hover:bg-muted/30 rounded-md transition-colors"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium truncate">{c.orgNodeName}</div>
-                          <div className="mt-0.5 text-xs text-muted-foreground flex items-center gap-3 flex-wrap">
-                            <span>{c.openTickets} open tickets</span>
-                            <span>·</span>
-                            <span>{c.activeDemands} active demands</span>
-                            {c.slaBreaches > 0 && (
-                              <>
-                                <span>·</span>
-                                <span className="text-rose-600 dark:text-rose-400 font-medium">
-                                  {c.slaBreaches} breach{c.slaBreaches > 1 ? 'es' : ''}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {c.avgCsat != null && (
-                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                              <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
-                              {c.avgCsat}
-                            </span>
-                          )}
-                          <Badge variant="outline" className={`text-[10px] ${toneCls}`}>
-                            {c.healthScore}
-                          </Badge>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
             )}
           </SectionCard>
         </>

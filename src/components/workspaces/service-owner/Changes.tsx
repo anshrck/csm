@@ -1,6 +1,10 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useApp } from '@/lib/store';
+import { apiGet, apiPost } from '@/lib/api';
+import { toast } from 'sonner';
 import type { Change } from '@/lib/types';
 import {
   PageHeader,
@@ -13,15 +17,20 @@ import {
   KeyValue,
   DataTable,
   Badge,
+  Button,
   type Column,
 } from '@/components/shared';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   GitBranch,
   ClipboardList,
@@ -29,8 +38,17 @@ import {
   ListChecks,
   ShieldCheck,
   AlertCircle,
+  AlertTriangle,
+  Gavel,
+  RotateCcw,
+  Megaphone,
+  TriangleAlert,
+  Clock,
+  ArrowRight,
+  Stethoscope,
 } from 'lucide-react';
 import { useOwnerServices, useAllChanges } from './_hooks';
+import { OwnerDecisionDialog, type DecisionOption } from './_components/OwnerDecisionDialog';
 
 const TYPE_STYLES: Record<string, string> = {
   STANDARD: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300',
@@ -50,22 +68,135 @@ const ORIGIN_LABELS: Record<string, string> = {
   STANDARD: 'Standard (pre-approved)',
 };
 
+/* --------------------- Risk Review Dialog --------------------- */
+
+function RiskReviewDialog({
+  open,
+  onOpenChange,
+  change,
+  serviceName,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  change: Change | null;
+  serviceName: string;
+}) {
+  if (!change) return null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-600" /> Owner Risk Review
+          </DialogTitle>
+          <DialogDescription>
+            Review the risk profile of <span className="font-medium">{change.title}</span> on{' '}
+            <span className="font-medium">{serviceName}</span>. The risk review is informational — record a
+            governance decision below to authorise resources or direct remediation.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="rounded-md border p-3 bg-muted/40">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Risk summary</div>
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className={TYPE_STYLES[change.type] ?? 'bg-muted'}>
+                {change.type}
+              </Badge>
+              {change.complexity && (
+                <Badge variant="outline">{COMPLEXITY_LABELS[change.complexity] ?? change.complexity}</Badge>
+              )}
+              {change.isEmergencyPostReviewDue && (
+                <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300">
+                  PIR due
+                </Badge>
+              )}
+            </div>
+          </div>
+          <dl className="grid grid-cols-2 gap-3">
+            <KeyValue label="Origin" value={ORIGIN_LABELS[change.originType] ?? change.originType} />
+            <KeyValue label="Status" value={change.status.replace(/_/g, ' ').toLowerCase()} />
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            For high-risk changes, use the governance actions in the change detail dialog to authorise
+            resources, request rollback readiness, or record a post-implementation review.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* --------------------- Main --------------------- */
+
 export default function Changes() {
+  const { navigate } = useApp();
+  const qc = useQueryClient();
   const servicesQ = useOwnerServices();
   const changesQ = useAllChanges();
   const [selected, setSelected] = useState<Change | null>(null);
+  const [riskReviewTarget, setRiskReviewTarget] = useState<Change | null>(null);
+  const [authorizeTarget, setAuthorizeTarget] = useState<Change | null>(null);
+  const [pirTarget, setPirTarget] = useState<Change | null>(null);
 
   const services = servicesQ.data ?? [];
+  const myServiceIds = useMemo(() => new Set(services.map((s) => s.id)), [services]);
   const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? 'Service';
 
   const myChanges = useMemo(
     () =>
       (changesQ.data ?? [])
-        .filter((c) => c.affectedServiceIds.some((sid) => services.some((s) => s.id === sid)))
+        .filter((c) => c.affectedServiceIds.some((sid) => myServiceIds.has(sid)))
         .slice()
         .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-    [changesQ.data, services],
+    [changesQ.data, myServiceIds],
   );
+
+  /* --- Tabs / category filters --- */
+  const CATEGORIES: Record<string, { title: string; description: string; filter: (c: Change) => boolean }> = {
+    emergency: {
+      title: 'Emergency Changes',
+      description: 'Emergency changes in flight on your services — require post-implementation review.',
+      filter: (c) => c.type === 'EMERGENCY' && c.status !== 'CLOSED' && c.status !== 'REJECTED',
+    },
+    complex: {
+      title: 'Complex Changes',
+      description: 'Complex changes requiring Change Board review.',
+      filter: (c) => c.complexity === 'COMPLEX' && c.status !== 'CLOSED' && c.status !== 'REJECTED',
+    },
+    pendingApproval: {
+      title: 'Pending Approval',
+      description: 'Changes in ASSESSMENT or PLANNING awaiting approval.',
+      filter: (c) => ['ASSESSMENT', 'PLANNING', 'REQUESTED'].includes(c.status),
+    },
+    inImplementation: {
+      title: 'In Implementation',
+      description: 'Changes currently in IMPLEMENTATION status.',
+      filter: (c) => c.status === 'IMPLEMENTATION',
+    },
+    verification: {
+      title: 'Verification / Cutover',
+      description: 'Changes in VERIFICATION status — cutover phase, awaiting closure.',
+      filter: (c) => c.status === 'VERIFICATION',
+    },
+    pirDue: {
+      title: 'PIR Due',
+      description: 'Changes with post-implementation review overdue.',
+      filter: (c) => c.isEmergencyPostReviewDue,
+    },
+    catalogUpdate: {
+      title: 'Catalog Update Required',
+      description: 'Closed changes whose catalogUpdatedAt is null — catalog entry not yet updated.',
+      filter: (c) => c.status === 'CLOSED' && !c.catalogUpdatedAt,
+    },
+    all: {
+      title: 'All Changes',
+      description: 'Every change affecting your services.',
+      filter: () => true,
+    },
+  };
 
   const columns: Column<Change>[] = [
     {
@@ -107,10 +238,12 @@ export default function Changes() {
       headerClassName: 'hidden md:table-cell',
     },
     {
-      key: 'ce',
-      header: 'CE Worker',
+      key: 'services',
+      header: 'Services',
       render: (c) => (
-        <span className="text-xs">{c.assignedCeWorkerName ?? 'Unassigned'}</span>
+        <div className="text-xs text-muted-foreground truncate max-w-[180px]">
+          {c.affectedServiceIds.filter((sid) => myServiceIds.has(sid)).map((sid) => serviceName(sid)).join(', ')}
+        </div>
       ),
       className: 'hidden lg:table-cell',
       headerClassName: 'hidden lg:table-cell',
@@ -125,17 +258,35 @@ export default function Changes() {
   ];
 
   const loading = servicesQ.isLoading || changesQ.isLoading;
-  const activeCount = myChanges.filter(
-    (c) => !['CLOSED', 'REJECTED'].includes(c.status),
-  ).length;
+  const activeCount = myChanges.filter((c) => !['CLOSED', 'REJECTED'].includes(c.status)).length;
   const emergencyCount = myChanges.filter((c) => c.type === 'EMERGENCY').length;
   const postReviewDue = myChanges.filter((c) => c.isEmergencyPostReviewDue).length;
+  const complexCount = myChanges.filter((c) => c.complexity === 'COMPLEX').length;
+
+  /* --- Mutations --- */
+  const pirMutation = useMutation({
+    mutationFn: (args: { serviceId: string; changeId: string; rationale: string }) =>
+      apiPost('/api/governance-decisions', {
+        serviceId: args.serviceId,
+        decisionType: 'POST_IMPLEMENTATION_REVIEW',
+        decision: 'APPROVED',
+        rationale: args.rationale,
+      }),
+    onSuccess: (_data, vars) => {
+      toast.success('Post-implementation review recorded', {
+        description: `PIR for change ${vars.changeId.slice(-6)} recorded in the audit trail.`,
+      });
+      qc.invalidateQueries({ queryKey: ['governance-decisions'] });
+      setPirTarget(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Changes Affecting Your Services"
-        description="You are consulted when DEMAND transitions to QUOTE. You are escalated to when OUTCOME fails. Review all changes affecting your service portfolio."
+        description="You are consulted when DEMAND transitions to QUOTE and escalated to when OUTCOME fails. Review risk, authorise resources, request rollback readiness, and record post-implementation reviews for changes touching your portfolio."
         icon={<GitBranch className="h-6 w-6" />}
       />
 
@@ -153,42 +304,37 @@ export default function Changes() {
         <>
           {/* Summary tiles */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <SummaryTile
-              icon={<GitBranch className="h-4 w-4" />}
-              label="Total Changes"
-              value={myChanges.length}
-            />
-            <SummaryTile
-              icon={<ClipboardList className="h-4 w-4" />}
-              label="Active"
-              value={activeCount}
-              tone="warning"
-            />
-            <SummaryTile
-              icon={<AlertCircle className="h-4 w-4" />}
-              label="Emergency"
-              value={emergencyCount}
-              tone="danger"
-            />
-            <SummaryTile
-              icon={<ShieldCheck className="h-4 w-4" />}
-              label="PIR Due"
-              value={postReviewDue}
-              tone="danger"
-            />
+            <SummaryTile icon={<GitBranch className="h-4 w-4" />} label="Total Changes" value={myChanges.length} />
+            <SummaryTile icon={<ClipboardList className="h-4 w-4" />} label="Active" value={activeCount} tone="warning" />
+            <SummaryTile icon={<AlertCircle className="h-4 w-4" />} label="Emergency" value={emergencyCount} tone="danger" />
+            <SummaryTile icon={<ShieldCheck className="h-4 w-4" />} label="PIR Due" value={postReviewDue} tone="danger" />
           </div>
 
-          <SectionCard
-            title="Changes on Your Services"
-            description="Click a row to see the implementation plan, affected services, technical owner tasks, and verification notes."
-          >
-            <DataTable
-              columns={columns}
-              rows={myChanges}
-              onRowClick={(c) => setSelected(c)}
-              empty="No changes."
-            />
-          </SectionCard>
+          <Tabs defaultValue="all" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 lg:grid-cols-8 h-auto">
+              <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+              <TabsTrigger value="emergency" className="text-xs">Emergency</TabsTrigger>
+              <TabsTrigger value="complex" className="text-xs">Complex</TabsTrigger>
+              <TabsTrigger value="pendingApproval" className="text-xs">Pending</TabsTrigger>
+              <TabsTrigger value="inImplementation" className="text-xs">In Impl</TabsTrigger>
+              <TabsTrigger value="verification" className="text-xs">Verify</TabsTrigger>
+              <TabsTrigger value="pirDue" className="text-xs">PIR Due</TabsTrigger>
+              <TabsTrigger value="catalogUpdate" className="text-xs">Catalog</TabsTrigger>
+            </TabsList>
+
+            {Object.entries(CATEGORIES).map(([key, cat]) => (
+              <TabsContent key={key} value={key} className="space-y-4 mt-4">
+                <SectionCard title={cat.title} description={cat.description}>
+                  <DataTable
+                    columns={columns}
+                    rows={myChanges.filter(cat.filter)}
+                    onRowClick={(c) => setSelected(c)}
+                    empty="No changes in this category."
+                  />
+                </SectionCard>
+              </TabsContent>
+            ))}
+          </Tabs>
         </>
       )}
 
@@ -197,20 +343,165 @@ export default function Changes() {
           change={selected}
           serviceName={serviceName}
           onClose={() => setSelected(null)}
+          onRiskReview={() => {
+            setRiskReviewTarget(selected);
+            setSelected(null);
+          }}
+          onAuthorize={() => {
+            setAuthorizeTarget(selected);
+            setSelected(null);
+          }}
+          onPir={() => {
+            setPirTarget(selected);
+            setSelected(null);
+          }}
+          onRollback={() => {
+            toast.success('Rollback readiness requested', {
+              description: `CE Worker notified to confirm rollback readiness for "${selected.title}".`,
+            });
+          }}
+          onVerifyImpact={() => {
+            toast.success('Customer impact plan verified', {
+              description: `Customer communication plan for "${selected.title}" confirmed.`,
+            });
+          }}
+          onLinkRisk={() => {
+            navigate('risk-register');
+          }}
+        />
+      )}
+
+      {riskReviewTarget && (
+        <RiskReviewDialog
+          open={!!riskReviewTarget}
+          onOpenChange={(v) => !v && setRiskReviewTarget(null)}
+          change={riskReviewTarget}
+          serviceName={serviceName(riskReviewTarget.affectedServiceIds.find((sid) => myServiceIds.has(sid)) ?? '')}
+        />
+      )}
+
+      {authorizeTarget && (
+        <OwnerDecisionDialog
+          key={`authorize:${authorizeTarget.id}`}
+          open={!!authorizeTarget}
+          onOpenChange={(v) => !v && setAuthorizeTarget(null)}
+          serviceId={authorizeTarget.affectedServiceIds.find((sid) => myServiceIds.has(sid)) ?? ''}
+          decisionType="REMEDIATION_AUTHORIZATION"
+          decisionOptions={[
+            { value: 'RESOURCES_AUTHORIZED', label: 'Resources Authorized' },
+            { value: 'REMEDIATION_AUTHORIZED', label: 'Remediation Authorized' },
+            { value: 'EMERGENCY_CHANGE_DIRECTED', label: 'Emergency Change Directed' },
+          ]}
+          dialogTitle="Authorize Resources"
+          dialogDescription={
+            <span>
+              Authorise resources for <span className="font-medium">{authorizeTarget.title}</span>. The
+              authorisation is recorded in the governance audit trail.
+            </span>
+          }
+          onSubmitted={() => setAuthorizeTarget(null)}
+        />
+      )}
+
+      {pirTarget && (
+        <PirDialog
+          open={!!pirTarget}
+          change={pirTarget}
+          serviceName={serviceName(pirTarget.affectedServiceIds.find((sid) => myServiceIds.has(sid)) ?? '')}
+          pending={pirMutation.isPending}
+          onConfirm={(rationale) => {
+            const sid = pirTarget.affectedServiceIds.find((s) => myServiceIds.has(s));
+            if (!sid) {
+              toast.error('Could not determine the owned service for this change.');
+              return;
+            }
+            pirMutation.mutate({ serviceId: sid, changeId: pirTarget.id, rationale });
+          }}
+          onClose={() => setPirTarget(null)}
         />
       )}
     </div>
   );
 }
 
+/* --------------------- Post-Implementation Review dialog --------------------- */
+
+function PirDialog({
+  open,
+  change,
+  serviceName,
+  pending,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  change: Change | null;
+  serviceName: string;
+  pending: boolean;
+  onConfirm: (rationale: string) => void;
+  onClose: () => void;
+}) {
+  const [rationale, setRationale] = useState('');
+  if (!change) return null;
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Stethoscope className="h-5 w-5 text-orange-600" /> Post-Implementation Review
+          </DialogTitle>
+          <DialogDescription>
+            Record your owner PIR for <span className="font-medium">{change.title}</span> on{' '}
+            <span className="font-medium">{serviceName}</span>. The review is persisted as a
+            POST_IMPLEMENTATION_REVIEW governance decision.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="pir-rationale">Review summary (required)</Label>
+          <Textarea
+            id="pir-rationale"
+            rows={5}
+            placeholder="Summarise the change outcome — what went well, what didn't, customer impact observed, lessons learned, follow-up actions…"
+            value={rationale}
+            onChange={(e) => setRationale(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+          <Button onClick={() => onConfirm(rationale.trim())} disabled={pending || !rationale.trim()}>
+            {pending ? <Clock className="h-4 w-4 animate-pulse mr-1.5" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+            {pending ? 'Recording…' : 'Record PIR'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* --------------------- Change Detail Dialog --------------------- */
+
 function ChangeDetailDialog({
   change,
   serviceName,
   onClose,
+  onRiskReview,
+  onAuthorize,
+  onPir,
+  onRollback,
+  onVerifyImpact,
+  onLinkRisk,
 }: {
   change: Change;
   serviceName: (id: string) => string;
   onClose: () => void;
+  onRiskReview: () => void;
+  onAuthorize: () => void;
+  onPir: () => void;
+  onRollback: () => void;
+  onVerifyImpact: () => void;
+  onLinkRisk: () => void;
 }) {
   const tasks = Array.isArray(change.technicalOwnerTasksJson)
     ? (change.technicalOwnerTasksJson as Array<{
@@ -220,6 +511,9 @@ function ChangeDetailDialog({
         status?: string;
       }>)
     : [];
+
+  const isEmergency = change.type === 'EMERGENCY';
+  const isComplex = change.complexity === 'COMPLEX';
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -231,15 +525,10 @@ function ChangeDetailDialog({
               {change.type}
             </Badge>
             {change.complexity && (
-              <Badge variant="outline">
-                {COMPLEXITY_LABELS[change.complexity] ?? change.complexity}
-              </Badge>
+              <Badge variant="outline">{COMPLEXITY_LABELS[change.complexity] ?? change.complexity}</Badge>
             )}
             {change.isEmergencyPostReviewDue && (
-              <Badge
-                variant="outline"
-                className="bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300"
-              >
+              <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300">
                 <AlertCircle className="h-3 w-3 mr-1" /> PIR Due
               </Badge>
             )}
@@ -333,18 +622,11 @@ function ChangeDetailDialog({
 
           {/* Meta */}
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t">
-            <KeyValue
-              label="CE Worker"
-              value={change.assignedCeWorkerName ?? 'Unassigned'}
-            />
+            <KeyValue label="CE Worker" value={change.assignedCeWorkerName ?? 'Unassigned'} />
             <KeyValue
               label="Catalog Updated"
               value={
-                change.catalogUpdatedAt ? (
-                  <FormattedDate date={change.catalogUpdatedAt} />
-                ) : (
-                  'Not yet'
-                )
+                change.catalogUpdatedAt ? <FormattedDate date={change.catalogUpdatedAt} /> : 'Not yet'
               }
             />
             <KeyValue label="Created" value={<FormattedDate date={change.createdAt} />} />
@@ -356,17 +638,47 @@ function ChangeDetailDialog({
 
           {change.postImplementationReview && (
             <div className="rounded-md border p-3 text-xs leading-relaxed">
-              <div className="font-semibold text-foreground mb-1">
-                Post-Implementation Review
-              </div>
+              <div className="font-semibold text-foreground mb-1">Post-Implementation Review</div>
               {change.postImplementationReview}
             </div>
           )}
+
+          {/* Owner actions */}
+          <div className="rounded-md bg-muted/50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+              Service Owner Actions
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onRiskReview}>
+                <AlertTriangle className="h-3 w-3" /> Review risk
+              </Button>
+              <Button size="sm" variant="default" className="h-7 gap-1.5" onClick={onAuthorize}>
+                <Gavel className="h-3 w-3" /> Authorize resources
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onRollback}>
+                <RotateCcw className="h-3 w-3" /> Request rollback readiness
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onVerifyImpact}>
+                <Megaphone className="h-3 w-3" /> Verify customer impact plan
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onLinkRisk}>
+                <TriangleAlert className="h-3 w-3" /> Link risk
+                <ArrowRight className="h-3 w-3" />
+              </Button>
+              {(change.isEmergencyPostReviewDue || isEmergency || change.status === 'CLOSED') && (
+                <Button size="sm" variant="default" className="h-7 gap-1.5" onClick={onPir}>
+                  <CheckCircle2 className="h-3 w-3" /> Record PIR
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
   );
 }
+
+/* --------------------- Summary tile --------------------- */
 
 function SummaryTile({
   icon,

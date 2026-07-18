@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/communications — create a communication record.
-// Role: SCM_WORKER or CM_LEADER.
+// Role: SCM_WORKER, CM_LEADER, or SERVICE_OWNER.
 // Body: { demandId?, serviceId?, serviceCustomerId?, slaEventId?,
 //         direction, channel, subject, body }
 // Side effects:
@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
 //     Communication row itself (no additional DemandEvent needed).
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireRole('SCM_WORKER' as Role, 'CM_LEADER' as Role);
+    const session = await requireRole('SCM_WORKER' as Role, 'CM_LEADER' as Role, 'SERVICE_OWNER' as Role);
 
     const body = await req.json().catch(() => ({}));
 

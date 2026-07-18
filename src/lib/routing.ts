@@ -71,6 +71,15 @@ export const VIEW_PATH: Record<ViewKey, string> = {
   // Enterprise Workflow Review — CM Leader oversight views
   audit: 'audit',
   'delivery-failures': 'delivery-failures',
+  // Service Owner Enterprise
+  'service-health': 'service-health',
+  'known-errors': 'known-errors',
+  'customer-impact': 'customer-impact',
+  'risk-register': 'risk-register',
+  lifecycle: 'lifecycle',
+  'owner-audit': 'owner-audit',
+  'service-detail': 'services',
+  'article-detail': 'knowledge',
 };
 
 /**

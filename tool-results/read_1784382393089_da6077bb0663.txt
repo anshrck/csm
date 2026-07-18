@@ -1,0 +1,1327 @@
+     1→# Service Owner Enterprise Workflow Specification
+     2→
+     3→Purpose: give next AI one complete plan to upgrade Service Owner workspace to enterprise-grade workflow.
+     4→
+     5→Audience: implementation AI working in `D:\CSM`.
+     6→
+     7→Current Service Owner workspace:
+     8→
+     9→- `src/components/workspaces/service-owner/ServiceOwnerWorkspace.tsx`
+    10→- `Dashboard.tsx`
+    11→- `Portfolio.tsx`
+    12→- `SlaPerformance.tsx`
+    13→- `Governance.tsx`
+    14→- `Problems.tsx`
+    15→- `Changes.tsx`
+    16→- `DemandDetail.tsx`
+    17→- `_hooks.ts`
+    18→
+    19→Current Service Owner navigation:
+    20→
+    21→- Dashboard
+    22→- Service Portfolio
+    23→- SLA Performance
+    24→- Governance Approvals
+    25→- Problem Records
+    26→- Changes
+    27→
+    28→Enterprise target:
+    29→
+    30→Service Owner must operate as accountable owner for service value, health, risk, commitments, customer impact, SLA, incidents, problems, changes, knowledge, and lifecycle.
+    31→
+    32→## Core Service Owner Responsibility
+    33→
+    34→Service Owner owns:
+    35→
+    36→- Service value.
+    37→- Service health.
+    38→- SLA commitment.
+    39→- Service catalog accuracy.
+    40→- Customer impact.
+    41→- Major incident/accountability response.
+    42→- Problem and known error direction.
+    43→- Change risk on owned services.
+    44→- Demand commitment approval.
+    45→- Service lifecycle planning.
+    46→- Knowledge accuracy for owned service.
+    47→- Risk and remediation actions.
+    48→
+    49→Service Owner does not replace SCM Worker or CM Leader. Service Owner gives governance direction and accountability decisions for services they own.
+    50→
+    51→## Required Navigation
+    52→
+    53→Update `src/lib/store.ts`.
+    54→
+    55→Add these `ViewKey` values:
+    56→
+    57→```ts
+    58→| 'service-health'
+    59→| 'service-incidents'
+    60→| 'known-errors'
+    61→| 'knowledge'
+    62→| 'customer-impact'
+    63→| 'risk-register'
+    64→| 'lifecycle'
+    65→| 'owner-audit'
+    66→| 'service-detail'
+    67→| 'ticket-detail'
+    68→| 'article-detail'
+    69→```
+    70→
+    71→Replace Service Owner nav with:
+    72→
+    73→```ts
+    74→SERVICE_OWNER: [
+    75→  { key: 'dashboard', label: 'Command Center', icon: 'LayoutDashboard' },
+    76→  { key: 'service-health', label: 'Service Health', icon: 'Activity' },
+    77→  { key: 'service-incidents', label: 'Incidents', icon: 'Flame' },
+    78→  { key: 'sla', label: 'SLA Performance', icon: 'Gauge' },
+    79→  { key: 'governance', label: 'Governance', icon: 'ShieldCheck' },
+    80→  { key: 'problems', label: 'Problems', icon: 'Bug' },
+    81→  { key: 'known-errors', label: 'Known Errors', icon: 'BookOpen' },
+    82→  { key: 'changes', label: 'Changes', icon: 'GitBranch' },
+    83→  { key: 'customer-impact', label: 'Customer Impact', icon: 'Users' },
+    84→  { key: 'risk-register', label: 'Risk Register', icon: 'TriangleAlert' },
+    85→  { key: 'lifecycle', label: 'Lifecycle', icon: 'RefreshCw' },
+    86→]
+    87→```
+    88→
+    89→Optional admin-only Service Owner views:
+    90→
+    91→- `owner-audit`
+    92→- `knowledge`
+    93→
+    94→## Required Workspace Switch
+    95→
+    96→Update `src/components/workspaces/service-owner/ServiceOwnerWorkspace.tsx`.
+    97→
+    98→Add imports:
+    99→
+   100→```ts
+   101→import ServiceHealth from './ServiceHealth';
+   102→import ServiceIncidents from './ServiceIncidents';
+   103→import KnownErrors from './KnownErrors';
+   104→import CustomerImpact from './CustomerImpact';
+   105→import RiskRegister from './RiskRegister';
+   106→import Lifecycle from './Lifecycle';
+   107→import Knowledge from './Knowledge';
+   108→import OwnerAudit from './OwnerAudit';
+   109→import ServiceDetail from './ServiceDetail';
+   110→import TicketDetail from './TicketDetail';
+   111→import ArticleDetail from './ArticleDetail';
+   112→```
+   113→
+   114→Add cases:
+   115→
+   116→```tsx
+   117→case 'service-health':
+   118→  return <ServiceHealth />;
+   119→case 'service-incidents':
+   120→  return <ServiceIncidents />;
+   121→case 'known-errors':
+   122→  return <KnownErrors />;
+   123→case 'customer-impact':
+   124→  return <CustomerImpact />;
+   125→case 'risk-register':
+   126→  return <RiskRegister />;
+   127→case 'lifecycle':
+   128→  return <Lifecycle />;
+   129→case 'knowledge':
+   130→  return <Knowledge />;
+   131→case 'owner-audit':
+   132→  return <OwnerAudit />;
+   133→case 'service-detail':
+   134→  return <ServiceDetail id={params.id} />;
+   135→case 'ticket-detail':
+   136→  return <TicketDetail id={params.id} />;
+   137→case 'article-detail':
+   138→  return <ArticleDetail id={params.id} />;
+   139→```
+   140→
+   141→## Data Scope Rules
+   142→
+   143→Every Service Owner view must show only services where:
+   144→
+   145→```ts
+   146→service.serviceOwnerId === session.id
+   147→```
+   148→
+   149→Related data:
+   150→
+   151→- Tickets: `ticket.serviceId in ownedServiceIds`
+   152→- SLA clocks: `ticket.serviceId in ownedServiceIds`
+   153→- SLA events: `slaEvent.serviceId in ownedServiceIds`
+   154→- Problems: `problem.serviceId in ownedServiceIds`
+   155→- Changes: any `affectedServices.serviceId in ownedServiceIds`
+   156→- Demands: any `relatedServices.serviceId in ownedServiceIds`
+   157→- Knowledge: `knowledgeArticle.serviceId in ownedServiceIds`
+   158→- Surveys: ticket/demand linked to owned service
+   159→- Audit logs: entity linked to owned service
+   160→
+   161→Never show all-tenant data in Service Owner views.
+   162→
+   163→## Shared Hook Layer
+   164→
+   165→Extend `src/components/workspaces/service-owner/_hooks.ts`.
+   166→
+   167→Required hooks:
+   168→
+   169→```ts
+   170→useOwnerServices()
+   171→useOwnerServiceIds()
+   172→useOwnerTickets()
+   173→useOwnerTicket(id)
+   174→useOwnerSlaClocks()
+   175→useOwnerSlaEvents()
+   176→useOwnerProblems()
+   177→useOwnerKnownErrors()
+   178→useOwnerChanges()
+   179→useOwnerDemands()
+   180→useOwnerKnowledge()
+   181→useOwnerSurveys()
+   182→useOwnerGovernanceDecisions()
+   183→useOwnerAuditLogs()
+   184→useServiceHealthSummary()
+   185→useCustomerImpactSummary()
+   186→useRiskRegisterItems()
+   187→```
+   188→
+   189→Each hook must use React Query and proper query keys.
+   190→
+   191→Example:
+   192→
+   193→```ts
+   194→useQuery({
+   195→  queryKey: ['owner-tickets'],
+   196→  queryFn: () => apiGet<Ticket[]>('/api/tickets?owner=me'),
+   197→})
+   198→```
+   199→
+   200→If endpoint lacks `owner=me`, add endpoint support.
+   201→
+   202→## Required API Support
+   203→
+   204→Add or update APIs:
+   205→
+   206→### Tickets
+   207→
+   208→`GET /api/tickets?owner=me`
+   209→
+   210→Returns tickets touching owned services.
+   211→
+   212→Filter support:
+   213→
+   214→- `status`
+   215→- `priority`
+   216→- `type`
+   217→- `serviceId`
+   218→- `sla=breached|warning|running`
+   219→- `customerId`
+   220→
+   221→### SLA
+   222→
+   223→`GET /api/sla/clocks?owner=me`
+   224→
+   225→Returns clocks for tickets touching owned services.
+   226→
+   227→If no route exists, create:
+   228→
+   229→- `src/app/api/sla/clocks/route.ts`
+   230→
+   231→### Knowledge
+   232→
+   233→`GET /api/knowledge?owner=me`
+   234→
+   235→Returns articles for owned services.
+   236→
+   237→### Surveys
+   238→
+   239→`GET /api/surveys?owner=me`
+   240→
+   241→Returns CSAT for tickets/demands touching owned services.
+   242→
+   243→### Audit
+   244→
+   245→`GET /api/audit?owner=me`
+   246→
+   247→Returns audit logs for owned-service entities.
+   248→
+   249→### Risk Register
+   250→
+   251→Either derive in frontend or create:
+   252→
+   253→`GET /api/service-owner/risk-register`
+   254→
+   255→Risk sources:
+   256→
+   257→- active SLA breach
+   258→- repeated warning
+   259→- P1/P2 ticket open too long
+   260→- high reopen rate
+   261→- known error without workaround
+   262→- problem without root cause after threshold
+   263→- complex/emergency change
+   264→- low CSAT
+   265→- stale service catalog metadata
+   266→
+   267→## Service Owner Command Center
+   268→
+   269→File:
+   270→
+   271→- `src/components/workspaces/service-owner/Dashboard.tsx`
+   272→
+   273→Upgrade purpose:
+   274→
+   275→Daily executive operating surface. Not passive dashboard.
+   276→
+   277→Required sections:
+   278→
+   279→### 1. Top Action Strip
+   280→
+   281→Cards:
+   282→
+   283→- Owned services
+   284→- Active P1/P2 incidents
+   285→- SLA breaches
+   286→- SLA warnings
+   287→- Open problems
+   288→- Known errors
+   289→- Pending governance decisions
+   290→- High-risk changes
+   291→- Low CSAT count
+   292→
+   293→Each card clickable to filtered view.
+   294→
+   295→### 2. My Required Actions
+   296→
+   297→List all items where Service Owner must act:
+   298→
+   299→- breach response missing
+   300→- accepted demand needing commitment approval
+   301→- commitment escalation pending
+   302→- known error needing workaround approval
+   303→- service catalog review overdue
+   304→- emergency change post-review due
+   305→- low CSAT needing owner review
+   306→- problem decision needed
+   307→
+   308→Each row:
+   309→
+   310→- item type
+   311→- service
+   312→- customer impact
+   313→- age
+   314→- risk level
+   315→- action button
+   316→
+   317→Actions:
+   318→
+   319→- Record Breach Response
+   320→- Approve Commitment
+   321→- Escalate Commitment
+   322→- Approve Workaround
+   323→- Request Remediation Plan
+   324→- Mark Catalog Reviewed
+   325→- Open Detail
+   326→
+   327→### 3. Service Health Heatmap
+   328→
+   329→Matrix:
+   330→
+   331→- service name
+   332→- SLA health
+   333→- open P1/P2
+   334→- open problems
+   335→- open changes
+   336→- known errors
+   337→- CSAT
+   338→- risk score
+   339→
+   340→Click row to `service-detail`.
+   341→
+   342→### 4. Customer Impact Feed
+   343→
+   344→Show impacted customers by owned service:
+   345→
+   346→- active incident count
+   347→- active breach count
+   348→- tickets waiting
+   349→- last customer communication
+   350→- CSAT average
+   351→
+   352→### 5. Governance History
+   353→
+   354→Last 10 Service Owner decisions:
+   355→
+   356→- commitment approval
+   357→- breach response
+   358→- lifecycle direction
+   359→- catalog accuracy
+   360→- remediation authorization
+   361→
+   362→## Service Health View
+   363→
+   364→New file:
+   365→
+   366→- `src/components/workspaces/service-owner/ServiceHealth.tsx`
+   367→
+   368→Purpose:
+   369→
+   370→Single pane per owned service.
+   371→
+   372→Required UI:
+   373→
+   374→### Filters
+   375→
+   376→- service
+   377→- health: green/amber/red
+   378→- domain
+   379→- SLA class
+   380→- status: active/planned/retired
+   381→
+   382→### Service Health Table
+   383→
+   384→Columns:
+   385→
+   386→- Service
+   387→- SLA class
+   388→- Availability target
+   389→- Current health
+   390→- Open incidents
+   391→- P1/P2 count
+   392→- SLA clocks breached
+   393→- Warnings due soon
+   394→- Problems
+   395→- Known errors
+   396→- High-risk changes
+   397→- CSAT
+   398→- Catalog reviewed date
+   399→
+   400→### Service Drilldown
+   401→
+   402→On row click open `ServiceDetail`.
+   403→
+   404→Tabs inside detail:
+   405→
+   406→- Overview
+   407→- SLA
+   408→- Tickets
+   409→- Problems
+   410→- Known Errors
+   411→- Changes
+   412→- Customers
+   413→- Knowledge
+   414→- Risks
+   415→- Audit
+   416→
+   417→## Service Incidents View
+   418→
+   419→New file:
+   420→
+   421→- `src/components/workspaces/service-owner/ServiceIncidents.tsx`
+   422→
+   423→Purpose:
+   424→
+   425→Owner sees incidents/cases affecting owned services.
+   426→
+   427→Required filters:
+   428→
+   429→- service
+   430→- priority
+   431→- status
+   432→- customer
+   433→- assigned group
+   434→- SLA status
+   435→- age
+   436→
+   437→Required queues:
+   438→
+   439→- Active P1/P2
+   440→- SLA breached
+   441→- Due in next hour
+   442→- Waiting customer
+   443→- Reopened
+   444→- Unassigned
+   445→- Major incident candidates
+   446→
+   447→Table columns:
+   448→
+   449→- Ticket number
+   450→- Title
+   451→- Service
+   452→- Customer
+   453→- Priority
+   454→- Status
+   455→- Assigned group/user
+   456→- Response SLA
+   457→- Resolution SLA
+   458→- Age
+   459→- Last update
+   460→
+   461→Row click:
+   462→
+   463→- `ticket-detail`
+   464→
+   465→Service Owner actions:
+   466→
+   467→- Watch ticket
+   468→- Add internal owner note
+   469→- Request update
+   470→- Authorize emergency response
+   471→- Link to problem
+   472→- Open related change
+   473→
+   474→Service Owner cannot directly resolve unless permission says so.
+   475→
+   476→## Ticket Detail For Service Owner
+   477→
+   478→New file:
+   479→
+   480→- `src/components/workspaces/service-owner/TicketDetail.tsx`
+   481→
+   482→Required panels:
+   483→
+   484→- Header: number, title, priority, status, service, customer
+   485→- SLA clocks: response and resolution
+   486→- Customer impact summary
+   487→- Conversation thread
+   488→- Internal owner notes
+   489→- Attachments
+   490→- Related problem/change/demand/knowledge
+   491→- Event timeline
+   492→- Audit timeline
+   493→
+   494→Allowed actions:
+   495→
+   496→- Add internal comment
+   497→- Add customer-visible governance update if permitted
+   498→- Request update from assigned worker
+   499→- Authorize resources
+   500→- Direct emergency change
+   501→- Link/create problem
+   502→- Link knowledge article
+   503→- Record breach response
+   504→
+   505→Disallowed:
+   506→
+   507→- Service Owner should not casually assign or resolve tickets unless permission explicitly allows.
+   508→
+   509→## Known Errors View
+   510→
+   511→New file:
+   512→
+   513→- `src/components/workspaces/service-owner/KnownErrors.tsx`
+   514→
+   515→Purpose:
+   516→
+   517→Manage known errors for owned services.
+   518→
+   519→Required filters:
+   520→
+   521→- service
+   522→- status
+   523→- has workaround
+   524→- customer visible
+   525→- linked problem
+   526→- stale review
+   527→
+   528→Required table columns:
+   529→
+   530→- Known error ID
+   531→- Title
+   532→- Service
+   533→- Linked problem
+   534→- Workaround status
+   535→- Customer visibility
+   536→- Last reviewed
+   537→- Open affected tickets
+   538→- Permanent fix/change
+   539→
+   540→Actions:
+   541→
+   542→- Review workaround
+   543→- Approve customer visibility
+   544→- Request better workaround
+   545→- Link to knowledge article
+   546→- Direct permanent fix
+   547→- Retire known error
+   548→
+   549→Workflow:
+   550→
+   551→```text
+   552→Problem root cause identified
+   553→Known error proposed
+   554→Service Owner reviews workaround
+   555→Knowledge article drafted
+   556→Service Owner or Knowledge Manager approves publication
+   557→Customers/SCM can see workaround
+   558→Permanent change linked
+   559→Known error retired after fix verified
+   560→```
+   561→
+   562→## Knowledge View
+   563→
+   564→New file:
+   565→
+   566→- `src/components/workspaces/service-owner/Knowledge.tsx`
+   567→
+   568→Purpose:
+   569→
+   570→Owned-service knowledge governance.
+   571→
+   572→Required tabs:
+   573→
+   574→- Published
+   575→- Drafts
+   576→- Review queue
+   577→- Known error articles
+   578→- Retired
+   579→
+   580→Service Owner actions:
+   581→
+   582→- Review article for owned service
+   583→- Approve article accuracy
+   584→- Request changes
+   585→- Retire stale article
+   586→- Link article to service/problem/ticket
+   587→
+   588→Article cards show:
+   589→
+   590→- title
+   591→- type
+   592→- service
+   593→- status
+   594→- author
+   595→- reviewer
+   596→- last updated
+   597→- linked tickets/problems
+   598→- usefulness score if available
+   599→
+   600→## Customer Impact View
+   601→
+   602→New file:
+   603→
+   604→- `src/components/workspaces/service-owner/CustomerImpact.tsx`
+   605→
+   606→Purpose:
+   607→
+   608→Show which customers are impacted by owned services.
+   609→
+   610→Required views:
+   611→
+   612→### Customer Heatmap
+   613→
+   614→Rows:
+   615→
+   616→- customer org
+   617→- owned services used
+   618→- active tickets
+   619→- active P1/P2
+   620→- SLA breaches
+   621→- open demands
+   622→- low CSAT
+   623→- last communication
+   624→
+   625→### Impact Timeline
+   626→
+   627→Timeline of:
+   628→
+   629→- SLA breach
+   630→- major incident
+   631→- customer communication
+   632→- ticket created/resolved
+   633→- demand accepted
+   634→- change completed
+   635→
+   636→### Customer Detail Drawer
+   637→
+   638→Tabs:
+   639→
+   640→- Services used
+   641→- Open tickets
+   642→- SLA history
+   643→- Demands
+   644→- Communications
+   645→- CSAT
+   646→
+   647→Service Owner actions:
+   648→
+   649→- Request SCM customer update
+   650→- Record owner communication note
+   651→- Authorize remediation
+   652→- Escalate customer risk
+   653→
+   654→## Risk Register View
+   655→
+   656→New file:
+   657→
+   658→- `src/components/workspaces/service-owner/RiskRegister.tsx`
+   659→
+   660→Purpose:
+   661→
+   662→Enterprise risk board for owned services.
+   663→
+   664→Risk item fields:
+   665→
+   666→- id
+   667→- service
+   668→- title
+   669→- source type: SLA | TICKET | PROBLEM | CHANGE | KNOWLEDGE | CSAT | CATALOG
+   670→- severity: LOW | MEDIUM | HIGH | CRITICAL
+   671→- likelihood
+   672→- impact
+   673→- owner
+   674→- due date
+   675→- status: OPEN | MITIGATING | ACCEPTED | CLOSED
+   676→- mitigation plan
+   677→- linked entity
+   678→
+   679→If no DB model exists, derive risk items from current data first.
+   680→
+   681→Later add:
+   682→
+   683→```prisma
+   684→model ServiceRisk {
+   685→  id          String @id @default(cuid())
+   686→  serviceId   String
+   687→  title       String
+   688→  sourceType  String
+   689→  sourceId    String?
+   690→  severity    String
+   691→  likelihood  String?
+   692→  impact      String?
+   693→  ownerId     String?
+   694→  status      String
+   695→  mitigation  String?
+   696→  dueDate     DateTime?
+   697→  createdAt   DateTime @default(now())
+   698→  updatedAt   DateTime @updatedAt
+   699→}
+   700→```
+   701→
+   702→Risk creation rules:
+   703→
+   704→- active P1 breach = CRITICAL
+   705→- P2 breach older than threshold = HIGH
+   706→- known error without workaround = HIGH
+   707→- problem open over 7 days without root cause = MEDIUM/HIGH
+   708→- emergency change post-review due = HIGH
+   709→- CSAT <= 2 = HIGH
+   710→- catalog stale over 90 days = MEDIUM
+   711→
+   712→Actions:
+   713→
+   714→- accept risk
+   715→- create mitigation
+   716→- link change
+   717→- request update
+   718→- close risk
+   719→
+   720→## Lifecycle View
+   721→
+   722→New file:
+   723→
+   724→- `src/components/workspaces/service-owner/Lifecycle.tsx`
+   725→
+   726→Purpose:
+   727→
+   728→Manage service lifecycle and roadmap.
+   729→
+   730→Sections:
+   731→
+   732→### Lifecycle Board
+   733→
+   734→Columns:
+   735→
+   736→- Planned
+   737→- Active
+   738→- Under Review
+   739→- Retirement Candidate
+   740→- Retired
+   741→
+   742→Each service card:
+   743→
+   744→- service name
+   745→- SLA class
+   746→- customer count
+   747→- ticket trend
+   748→- problem count
+   749→- CSAT
+   750→- last catalog review
+   751→- next review due
+   752→
+   753→### Lifecycle Actions
+   754→
+   755→- request catalog update
+   756→- mark reviewed
+   757→- propose retirement
+   758→- set replacement guidance
+   759→- record lifecycle direction
+   760→- link roadmap item
+   761→
+   762→### Required Governance Decisions
+   763→
+   764→Use `GovernanceDecision`:
+   765→
+   766→- `decisionType = LIFECYCLE_DIRECTION`
+   767→- decisions:
+   768→  - `APPROVED`
+   769→  - `ESCALATED`
+   770→  - `REMEDIATION_AUTHORIZED`
+   771→
+   772→## Governance View Upgrade
+   773→
+   774→File:
+   775→
+   776→- `src/components/workspaces/service-owner/Governance.tsx`
+   777→
+   778→Keep current commitment approvals and breach responses.
+   779→
+   780→Add tabs:
+   781→
+   782→- Commitment Approvals
+   783→- Breach Responses
+   784→- Lifecycle Decisions
+   785→- Catalog Accuracy
+   786→- Escalations
+   787→- Decision History
+   788→
+   789→Add exact states:
+   790→
+   791→Commitment:
+   792→
+   793→```text
+   794→Accepted demand on owned service
+   795→Service Owner reviews commitment
+   796→Approve commitment OR escalate
+   797→Decision recorded
+   798→CM Leader and SCM notified
+   799→Demand can move to change only after required owner decision if policy requires
+   800→```
+   801→
+   802→Breach:
+   803→
+   804→```text
+   805→SLA breach on owned service
+   806→Owner sees breach in dashboard and SLA view
+   807→Owner records response
+   808→Response includes decision, rationale, resources, follow-up owner/date
+   809→CM Leader notified
+   810→Audit log written
+   811→Risk item created or updated
+   812→```
+   813→
+   814→Catalog:
+   815→
+   816→```text
+   817→Service metadata stale or change proposes catalog update
+   818→Owner reviews catalog accuracy
+   819→Owner approves/request changes
+   820→Decision recorded
+   821→Catalog review date updated
+   822→```
+   823→
+   824→Escalation:
+   825→
+   826→```text
+   827→Commitment/risk exceeds owner authority
+   828→Owner escalates to Governance Owner
+   829→CM Leader notified
+   830→Escalation remains open until decision/resolution
+   831→```
+   832→
+   833→## SLA Performance Upgrade
+   834→
+   835→File:
+   836→
+   837→- `src/components/workspaces/service-owner/SlaPerformance.tsx`
+   838→
+   839→Current view uses SLA events. Upgrade to SLA clocks.
+   840→
+   841→Add sections:
+   842→
+   843→- Active SLA clocks by service
+   844→- Breached clocks
+   845→- Due soon clocks
+   846→- Response compliance
+   847→- Resolution compliance
+   848→- Breach response status
+   849→- Problem linkage
+   850→- Customer communication status
+   851→
+   852→Each breach row:
+   853→
+   854→- service
+   855→- ticket
+   856→- customer
+   857→- SLA type
+   858→- due date
+   859→- breached at
+   860→- assigned user/group
+   861→- problem linked?
+   862→- owner response recorded?
+   863→
+   864→Actions:
+   865→
+   866→- record breach response
+   867→- open ticket
+   868→- open problem
+   869→- open change
+   870→- create risk
+   871→
+   872→## Problems View Upgrade
+   873→
+   874→File:
+   875→
+   876→- `src/components/workspaces/service-owner/Problems.tsx`
+   877→
+   878→Add owner actions:
+   879→
+   880→- request root cause update
+   881→- approve known error classification
+   882→- approve workaround publication
+   883→- direct change required
+   884→- link knowledge article
+   885→- create risk
+   886→
+   887→Add tabs:
+   888→
+   889→- Active Problems
+   890→- Root Cause Pending
+   891→- Decision Needed
+   892→- Known Errors
+   893→- Linked To Change
+   894→- Closed
+   895→
+   896→Problem detail add:
+   897→
+   898→- linked tickets
+   899→- linked SLA breaches
+   900→- linked changes
+   901→- linked knowledge article
+   902→- workaround review
+   903→- owner decision history
+   904→
+   905→## Changes View Upgrade
+   906→
+   907→File:
+   908→
+   909→- `src/components/workspaces/service-owner/Changes.tsx`
+   910→
+   911→Service Owner must see only changes touching owned services.
+   912→
+   913→Add categories:
+   914→
+   915→- Emergency changes
+   916→- Complex changes
+   917→- Changes pending approval
+   918→- In implementation
+   919→- Verification/cutover
+   920→- Post implementation review due
+   921→- Catalog update required
+   922→
+   923→Service Owner actions:
+   924→
+   925→- review risk
+   926→- authorize resources
+   927→- request rollback readiness
+   928→- record post-implementation owner review
+   929→- verify customer impact plan
+   930→- link risk
+   931→
+   932→## Portfolio View Upgrade
+   933→
+   934→File:
+   935→
+   936→- `src/components/workspaces/service-owner/Portfolio.tsx`
+   937→
+   938→Current dialog too catalog-centric.
+   939→
+   940→Upgrade detail tabs:
+   941→
+   942→- Overview
+   943→- Health
+   944→- SLA clocks
+   945→- Incidents
+   946→- Customers
+   947→- Problems
+   948→- Known errors
+   949→- Changes
+   950→- Knowledge
+   951→- Lifecycle
+   952→- Audit
+   953→
+   954→Add catalog review action:
+   955→
+   956→- Mark catalog accurate
+   957→- Request catalog update
+   958→- Record catalog accuracy governance decision
+   959→
+   960→Add fields:
+   961→
+   962→- lastReviewedAt
+   963→- nextReviewDue
+   964→- lifecycleStage
+   965→- customerCount
+   966→- activeTicketCount
+   967→- activeBreachCount
+   968→- riskScore
+   969→
+   970→If schema lacks fields, derive or add migration.
+   971→
+   972→## Service Detail View
+   973→
+   974→New file:
+   975→
+   976→- `src/components/workspaces/service-owner/ServiceDetail.tsx`
+   977→
+   978→Route:
+   979→
+   980→- `navigate('service-detail', { id: service.id })`
+   981→
+   982→This becomes primary drilldown.
+   983→
+   984→Header:
+   985→
+   986→- service name
+   987→- SLA class
+   988→- status
+   989→- health
+   990→- risk score
+   991→- owner
+   992→- technical owner
+   993→
+   994→Tabs:
+   995→
+   996→1. Summary
+   997→2. Health
+   998→3. Tickets
+   999→4. SLA
+  1000→5. Customers
+  1001→6. Problems
+  1002→7. Known Errors
+  1003→8. Changes
+  1004→9. Knowledge
+  1005→10. Lifecycle
+  1006→11. Audit
+  1007→
+  1008→Each tab must fetch scoped data by `serviceId`.
+  1009→
+  1010→## Audit View
+  1011→
+  1012→New file:
+  1013→
+  1014→- `src/components/workspaces/service-owner/OwnerAudit.tsx`
+  1015→
+  1016→Service Owner sees audit for owned service entities only.
+  1017→
+  1018→Filters:
+  1019→
+  1020→- service
+  1021→- entity type
+  1022→- actor
+  1023→- action
+  1024→- date range
+  1025→
+  1026→Rows:
+  1027→
+  1028→- timestamp
+  1029→- actor
+  1030→- action
+  1031→- entity
+  1032→- before/after diff summary
+  1033→
+  1034→Actions:
+  1035→
+  1036→- open entity
+  1037→- export later in reporting phase
+  1038→
+  1039→## Required Components
+  1040→
+  1041→Create shared owner components:
+  1042→
+  1043→- `OwnerActionCard.tsx`
+  1044→- `ServiceHealthBadge.tsx`
+  1045→- `RiskScoreBadge.tsx`
+  1046→- `SlaClockBadge.tsx`
+  1047→- `CustomerImpactBadge.tsx`
+  1048→- `OwnerDecisionDialog.tsx`
+  1049→- `BreachResponseDialog.tsx`
+  1050→- `CatalogReviewDialog.tsx`
+  1051→- `RiskDrawer.tsx`
+  1052→- `ServiceDetailTabs.tsx`
+  1053→- `TicketMiniTable.tsx`
+  1054→- `KnowledgeArticleCard.tsx`
+  1055→
+  1056→Location:
+  1057→
+  1058→- `src/components/workspaces/service-owner/_components/`
+  1059→
+  1060→## Data Types To Add
+  1061→
+  1062→Update `src/lib/types.ts`.
+  1063→
+  1064→Add:
+  1065→
+  1066→```ts
+  1067→export interface SlaClock {
+  1068→  id: string;
+  1069→  ticketId: string;
+  1070→  policyId: string;
+  1071→  type: 'RESPONSE' | 'RESOLUTION';
+  1072→  status: 'RUNNING' | 'PAUSED' | 'MET' | 'BREACHED' | 'CANCELED';
+  1073→  startedAt: string;
+  1074→  dueAt: string;
+  1075→  pausedAt: string | null;
+  1076→  totalPausedMins: number;
+  1077→  metAt: string | null;
+  1078→  breachedAt: string | null;
+  1079→}
+  1080→
+  1081→export interface KnowledgeArticle {
+  1082→  id: string;
+  1083→  title: string;
+  1084→  body: string;
+  1085→  type: 'HOW_TO' | 'KNOWN_ERROR' | 'FAQ' | 'RUNBOOK';
+  1086→  status: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'RETIRED';
+  1087→  serviceId: string | null;
+  1088→  serviceName?: string | null;
+  1089→  authorId: string;
+  1090→  authorName?: string;
+  1091→  reviewerId: string | null;
+  1092→  reviewerName?: string | null;
+  1093→  createdAt: string;
+  1094→  updatedAt: string;
+  1095→  publishedAt: string | null;
+  1096→}
+  1097→
+  1098→export interface OwnerRiskItem {
+  1099→  id: string;
+  1100→  serviceId: string;
+  1101→  serviceName: string;
+  1102→  title: string;
+  1103→  sourceType: string;
+  1104→  sourceId: string | null;
+  1105→  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  1106→  status: 'OPEN' | 'MITIGATING' | 'ACCEPTED' | 'CLOSED';
+  1107→  mitigation: string | null;
+  1108→  dueDate: string | null;
+  1109→}
+  1110→
+  1111→export interface CustomerImpactSummary {
+  1112→  customerId: string;
+  1113→  customerName: string;
+  1114→  serviceIds: string[];
+  1115→  activeTickets: number;
+  1116→  p1p2Tickets: number;
+  1117→  activeBreaches: number;
+  1118→  openDemands: number;
+  1119→  averageCsat: number | null;
+  1120→  lastCommunicationAt: string | null;
+  1121→}
+  1122→```
+  1123→
+  1124→## Decision Dialogs
+  1125→
+  1126→All Service Owner decisions must require rationale.
+  1127→
+  1128→Common fields:
+  1129→
+  1130→- decision type
+  1131→- decision
+  1132→- rationale
+  1133→- resources authorized
+  1134→- follow-up owner
+  1135→- follow-up date
+  1136→- linked entity
+  1137→
+  1138→Use `POST /api/governance-decisions`.
+  1139→
+  1140→Decision types:
+  1141→
+  1142→- `COMMITMENT_APPROVAL`
+  1143→- `COMMITMENT_ESCALATION`
+  1144→- `BREACH_RESPONSE`
+  1145→- `LIFECYCLE_DIRECTION`
+  1146→- `CATALOG_ACCURACY`
+  1147→- `RISK_ACCEPTANCE`
+  1148→- `REMEDIATION_DIRECTION`
+  1149→- `KNOWLEDGE_APPROVAL`
+  1150→
+  1151→If API enum validation blocks new types, update validation.
+  1152→
+  1153→## Notifications Required
+  1154→
+  1155→Service Owner actions must notify:
+  1156→
+  1157→### Commitment approved
+  1158→
+  1159→Notify:
+  1160→
+  1161→- assigned SCM Worker
+  1162→- CM Leader
+  1163→- customer requester if customer-visible
+  1164→
+  1165→### Breach response recorded
+  1166→
+  1167→Notify:
+  1168→
+  1169→- CM Leader
+  1170→- assigned SCM Worker for impacted customer
+  1171→- Service Owner themselves only if follow-up assigned
+  1172→
+  1173→### Escalation
+  1174→
+  1175→Notify:
+  1176→
+  1177→- CM Leader
+  1178→- Governance Owner/System Admin role if exists
+  1179→- all Service Owners only if enterprise-wide risk
+  1180→
+  1181→### Knowledge approved
+  1182→
+  1183→Notify:
+  1184→
+  1185→- article author
+  1186→- SCM Workers assigned to impacted customers if customer-visible
+  1187→
+  1188→### Catalog accuracy issue
+  1189→
+  1190→Notify:
+  1191→
+  1192→- CM Leader
+  1193→- catalog/service admin if exists
+  1194→
+  1195→## Audit Required
+  1196→
+  1197→Every Service Owner action must write `AuditLog`.
+  1198→
+  1199→Actions:
+  1200→
+  1201→- `OWNER_COMMITMENT_APPROVED`
+  1202→- `OWNER_COMMITMENT_ESCALATED`
+  1203→- `OWNER_BREACH_RESPONSE_RECORDED`
+  1204→- `OWNER_REMEDIATION_AUTHORIZED`
+  1205→- `OWNER_EMERGENCY_CHANGE_DIRECTED`
+  1206→- `OWNER_KNOWN_ERROR_APPROVED`
+  1207→- `OWNER_KNOWLEDGE_APPROVED`
+  1208→- `OWNER_CATALOG_REVIEWED`
+  1209→- `OWNER_RISK_ACCEPTED`
+  1210→- `OWNER_LIFECYCLE_DIRECTION_RECORDED`
+  1211→
+  1212→## Role And Permission Rules
+  1213→
+  1214→Service Owner permissions needed:
+  1215→
+  1216→- `service.owner.dashboard.read`
+  1217→- `service.owner.health.read`
+  1218→- `service.owner.tickets.read`
+  1219→- `service.owner.sla.read`
+  1220→- `service.owner.problems.read`
+  1221→- `service.owner.changes.read`
+  1222→- `service.owner.knowledge.read`
+  1223→- `service.owner.knowledge.approve`
+  1224→- `service.owner.risk.manage`
+  1225→- `service.owner.governance.decide`
+  1226→- `service.owner.audit.read`
+  1227→
+  1228→Object check always required:
+  1229→
+  1230→- service must be owned by session user
+  1231→- ticket must touch owned service
+  1232→- problem must touch owned service
+  1233→- change must affect owned service
+  1234→- demand must relate to owned service
+  1235→- article must belong to owned service
+  1236→
+  1237→## UI Quality Requirements
+  1238→
+  1239→Do:
+  1240→
+  1241→- dense enterprise dashboard
+  1242→- action-first sections
+  1243→- clear risk levels
+  1244→- tabbed detail pages
+  1245→- compact tables
+  1246→- filters and saved filter defaults
+  1247→- drilldowns everywhere
+  1248→- no decorative marketing sections
+  1249→- no nested cards inside cards
+  1250→- no huge hero copy
+  1251→
+  1252→Avoid:
+  1253→
+  1254→- passive statistics only
+  1255→- toast-only actions
+  1256→- fake placeholders
+  1257→- unscoped all-tenant data
+  1258→- UI text explaining how app works
+  1259→- overlarge cards
+  1260→- one-note color palette
+  1261→
+  1262→## Acceptance Criteria
+  1263→
+  1264→Service Owner upgrade done when:
+  1265→
+  1266→- Navigation includes Service Health, Incidents, Known Errors, Customer Impact, Risk Register, Lifecycle.
+  1267→- Command Center shows required owner actions, not only metrics.
+  1268→- Service Owner can drill into any owned service.
+  1269→- Service Owner can see tickets/incidents on owned services.
+  1270→- Service Owner can see SLA clocks and breach response status.
+  1271→- Service Owner can record breach response with rationale and follow-up.
+  1272→- Service Owner can approve/escalate commitments.
+  1273→- Service Owner can govern known errors and knowledge for owned services.
+  1274→- Service Owner can see customer impact by customer org.
+  1275→- Service Owner can manage/derive risk register.
+  1276→- Service Owner can review lifecycle and catalog accuracy.
+  1277→- All views are scoped to owned services.
+  1278→- All owner decisions create governance decision, notification, and audit log.
+  1279→- Typecheck passes.
+  1280→- Build passes.
+  1281→
+  1282→## Implementation Order
+  1283→
+  1284→1. Fix `ViewKey` and Service Owner nav.
+  1285→2. Add missing API filters: `owner=me`, `serviceId`, SLA clocks.
+  1286→3. Extend `_hooks.ts`.
+  1287→4. Create shared owner components.
+  1288→5. Build `ServiceHealth`.
+  1289→6. Build `ServiceIncidents`.
+  1290→7. Build `TicketDetail`.
+  1291→8. Build `KnownErrors`.
+  1292→9. Build `Knowledge`.
+  1293→10. Build `CustomerImpact`.
+  1294→11. Build `RiskRegister`.
+  1295→12. Build `Lifecycle`.
+  1296→13. Build `ServiceDetail`.
+  1297→14. Upgrade `Dashboard`.
+  1298→15. Upgrade `Governance`.
+  1299→16. Upgrade `SlaPerformance`.
+  1300→17. Upgrade `Problems`.
+  1301→18. Upgrade `Changes`.
+  1302→19. Add owner audit if API exists.
+  1303→20. Add notifications and audit calls for owner actions.
+  1304→21. Run verification.
+  1305→
+  1306→## Verification Commands
+  1307→
+  1308→```powershell
+  1309→npm run lint
+  1310→npm run typecheck
+  1311→npm run build
+  1312→npx prisma validate
+  1313→```
+  1314→
+  1315→Also manually verify:
+  1316→
+  1317→- login as `owner@cerebree.io`
+  1318→- each new nav item opens
+  1319→- no forbidden all-tenant records appear
+  1320→- owned service drilldown works
+  1321→- ticket detail opens
+  1322→- breach response records decision
+  1323→- known error view shows only owned service problems/articles
+  1324→- customer impact uses owned services only
+  1325→- risk register derives sensible risk items
+  1326→
+  1327→

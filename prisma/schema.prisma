@@ -74,6 +74,9 @@ model Service {
   supportLevels   String?  // free text
   serviceOwnerId  String
   technicalOwnerId String?
+  lastReviewedAt  DateTime?
+  nextReviewDue   DateTime?
+  lifecycleStage  String?   // PLANNED | ACTIVE | UNDER_REVIEW | RETIREMENT_CANDIDATE | RETIRED
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -89,6 +92,8 @@ model Service {
   knowledgeArticles KnowledgeArticle[]
   slaReportServices SlaReportService[]
   technicalOwnerTasks TechnicalOwnerTask[]
+  // Service Owner Enterprise
+  risks         ServiceRisk[]
 
   @@index([domain])
   @@index([slaClass])
@@ -794,4 +799,31 @@ model EntityLink {
   @@unique([fromType, fromId, toType, toId, linkType])
   @@index([fromType, fromId])
   @@index([toType, toId])
+}
+
+// ============================================================================
+// Service Owner Enterprise: Service Risk Register
+// ============================================================================
+
+model ServiceRisk {
+  id          String    @id @default(cuid())
+  serviceId   String
+  title       String
+  sourceType  String    // SLA | TICKET | PROBLEM | CHANGE | KNOWLEDGE | CSAT | CATALOG
+  sourceId    String?
+  severity    String    // LOW | MEDIUM | HIGH | CRITICAL
+  likelihood  String?   // LOW | MEDIUM | HIGH
+  impact      String?   // LOW | MEDIUM | HIGH
+  ownerId     String?
+  status      String    @default("OPEN")  // OPEN | MITIGATING | ACCEPTED | CLOSED
+  mitigation  String?
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId])
+  @@index([status])
+  @@index([severity])
 }

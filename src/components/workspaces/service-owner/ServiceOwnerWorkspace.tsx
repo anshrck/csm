@@ -11,6 +11,14 @@ import Changes from './Changes';
 import DemandDetail from './DemandDetail';
 import Knowledge from './Knowledge';
 import ServiceTickets from './ServiceTickets';
+import KnownErrors from './KnownErrors';
+import CustomerImpact from './CustomerImpact';
+import RiskRegister from './RiskRegister';
+import Lifecycle from './Lifecycle';
+import OwnerAudit from './OwnerAudit';
+import ArticleDetail from './ArticleDetail';
+import ServiceDetail from './ServiceDetail';
+import ServiceHealth from './ServiceHealth';
 import TicketList from '@/components/workspaces/shared/TicketList';
 import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
@@ -41,8 +49,9 @@ const Reports = dynamic(
  * The Service Owner sits in the Owner layer and is structurally accountable
  * for service value, quality, and SLA commitments. This workspace surfaces
  * portfolio status, SLA performance, pending governance approvals, active
- * problem records, and known errors — framed around governance obligations
- * rather than passive feed consumption.
+ * problem records, known errors, customer impact, risk register, service
+ * lifecycle, knowledge base, and audit log — framed around governance
+ * obligations rather than passive feed consumption.
  */
 export default function ServiceOwnerWorkspace() {
   const { view, params } = useApp();
@@ -66,6 +75,18 @@ export default function ServiceOwnerWorkspace() {
       return <DemandDetail id={params.id} />;
     case 'knowledge':
       return <Knowledge />;
+    case 'known-errors':
+      return <KnownErrors />;
+    case 'customer-impact':
+      return <CustomerImpact />;
+    case 'risk-register':
+      return <RiskRegister />;
+    case 'lifecycle':
+      return <Lifecycle />;
+    case 'owner-audit':
+      return <OwnerAudit />;
+    case 'article-detail':
+      return <ArticleDetail id={params.id} />;
     case 'tickets':
       return (
         <TicketList
@@ -77,6 +98,10 @@ export default function ServiceOwnerWorkspace() {
       );
     case 'service-incidents':
       return <ServiceTickets />;
+    case 'service-health':
+      return <ServiceHealth />;
+    case 'service-detail':
+      return <ServiceDetail id={params.id} />;
     case 'ticket-detail':
       return <TicketDetail id={params.id} role="SERVICE_OWNER" />;
     default:

@@ -12,6 +12,10 @@ const VALID_DECISION_TYPES = new Set([
   'BREACH_RESPONSE',
   'LIFECYCLE_DIRECTION',
   'CATALOG_ACCURACY',
+  'KNOWLEDGE_APPROVAL',
+  'CUSTOMER_RISK_ESCALATION',
+  'REMEDIATION_AUTHORIZATION',
+  'POST_IMPLEMENTATION_REVIEW',
 ]);
 
 const VALID_DECISIONS = new Set([
@@ -130,7 +134,7 @@ export async function POST(req: NextRequest) {
       typeof body.decisionType === 'string' ? body.decisionType.trim() : '';
     if (!VALID_DECISION_TYPES.has(decisionType)) {
       return NextResponse.json(
-        { error: 'decisionType must be one of COMMITMENT_APPROVAL | COMMITMENT_ESCALATION | BREACH_RESPONSE | LIFECYCLE_DIRECTION | CATALOG_ACCURACY' },
+        { error: 'decisionType must be one of COMMITMENT_APPROVAL | COMMITMENT_ESCALATION | BREACH_RESPONSE | LIFECYCLE_DIRECTION | CATALOG_ACCURACY | KNOWLEDGE_APPROVAL | CUSTOMER_RISK_ESCALATION | REMEDIATION_AUTHORIZATION' },
         { status: 400 },
       );
     }

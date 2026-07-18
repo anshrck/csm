@@ -187,6 +187,10 @@ async function collectOwnerEntityRefs(
   const serviceIds = services.map((s) => s.id);
   if (serviceIds.length === 0) return refs;
 
+  // The Service rows themselves — so owners can read their own catalog
+  // review / lifecycle audit history.
+  for (const s of services) refs.push({ entityType: 'Service', entityId: s.id });
+
   // Tickets on owned services.
   const tickets = await db.ticket.findMany({
     where: { serviceId: { in: serviceIds } },

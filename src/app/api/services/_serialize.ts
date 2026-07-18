@@ -42,6 +42,10 @@ export function serializeSlaProfile(p: any): SlaProfile {
  * The Service table stores serviceOwnerId / technicalOwnerId as plain strings
  * (no Prisma relation), so owner names are resolved by the caller via
  * buildOwnerMap and supplied here.
+ *
+ * The response is a superset of the Service interface — lastReviewedAt and
+ * lifecycleStage are included so the Service Owner workspace can render the
+ * Lifecycle tab and the "Mark Reviewed" affordance without a second round-trip.
  */
 export function serializeService(s: any, ownerMap: OwnerMap): Service {
   const offerings = Array.isArray(s.offerings) ? s.offerings.map(serializeOffering) : [];
@@ -70,7 +74,16 @@ export function serializeService(s: any, ownerMap: OwnerMap): Service {
     slaProfile,
     createdAt:
       s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
-  };
+    // Extended fields — Service Owner enterprise workspace. These are not on
+    // the Service interface in @/lib/types (foundation file, not modifiable)
+    // but are present on every serialized response as a superset. Callers
+    // access them via the ServiceDetailDto interface in
+    // src/components/workspaces/service-owner/_hooks.ts.
+    ...(s.lastReviewedAt
+      ? { lastReviewedAt: s.lastReviewedAt instanceof Date ? s.lastReviewedAt.toISOString() : s.lastReviewedAt }
+      : { lastReviewedAt: null }),
+    ...(s.lifecycleStage ? { lifecycleStage: s.lifecycleStage } : { lifecycleStage: null }),
+  } as Service & { lastReviewedAt: string | null; lifecycleStage: string | null };
 }
 
 /**

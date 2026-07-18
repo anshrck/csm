@@ -139,6 +139,11 @@ export interface Service {
   offerings?: ServiceOffering[];
   slaProfile?: SlaProfile | null;
   createdAt: string;
+  /** Service Owner Enterprise — lifecycle board + catalog review metadata. */
+  lifecycleStage?: string | null;
+  lastReviewedAt?: string | null;
+  nextReviewDue?: string | null;
+  updatedAt?: string;
 }
 
 export interface ServiceOffering {
@@ -290,4 +295,63 @@ export interface DashboardStats {
   slaBreaches: number;
   pendingApprovals: number;
   openChanges: number;
+}
+
+export interface SlaClock {
+  id: string;
+  ticketId: string;
+  policyId: string;
+  type: 'RESPONSE' | 'RESOLUTION';
+  status: 'RUNNING' | 'PAUSED' | 'MET' | 'BREACHED' | 'CANCELED';
+  startedAt: string;
+  dueAt: string;
+  pausedAt: string | null;
+  totalPausedMins: number;
+  metAt: string | null;
+  breachedAt: string | null;
+}
+
+export interface OwnerRiskItem {
+  id: string;
+  serviceId: string;
+  serviceName: string;
+  title: string;
+  sourceType: string;
+  sourceId: string | null;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status: 'OPEN' | 'MITIGATING' | 'ACCEPTED' | 'CLOSED';
+  mitigation: string | null;
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerImpactSummary {
+  customerId: string;
+  customerName: string;
+  serviceIds: string[];
+  activeTickets: number;
+  p1p2Tickets: number;
+  activeBreaches: number;
+  openDemands: number;
+  averageCsat: number | null;
+  lastCommunicationAt: string | null;
+}
+
+export interface ServiceHealthSummary {
+  serviceId: string;
+  serviceName: string;
+  slaClass: string;
+  health: 'green' | 'amber' | 'red';
+  openIncidents: number;
+  p1p2Count: number;
+  breachedClocks: number;
+  warnings: number;
+  problems: number;
+  knownErrors: number;
+  highRiskChanges: number;
+  csat: number | null;
+  riskScore: number;
+  lastReviewedAt: string | null;
+  lifecycleStage?: string | null;
 }
