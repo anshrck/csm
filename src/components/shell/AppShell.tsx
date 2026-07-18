@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useApp, NAV_BY_ROLE } from '@/lib/store';
+import { useApp, NAV_BY_ROLE, type ViewKey } from '@/lib/store';
 import { apiGet, apiPost, apiPatch } from '@/lib/api';
 import { type SessionUser, type Notification, ROLE_LABELS, ROLE_DESCRIPTIONS } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -37,12 +38,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const nav = NAV_BY_ROLE[session.role] ?? [];
   const wsTitle = WORKSPACE_TITLES[session.role] ?? 'Workspace';
 
+  // Sidebar nav: keep `navigate()` so the existing in-app state updates + URL
+  // push (handled by the catch-all route's effect) both fire. `navigate` is
+  // already wired into the URL sync hook on the catch-all page, so clicking a
+  // sidebar item updates the URL via router.push and adds a history entry.
+  const handleNavigate = (v: ViewKey) => {
+    navigate(v);
+    setMobileNavOpen(false);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="flex flex-1 min-h-0">
         {/* Sidebar (desktop) */}
         <aside className="hidden lg:flex w-60 flex-col bg-sidebar text-sidebar-foreground shrink-0">
-          <SidebarContent session={session} nav={nav} activeView={view} onNavigate={(v) => navigate(v)} />
+          <SidebarContent session={session} nav={nav} activeView={view} onNavigate={handleNavigate} />
         </aside>
 
         {/* Mobile nav sheet */}
@@ -52,10 +62,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               session={session}
               nav={nav}
               activeView={view}
-              onNavigate={(v) => {
-                navigate(v);
-                setMobileNavOpen(false);
-              }}
+              onNavigate={handleNavigate}
             />
           </SheetContent>
         </Sheet>
@@ -162,6 +169,7 @@ function TopBar({
   onOpenAi: () => void;
 }) {
   const { logout } = useApp();
+  const router = useRouter();
   const [unread, setUnread] = useState(0);
 
   useEffect(() => {
@@ -184,6 +192,10 @@ function TopBar({
     }
     logout();
     toast.success('Signed out');
+    // After clearing the session, send the user back to the login screen at `/`.
+    // The catch-all workspace route would otherwise redirect them itself, but
+    // doing it here keeps the URL clean and avoids a flash of the workspace.
+    router.replace('/');
   }
 
   return (

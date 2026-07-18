@@ -8,6 +8,9 @@ import Catalog from './Catalog';
 import SlmDashboard from './SlmDashboard';
 import Changes from './Changes';
 import Handovers from './Handovers';
+import Knowledge from './Knowledge';
+import TicketList from '@/components/workspaces/shared/TicketList';
+import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
 // DemandDetail is built by Task 5 in @/components/workspaces/shared/DemandDetail.
 // Use a dynamic import so the SCM workspace can boot independently and so the
@@ -39,6 +42,18 @@ export default function ScmWorkerWorkspace() {
       return <Changes />;
     case 'handovers':
       return <Handovers />;
+    case 'knowledge':
+      return <Knowledge />;
+    case 'tickets':
+      return (
+        <TicketList
+          role="SCM_WORKER"
+          title="Ticket Queue"
+          description="Tickets assigned to you, unassigned, or raised by customers you serve. Triage, assign, progress, and resolve."
+        />
+      );
+    case 'ticket-detail':
+      return <TicketDetail id={params.id} role="SCM_WORKER" />;
     default:
       return <Dashboard />;
   }

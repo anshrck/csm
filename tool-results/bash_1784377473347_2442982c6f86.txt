@@ -1,0 +1,500 @@
+# CereBree uSMS — Build Worklog
+
+This is the shared worklog for the CereBree uSMS full-stack application build.
+All agents MUST read this file before starting and append their section after finishing.
+
+---
+
+Task ID: 0
+Agent: Orchestrator (foundation)
+Task: Build the foundation — schema, seed, auth, shared libs, design system, app shell, main page.
+
+Work Log:
+- Read all 4 role guides + executive summary + DAL-24 experience spec.
+- Designed Prisma schema with 11 models (User, OrgNode, Service, ServiceOffering, SlaProfile, Entitlement, Demand, DemandEvent, SlaEvent, Change, ProcessHandover, Problem, Notification).
+- Ran `bun run db:push` successfully.
+- Wrote seed script (prisma/seed.ts) with realistic demo data: 2 customer orgs, 7 users (one per role + extras), 6 services across domains, offerings, SLA profiles, entitlements, 8 demands in varied statuses (NEW/UNDER_REVIEW/QUOTED/ACCEPTED/IN_CHANGE/FULFILLED/REJECTED/CLOSED), 2 changes, SLA events, notifications, 1 problem. Ran seed successfully.
+- Built auth lib (src/lib/auth.ts): scrypt password hashing, HMAC-signed httpOnly session cookie, getSession/requireAuth/requireRole.
+- Built client API helpers (src/lib/api.ts): apiGet/apiPost/apiPatch/apiDelete with error handling.
+- Built shared types (src/lib/types.ts): all enums, interfaces, label maps for the full domain.
+- Built Zustand store (src/lib/store.ts): session, view, params, notifOpen, aiOpen, navigate(). Includes NAV_BY_ROLE config.
+- Built design system (src/components/shared.tsx): DemandStatusBadge, ChangeStatusBadge, SlaClassBadge, SlaHealthBadge, RoleBadge, PageHeader, StatCard, EmptyState, LoadingState, UserAvatar, RelativeTime, FormattedDate, SectionCard, DemandPipelineTimeline, ActivityLog, DataTable, KeyValue, Money, Days.
+- Built app shell (src/components/shell/AppShell.tsx): dark sidebar with role nav, topbar with Cogni button + notification bell + user menu, notification drawer (Sheet), sticky footer.
+- Built login screen (src/components/shell/LoginScreen.tsx): two-panel brand + form, quick-login buttons per role.
+- Built main page (src/app/page.tsx): session bootstrap → LoginScreen or AppShell+workspace+AiPanel.
+- Built providers (src/components/providers.tsx): TanStack Query + next-themes.
+- Updated layout.tsx (sonner toaster + providers) and globals.css (teal/emerald governance theme, custom scrollbar, grid bg).
+- Built auth API routes: /api/auth/me (GET), /api/auth/login (POST), /api/auth/logout (POST).
+- Built notifications API: GET /api/notifications (with ?count=1 for unread), PATCH /api/notifications/read-all, PATCH /api/notifications/[id]/read.
+- Created workspace stubs (agents replace these): customer, scm-worker, cm-leader, service-owner, ai/AiPanel.
+- Verified: dev server compiles, GET / returns 200, login works (correct+incorrect creds), notifications gate on auth.
+
+Stage Summary:
+- Foundation COMPLETE and verified. The app boots, login works, shell renders.
+- Theme: teal/emerald primary (oklch 165 hue). Sidebar is dark. NO indigo/blue primary.
+- 4 demo accounts (password `demo1234` for all):
+  - customer@cerebree.io  — Service Customer (Elena Vance, Finance Division)
+  - scm@cerebree.io       — SCM Worker (Priya Anand)
+  - cmleader@cerebree.io  — CM Leader (Sofia Reyes)
+  - owner@cerebree.io     — Service Owner (Dr. Henrik Sørensen)
+- The dev server background process is volatile in this sandbox; start it fresh when needed: `setsid bun run dev > dev.log 2>&1 < /dev/null & disown`
+
+================================================================================
+CONTRACTS — every agent builds against these. DO NOT change foundation files.
+================================================================================
+
+FOUNDATION FILES (DO NOT MODIFY — owned by orchestrator):
+  prisma/schema.prisma, prisma/seed.ts
+  src/lib/db.ts, src/lib/auth.ts, src/lib/api.ts, src/lib/types.ts, src/lib/store.ts
+  src/components/shared.tsx, src/components/providers.tsx
+  src/components/shell/AppShell.tsx, src/components/shell/LoginScreen.tsx
+  src/app/layout.tsx, src/app/page.tsx, src/app/globals.css
+  src/app/api/auth/*, src/app/api/notifications/*
+
+IMPORTS available to all agents:
+  - `import { useApp, NAV_BY_ROLE } from '@/lib/store'` — Zustand store.
+      useApp provides: session, hydrated, view, params, notifOpen, aiOpen,
+      setSession, setHydrated, navigate(view, params?), setNotifOpen, setAiOpen, logout.
+      view is a ViewKey: 'dashboard'|'demands'|'demand-detail'|'submit-demand'|'catalog'|'sla'|'changes'|'change-detail'|'handovers'|'portfolio'|'governance'|'problems'|'workers'|'analytics'|'notifications'|'settings'
+  - `import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'`
+  - `import { ... } from '@/lib/types'` — all domain types + label maps.
+  - `import { DemandStatusBadge, ChangeStatusBadge, SlaClassBadge, SlaHealthBadge, RoleBadge, PageHeader, StatCard, EmptyState, LoadingState, UserAvatar, RelativeTime, FormattedDate, SectionCard, DemandPipelineTimeline, ActivityLog, DataTable, KeyValue, Money, Days, Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter, Badge, Button } from '@/components/shared'`
+  - All shadcn/ui components in `@/components/ui/*` (already exist).
+  - `import { toast } from 'sonner'` for notifications.
+  - `import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'` for data.
+  - lucide-react icons: `import { ... } from 'lucide-react'`.
+
+WORKSPACE COMPONENT CONTRACT (agents 5-9):
+  Each workspace is a default-exported client component reading `useApp()` for `view` and `params`,
+  and rendering the appropriate screen via a switch. Example skeleton:
+    'use client';
+    import { useApp } from '@/lib/store';
+    export default function XWorkspace() {
+      const { view, params, navigate } = useApp();
+      switch (view) {
+        case 'dashboard': return <Dashboard/>;
+        case 'demands': return <DemandList/>;
+        case 'demand-detail': return <DemandDetail id={params.id}/>;
+        ...
+        default: return <Dashboard/>;
+      }
+    }
+  Navigate with: navigate('demand-detail', { id: demand.id }).
+
+API CLIENT PATTERNS (agents 1-4):
+  - All API routes use `export const runtime = 'nodejs';`
+  - Auth: `import { getSession, requireRole } from '@/lib/auth'`; `import { db } from '@/lib/db'`.
+  - Return NextResponse.json(...) with proper status codes.
+  - For JSON-array DB fields (relatedServiceIds, affectedServiceIds, technicalOwnerTasksJson): store as
+    JSON string in DB, parse with JSON.parse on read, JSON.stringify on write. In API responses, return
+    the parsed array.
+  - Dates: return ISO strings (Prisma returns Date objects; call .toISOString()).
+  - Role checks: SERVICE_CUSTOMER scoped to own orgNode; SCM_WORKER scoped to assigned demands;
+    CM_LEADER sees all tenant; SERVICE_OWNER sees services they own.
+
+DEMAND STATE MACHINE (agents 1, 5, 6, 7, 8):
+  NEW → (assign + start review) → UNDER_REVIEW → (quote | reject | redirect)
+  QUOTED requires quoteApprovedByCmLeader=true (CM Leader gate) → (customer accept | decline)
+  ACCEPTED → (create change + hand to CE) → IN_CHANGE → (mark fulfilled) → FULFILLED → (close) → CLOSED
+  Rejection/redirect are terminal. Each transition emits a DemandEvent.
+
+CHANGE STATE MACHINE (agents 4, 5):
+  REQUESTED → ASSESSMENT → PLANNING → APPROVED → IMPLEMENTATION → VERIFICATION → CLOSED
+  (REJECTED terminal). Closing a change with originDemandId sets that demand to FULFILLED.
+
+NOTIFICATIONS: created on key events (DemandQuoted, DemandAccepted, DemandFulfilled, DemandRejected,
+  DemandCreated, SlaBreached, SlaWarning, ChangeClosed). Target userId depends on event.
+
+================================================================================
+
+---
+
+Task ID: 2
+Agent: Catalog API (services, offerings, SLA profiles, entitlements)
+Task: Build the read-only Catalog API — services, service offerings, SLA profiles, and entitlements.
+
+Work Log:
+- Read shared worklog, prisma/schema.prisma, src/lib/types.ts, src/lib/auth.ts, src/lib/db.ts, and notifications route as a style reference.
+- Confirmed `Service.serviceOwnerId` / `technicalOwnerId` are plain String columns with NO Prisma relation — owner display names must be resolved manually via a bulk User lookup.
+- Created `src/app/api/services/_serialize.ts` with:
+  - `serializeOffering(o)` → ServiceOffering (incl. optional `serviceName`).
+  - `serializeSlaProfile(p)` → SlaProfile.
+  - `serializeService(s, ownerMap)` → Service (offerings[], primary slaProfile, owner names, ISO createdAt).
+  - `buildOwnerMap(ids)` → bulk `db.user.findMany` lookup returning `{ id → name }`.
+- `GET /api/services` — list with filters: `domain`, `slaClass`, `status` (default ACTIVE, `ALL` disables), `owner=me` (serviceOwnerId = caller), `q` (case-insensitive JS filter on name+description since SQLite has no `mode: insensitive`), `entitled=1` (resolve caller's orgNode entitlements → offerings → distinct serviceIds). Always includes offerings[] + first slaProfile + owner names. 401 if not authed. Early-returns `[]` when entitled=1 caller has no orgNode or no entitlements.
+- `GET /api/services/[id]` — single service with **active-only** offerings, primary SLA profile, owner names, and SLA-event context (`slaEventCount` + `slaEventsByType: { WARNING, BREACHED, CLOSED_IN_TIME }`). 404 if not found. Awaits the Next.js 16 async `params` Promise.
+- `GET /api/offerings` — list with `serviceId` and `entitled=1` filters. Joins `service.name` as `serviceName`. Early-returns `[]` for entitled callers with no orgNode.
+- `GET /api/entitlements` — returns caller's orgNode entitlements joined through offering → service. Response shape: `{ id, serviceOfferingId, offeringName, serviceName, scope, validUntil }[]` (validUntil is ISO string or null).
+- All routes use `export const runtime = 'nodejs';`, `getSession()` for auth, `NextResponse.json` with proper status codes, and ISO-string dates.
+- Verified: `bunx tsc --noEmit` → zero errors in catalog API files (remaining TS errors are in other agents' workspace stubs that import not-yet-created modules). `bun run lint` → zero errors in catalog API files (single lint error is in `AppShell.tsx`, owned by orchestrator). Dev server confirmed `/api/services` returns 401 when running (auth gate works).
+
+Stage Summary:
+- Catalog API COMPLETE and verified. 4 routes + 1 shared serialize helper, all read-only.
+- Owner names (serviceOwnerName / technicalOwnerName) are joined in-memory via `buildOwnerMap` because the schema stores them as plain String foreign keys without Prisma relations.
+- Frontend agents can call: `apiGet<Service[]>('/api/services')`, `apiGet<Service>('/api/services/${id}')`, `apiGet<ServiceOffering[]>('/api/offerings')`, `apiGet('/api/entitlements')`. All accept standard query filters documented above.
+- Files owned (do not modify without coordinating): `src/app/api/services/_serialize.ts`, `src/app/api/services/route.ts`, `src/app/api/services/[id]/route.ts`, `src/app/api/offerings/route.ts`, `src/app/api/entitlements/route.ts`.
+- Sandbox dev server is volatile (already noted by orchestrator) — start fresh with `setsid bun run dev > dev.log 2>&1 < /dev/null & disown` if needed.
+
+---
+
+Task ID: 3
+Agent: API builder (sla-events + stats)
+Task: Build the SLA Events API (`GET /api/sla-events`) and the Stats/Dashboard API (`GET /api/stats`).
+
+Work Log:
+- Read `worklog.md` foundation contracts, `prisma/schema.prisma`, `src/lib/types.ts`, `src/lib/auth.ts`, `src/lib/db.ts`, `prisma/seed.ts` (full), and existing route patterns (`/api/notifications`, `/api/auth/login`).
+- Created `src/app/api/sla-events/route.ts`:
+  - `export const runtime = 'nodejs';`
+  - `getSession()` auth gate → 401 when unauthenticated.
+  - Query params: `serviceId`, `customerId` (orgNode), `type` (WARNING|BREACHED|CLOSED_IN_TIME), `active=1`.
+  - Role scoping: `SERVICE_CUSTOMER` → only `serviceCustomerId = session.orgNodeId` (returns `[]` if no orgNode); `SCM_WORKER`/`CM_LEADER`/`SERVICE_OWNER` → all tenant events (per task simplification). For non-customer roles, the `customerId` query param acts as an explicit filter.
+  - Joins `Service` for `serviceName`. Orders by `createdAt desc`, capped at 200 rows.
+  - Computes a per-service `health` hint (`green`/`amber`/`red`, red wins) across the result set and attaches it to every row (extends `SlaEvent` with `health: SlaHealth`).
+  - Dates → `.toISOString()`; `resolvedAt` is `null` when absent.
+- Created `src/app/api/stats/route.ts`:
+  - `export const runtime = 'nodejs';`
+  - Returns a single JSON object: `totalDemands`, `byStatus` (Record), `slaWarnings`, `slaBreaches`, `pendingApprovals`, `openChanges`, `pipeline` (6 lanes), `slaByService` (top 10, sorted red→amber→green), `workloadByWorker` (CM_LEADER only, batched — no N+1), `recentActivity` (last 8 in-scope DemandEvents joined to Demand title).
+  - Scoping:
+    - `SERVICE_CUSTOMER` → own `orgNodeId`; pendingApprovals = QUOTED count; openChanges = open changes on in-scope demands.
+    - `SCM_WORKER` → assigned-to-me OR unassigned (`OR`); SLA = all tenant active; pendingApprovals = 0 (no explicit spec).
+    - `CM_LEADER` → all tenant; pendingApprovals = UNDER_REVIEW count (approximation); workloadByWorker computed.
+    - `SERVICE_OWNER` → owned services (`serviceOwnerId = session.id`); demands filtered in code via `relatedServiceIds` JSON parse; openChanges filtered via `affectedServiceIds` JSON parse; pendingApprovals = ACCEPTED count.
+  - Helper `parseServiceIds()` safely parses JSON-encoded service id arrays on Demand/Change rows.
+  - `emptyStats()` factory used for early-exit when scope is empty.
+- Verification:
+  - `bun run lint` on the two new files: 0 errors / 0 warnings. (Pre-existing errors in `AppShell.tsx` and `CustomerWorkspace.tsx` are owned by other agents and were left untouched.)
+  - `bunx tsc --noEmit` on the two new files: 0 TypeScript errors. (Pre-existing errors in other agents' files observed but untouched.)
+  - Dev server reports `Ready in 3s` and compiles cleanly. (Direct curl from a separate sandbox shell to `localhost:3000` was blocked — sandbox network-namespace quirk between shell sessions, not a code issue.)
+- Did NOT modify any foundation files. Did NOT write tests. Did NOT run `bun run build`.
+
+Stage Summary:
+- Both endpoints are complete, type-safe, role-scoped, and lint-clean. They conform to the foundation contracts (`runtime = 'nodejs'`, `getSession`/`requireRole` from `@/lib/auth`, `db` from `@/lib/db`, ISO-string dates, `NextResponse.json` with proper status codes). Ready for the dashboard UI agents (Tasks 5–9) to consume via `apiGet('/api/stats')` and `apiGet('/api/sla-events', { ...filters })`.
+
+
+---
+
+Task ID: 10
+Agent: Widgets & Charts Builder
+Task: Build the reusable dashboard widgets & charts library — polished, responsive chart components (recharts + shadcn/ui) used by all workspace dashboards.
+
+Work Log:
+- Read worklog.md (foundation contracts, demo accounts, theme rules) + foundation files: src/lib/types.ts (Demand/DemandStatus/DEMAND_PIPELINE/DEMAND_STATUS_LABELS), src/components/shared.tsx (DemandStatusBadge palette, RelativeTime, EmptyState, Badge), src/app/globals.css (teal/emerald oklch(165) theme vars, --chart-1..5, scrollbar-thin), src/components/ui/card.tsx, eslint.config.mjs.
+- Confirmed recharts@2.15.4, framer-motion@12, lucide-react already installed.
+- Created `src/components/widgets/index.tsx` (~470 LOC, 'use client') with 5 named exports matching the contract exactly:
+  1. DemandPipelineLanes({ demands, onSelect, emptyLabel }) — kanban over DEMAND_PIPELINE; grid-cols-1 sm:grid-cols-2 lg:grid-cols-6; per-status accent (sky/amber/violet/teal/indigo/emerald) via left-border + header dot matching DemandStatusBadge palette; scrollable body max-h-80 scrollbar-thin; demand cards with 2-line clamp title, customer name, RelativeTime + optional effort-days badge, hover lift + focus ring; demands sorted by updatedAt desc; staggered framer-motion entrance.
+  2. SlaTrendChart({ data, height=220 }) — recharts AreaChart, vertical linearGradient fill (primary 0.35→0.02), useId-derived SVG-safe gradient id, YAxis [0,100] % ticks, hidden axis lines, dashed horizontal gridlines, custom popover tooltip "94.2%", ChartEmpty on empty data.
+  3. ComplianceDonut({ value, label, size=160 }) — recharts PieChart donut (startAngle 90→-270), two Cells (colored value + var(--muted) remainder), auto-tone green(≥95)/amber(≥85)/red(<85)/muted, center label scales with size, shows "—" for null/undefined/NaN. (value prop widened to `number | null | undefined` to honor the spec's null-state requirement; plain `number` still type-checks so the contract is backward-compatible.)
+  4. WorkloadBars({ items }) — flex rows w/ w-24/sm:w-32 truncate name, flex-1 track with framer-motion animated width (staggered 0.05s), count number, optional rose risk pill; maxCount floored to 1; shared EmptyState (Inbox icon) when empty.
+  5. MiniBarChart({ data, height=200, color }) — recharts BarChart, rounded top corners, maxBarSize 48, hidden YAxis, XAxis auto-rotates -35° when >6 categories, custom color-threaded tooltip, ChartEmpty on empty data.
+  Bonus export: RiskIcon (re-export of lucide AlertTriangle) for legend chips.
+- Theme-aware via CSS vars (var(--primary), --border, --muted, --muted-foreground, --popover, --background); charts adapt to light/dark automatically. Primary stays teal oklch(165); indigo appears ONLY as the explicitly-requested IN_CHANGE per-status accent (matches existing DemandStatusBadge palette), not as a theme primary.
+- All widgets responsive, no mobile overflow, custom scrollbar-thin styling reused.
+- Verified: `bunx eslint src/components/widgets/index.tsx` → EXIT 0 (0 errors, 0 warnings). `bunx tsc --noEmit` → 0 errors in widgets file (all 50 project-wide tsc errors are in other agents' WIP files: not-yet-created workspace submodules + one `value: unknown` misuse in cm-leader/Workers.tsx which is the consumer's bug, not a contract mismatch).
+- Confirmed 4 other agents already importing & consuming the widgets in 6 files (service-owner/SlaPerformance, cm-leader/SlmGovernance+Dashboard+Workers, scm-worker/SlmDashboard+Dashboard) — all call sites use props compatible with the contract.
+- Did NOT modify any foundation file. Did NOT run `bun run build`. Did NOT write tests.
+
+Stage Summary:
+- Widgets library COMPLETE and verified. Single file `src/components/widgets/index.tsx` exports all 5 contract widgets + RiskIcon. Lint-clean, type-clean, theme-correct, responsive, animated, already wired into SCM/CM-Leader/Service-Owner workspaces. Visual centerpiece of every dashboard is ready.
+
+---
+
+Task ID: 12
+Agent: search-guide (Global Search + Role Guide)
+Task: Build a self-mounting Global Search command palette (Cmd/Ctrl+K) and a self-mounting Role Guide reference viewer (floating FAB + Cmd/Ctrl+G) — both self-contained client components that enhance every workspace without modifying the foundation shell.
+
+Work Log:
+- Read worklog.md for full contracts (store API, types, demo accounts, design rules, foundation-file ownership).
+- Read all 4 Role_Guide_*_v1_0.txt source files (CM Leader, Service Owner, Service Customer, SCM Worker) to extract the key sections: "Who You Are", "Your Accountability", "Governance Gates"/"Authorities"/"Limits", "What Good Looks Like", plus "Touchpoints" for Service Owner.
+- Read foundation files for import contracts: src/lib/store.ts (useApp, ViewKey, navigate, setAiOpen, logout), src/lib/types.ts (Role, Demand, Service, Change, Problem, label maps), src/lib/api.ts (apiGet/apiPost), src/components/shared.tsx (Badge/Button), src/components/ui/command.tsx + dialog.tsx + scroll-area.tsx + tabs.tsx + button.tsx (shadcn primitives already present).
+- Read src/app/page.tsx + AppShell.tsx to confirm the integration point and the existing sign-out pattern (apiPost('/api/auth/logout') then logout() + toast).
+
+Files created (owned exclusively):
+1. src/components/guide/guides.ts — Data file exporting `ROLE_GUIDES: Record<Role, RoleGuide>` and `ROLE_GUIDE_ORDER`. Each guide has title, tagline, layer, and 5 sections with paragraphs/bullets. Concise (~150-300 words/role) — not a dump of the source files.
+2. src/components/guide/RoleGuidePanel.tsx — Default export, 'use client'. Renders `fixed bottom-6 right-6 z-40` round primary FAB (BookOpen icon). Global Cmd/Ctrl+G listener (gated against form fields). Opens max-w-2xl / max-h-[80vh] Dialog with gradient header, "Your role" vs "Cross-role context" badge, horizontally-scrollable 4-role selector, ScrollArea body with structured sections (primary dot headings + paragraphs + bulleted lists), closing note "Based on the uSMS Role Guide Suite v1.0", and a footer hint. Resets selection on close so reopening returns to the current role.
+3. src/components/search/CommandPalette.tsx — Inner cmdk palette component. Uses `useQueries` to fetch role-scoped entities (per-role endpoint config); each queryFn catches errors → [] so the palette never crashes when an endpoint is absent. Groups: Quick actions / Demands / Services / Changes / Problems (rendered only when non-empty). Each CommandItem has a custom `value` (includes subtitle) so cmdk's built-in filter matches titles + customers + statuses + domains. Footer with kbd-styled hints ("↑↓ navigate · ↵ select · esc close"). Loading state = Skeleton rows; empty state = "No matches found."
+4. src/components/search/GlobalSearch.tsx — Default export, 'use client'. Global Cmd/Ctrl+K listener toggles a centered max-w-xl Dialog. Wires navigate() (closes palette), setAiOpen(true) (Open Cogni), and sign-out (apiPost('/api/auth/logout') + logout() + toast, matching AppShell's pattern). No-ops until session present. SR-only DialogTitle/Description for accessibility.
+
+Self-mounting contract honored: each component registers its own keydown listener on mount (cleanup on unmount), renders its own Dialog overlay, and returns null when there's no session. The orchestrator just drops `<GlobalSearch/>` and `<RoleGuidePanel/>` into page.tsx's authenticated return (alongside AppShell + AiPanel).
+
+Per-role data sources (all GET, gracefully tolerate missing endpoints):
+- SERVICE_CUSTOMER: /api/demands?mine=1, /api/services?entitled=1
+- SCM_WORKER: /api/demands?assigned=me, /api/demands?unassigned=1, /api/services
+- CM_LEADER: /api/demands, /api/services, /api/changes
+- SERVICE_OWNER: /api/services?owner=me, /api/changes, /api/problems?owner=me
+
+Navigation mapping:
+- Demand → navigate('demand-detail', { id })
+- Service → navigate('catalog') (or 'portfolio' for SERVICE_OWNER)
+- Change → navigate('changes')
+- Problem → navigate('problems')
+- Quick actions: [Submit a Demand] (customer), [New Demand on behalf] (scm), [View SCM Workers] (cm leader), [Open Service Portfolio] (owner), [Go to Dashboard] (all), [Open Cogni] (all → setAiOpen), [Sign out] (all → logout).
+
+Design: teal/emerald theme (primary tints, dots, ring). No indigo/blue. Responsive (palette subtitle columns hidden on mobile via `hidden sm:inline`; guide role selector scrolls horizontally on small screens). Accessible (ARIA tablist/tab + aria-selected, sr-only DialogTitle/Description on palette, aria-labels on icon buttons, focus-visible rings). Uses only existing shadcn/ui primitives + lucide-react icons — no new dependencies.
+
+Verification:
+- `npx eslint src/components/search/ src/components/guide/` → 0 errors, 0 warnings (clean).
+- `bunx tsc --noEmit` → no errors in any of my 4 files. (Pre-existing errors remain in other agents' workspaces/API routes — none mine.)
+- `bun run lint` → 1 error in AppShell.tsx (foundation, not mine) + 1 warning in CustomerWorkspace.tsx (other agent) — my files contribute zero issues. Did NOT modify foundation files per contract.
+- Work record written to /home/z/my-project/agent-ctx/12-search-guide.md.
+
+Stage Summary:
+- COMPLETE. Two self-mounting enhancement components ready to drop into the authenticated page.
+- Integration (orchestrator): add `<GlobalSearch/>` and `<RoleGuidePanel/>` next to `<AppShell>` + `<AiPanel/>` in src/app/page.tsx's authenticated return.
+- Both no-op until session present and degrade gracefully (empty groups, no crash) when backing API endpoints (/api/demands, /api/services, /api/changes, /api/problems with the role-scoped query params above) are not yet built.
+- Theme-consistent (teal/emerald), responsive, accessible, no new dependencies.
+
+================================================================================
+
+---
+
+Task ID: 4
+Agent: Changes / Handovers / Problems API Builder
+Task: Build the Changes API (full lifecycle), Handovers API, and Problems API (read-only).
+
+Work Log:
+- Read the worklog foundation contracts, Prisma schema, auth lib, types, and seed data. Confirmed Change model fields (affectedServiceIds/technicalOwnerTasksJson are JSON-string columns), the 4-role auth model, and the demand↔change lifecycle (closing a change fulfils its origin demand).
+- Created `src/app/api/changes/_serialize.ts` exporting `serializeChange(c)` (parses affectedServiceIds + technicalOwnerTasksJson, ISO-converts all dates, attaches ceWorkerName) and a shared `authError(e)` helper that maps `UNAUTHORIZED`/`FORBIDDEN` thrown by `requireRole` to 401/403 NextResponses.
+- `src/app/api/changes/route.ts`:
+  - GET: filters by `status` (comma multi), `type`, `originDemandId`, `ceWorker=me`. Includes ceWorker name. Returns Change[].
+  - POST: validates title/type/originType/complexity. Enforces originDemandId uniqueness (409) and existence (400). Stores arrays as JSON strings, sets status=REQUESTED, assigns caller as ceWorker (if SCM_WORKER) or ceLeader (if CM_LEADER). Creates a CM_TO_CE ProcessHandover when originated from a demand. 201 on success.
+- `src/app/api/changes/[id]/route.ts`:
+  - GET: returns serialized change + resolved services (lookup from affectedServiceIds JSON) + handovers (ISO-converted) + originDemand (with customer name).
+  - PATCH: updates complexity/implementationPlan/technicalOwnerTasksJson/verificationNotes/approvalNotes/assignedCeWorkerId on non-terminal changes. 409 if CLOSED/REJECTED.
+- Lifecycle endpoints (all require SCM_WORKER or CM_LEADER per the simplified 4-role model):
+  - `assess` — REQUESTED → ASSESSMENT. Requires affectedServiceIds to be non-empty (400 otherwise).
+  - `plan` — ASSESSMENT → PLANNING. Body: { implementationPlan, technicalOwnerTasksJson?, complexity? }.
+  - `approve` — PLANNING → APPROVED. Body: { approvalNotes? }.
+  - `reject` — → REJECTED (terminal). Body: { reason }. Allowed from any non-terminal state.
+  - `implement` — APPROVED → IMPLEMENTATION.
+  - `verify` — IMPLEMENTATION → VERIFICATION. Body: { verificationNotes }.
+  - `close` — VERIFICATION → CLOSED. Sets closedAt + catalogUpdatedAt = now. If originDemandId: updates the Demand to FULFILLED (fulfilledAt=now), creates a DemandEvent (FULFILLED, actorName=caller.name, notes='Change closed by CE.'), and creates a Notification (ChangeClosed) to the demand's submitter.
+  - Each endpoint validates current state and returns 409 with a descriptive message on illegal transitions; 404 if not found.
+- `src/app/api/handovers/route.ts`:
+  - GET: filters by `type` and `unacknowledged=1`. Includes source demand title/status and target change title/status. Returns ProcessHandover[] with ISO-converted dates.
+- `src/app/api/handovers/[id]/acknowledge/route.ts`:
+  - POST: sets acknowledgedById=caller.id + acknowledgedAt=now. 409 if already acknowledged.
+- `src/app/api/problems/route.ts`:
+  - GET: filters by `serviceId`, `status`, `owner=me` (problems on services owned by the caller SERVICE_OWNER). Includes serviceName. Returns Problem[].
+- `src/app/api/problems/[id]/route.ts`:
+  - GET: single problem with service (id, name, domain, slaClass, chapter, status).
+- Auth/role rules implemented: GET endpoints (changes list/single, handovers list, problems list/single) require SCM_WORKER | CM_LEADER | SERVICE_OWNER. Mutation endpoints (change create, PATCH, all lifecycle, handover acknowledge) require SCM_WORKER | CM_LEADER.
+- Fixed two issues found via `bunx tsc --noEmit`: (1) lifecycle routes used `../../../_serialize` (wrong depth — pointed into api/) — corrected to `../../_serialize`; (2) `changes/route.ts` POST had TS narrowing failures on `complexity` and `originDemandId` (let-bound `string | null`) when passed to `Set.has` / `findUnique` — refactored to use local `const` for narrowing.
+- Verification: `bunx tsc --noEmit` reports zero errors in any `api/changes|handovers|problems` file. `bun run lint` reports zero errors/warnings in my files (the 9 lint errors + 2 warnings all live in AppShell.tsx and workspaces/* — owned by orchestrator / other agents).
+
+Stage Summary:
+- 14 files created (1 helper + 13 route files). Changes API supports the full REQUESTED → ASSESSMENT → PLANNING → APPROVED → IMPLEMENTATION → VERIFICATION → CLOSED lifecycle plus REJECTED terminal, with the demand-fulfilment side-effect on close. Handovers API supports list (with filters) + acknowledge. Problems API is read-only list + single.
+- All responses parse JSON-string columns back to arrays/objects and return ISO date strings, matching the Change/ProcessHandover/Problem interfaces in `src/lib/types.ts`.
+- All endpoints enforce auth via `requireRole` and return proper status codes (400/401/403/404/409/201).
+- No tests written. No foundation files modified. `bun run build` not executed.
+
+---
+
+Task ID: 11
+Agent: Cogni AI Assistant Builder
+Task: Build Cogni — the AI Operational Intelligence assistant (LLM-powered role-scoped chat panel + /api/ai endpoint).
+
+Work Log:
+- Read worklog.md, all foundation files (schema, auth, store, types, api, AppShell, page.tsx, globals.css, AiPanel stub, seed data).
+- Invoked the LLM skill to learn the exact z-ai-web-dev-sdk chat completions API: `await ZAI.create()`, `zai.chat.completions.create({ messages, thinking: { type: 'disabled' }, stream: false })`, system prompt sent with role 'assistant', reply at `completion.choices[0].message.content`.
+- Created `src/app/api/ai/route.ts` (POST endpoint, `runtime = 'nodejs'`):
+  - Auth via getSession → 401 if none. Body parsed safely; message trimmed; 400 if empty / >2000 chars.
+  - Four role-scoped context builders (each lightweight: counts + small record samples, never full table dumps):
+    * SERVICE_CUSTOMER — their demands (counts by status + 8 recent with cost/effort), entitled services (unique from entitlements→offering→service with SLA class/status), their SLA events (recent 12, breach/warning counts).
+    * SCM_WORKER — assigned demands (status counts), unassigned NEW queue (count + 6 recent), customer orgs served, action-needed counts (awaiting CM approval / awaiting customer / accepted needing CR), active changes as CE worker, SLA events on services in their scope (via relatedServiceIds).
+    * CM_LEADER — total demands (counts by status), unassigned NEW (count + 6 recent), pending quote approvals (UNDER_REVIEW + !quoteApprovedByCmLeader, with cost), unresolved SLA breaches (8 recent), per-SCM-worker workload (total + open counts), active change count.
+    * SERVICE_OWNER — services they own (with class/status/chapter), SLA events on their services (recent 25, breach/warning counts), open problems on their services (8 recent), pending governance = ACCEPTED/IN_CHANGE demands whose relatedServiceIds intersect their services.
+  - All builders wrapped in try/catch so a DB error never kills the chat (falls back to "Context unavailable").
+  - System prompt: names Cogni as uSMS operational intelligence assistant; states user's name/role/title/org; embeds the demand lifecycle; instructs concise data-grounded answers, no invented records, never claim to execute actions, redirect out-of-scope questions; includes the context snapshot.
+  - LLM call: messages=[{role:'assistant', content: systemPrompt}, {role:'user', content: message}], temperature 0.4, stream:false, thinking disabled. Returns `{ reply }` on success, `{ error }` + 500 on failure. Errors logged to console with `[api/ai]` prefix.
+- Overwrote `src/components/ai/AiPanel.tsx` with the full chat UI:
+  - Right-side Sheet (sm:max-w-lg, full height flex column, mobile full-width).
+  - Header: dark sidebar-accent background (bg-sidebar), Sparkles icon tile (bg-sidebar-primary), title "Cogni — Operational Intelligence", description "Your role-scoped AI assistant." Added `pr-14` to clear the radix Sheet X button.
+  - Body: scrollable div (flex-1, scrollbar-thin, role=log, aria-live=polite). Each message: avatar (Sparkles for assistant on bg-sidebar, user initials on avatarColor) + bubble. Assistant left-aligned (bg-card border rounded-tl-sm), user right-aligned (bg-primary text-primary-foreground rounded-tr-sm). `whitespace-pre-wrap break-words` preserves line breaks.
+  - Error bubble variant: rose-tinted with border.
+  - Typing indicator: animated bouncing dots (3 spans with staggered animation-delay) inside a card bubble with the Sparkles avatar.
+  - Welcome block (when empty): Sparkles tile + "Hi {firstName}, I'm Cogni." + description + role-specific suggested prompt chips. Clicking a chip sends it immediately.
+  - Suggested prompts per role (exactly as specified in the task contract).
+  - Input area at bottom: Textarea (auto-resize via JS ref + field-sizing-fixed, min-h-[44px] max-h-40) + Send icon Button. Enter to send, Shift+Enter for newline. Disabled while pending or when session is null.
+  - Footer line: "Cogni assists or redirects — it never decides autonomously." with a small "Reset" button (RotateCcw icon) that clears conversation; only shown when messages exist.
+  - Conversation state in component (array of {id, role, content, error?}). Auto-scrolls to bottom on new messages / pending. Auto-focuses textarea when sheet opens.
+  - Error handling: toast.error on API failure + error bubble in the conversation.
+- Verified:
+  * ESLint clean on my two files (pre-existing errors in AppShell.tsx + CustomerWorkspace warnings are not mine — orchestrator-owned).
+  * `bunx tsc --noEmit` reports ZERO errors in src/app/api/ai/route.ts and src/components/ai/AiPanel.tsx (all TS errors in the build are in other agents' workspace files).
+- Note on dev server: the sandbox kept SIGKILL'ing `next dev` shortly after "Ready" (auto-managed by the system per the project rules — "bun run dev will be run automatically by the system. Do NOT run it"). Code correctness was therefore validated via lint + tsc --noEmit on my files. The /api/ai endpoint and AiPanel mount through the existing AppShell+page.tsx scaffolding (AiPanel is already imported and rendered in src/app/page.tsx).
+
+Stage Summary:
+- Cogni is fully implemented end-to-end: server-side LLM endpoint with role-scoped real-data context, polished teal/emerald chat UI in a right-side Sheet, role-specific suggested prompts, typing indicator, error handling, and a "never decides autonomously" footer.
+- Uses only the foundation imports specified in the contract: `@/lib/db`, `@/lib/auth`, `@/lib/store`, `@/lib/api`, `sonner`, shadcn Sheet/Textarea/Button, lucide-react icons.
+- z-ai-web-dev-sdk runs ONLY server-side (in the API route), per the LLM skill rules.
+- No tests written (per instructions). No `bun run build` run (per instructions).
+- Files owned by this task (do not modify without coordinating): src/app/api/ai/route.ts, src/components/ai/AiPanel.tsx.
+
+---
+
+Task ID: 5
+Agent: Demand Detail Work Surface builder (CSM-side)
+Task: Build the Demand Detail Work Surface (WS-02-003) — the shared CSM-side demand work surface used by SCM Worker and CM Leader workspaces.
+
+Work Log:
+- Read worklog.md fully: foundation contracts, demo accounts, demand state machine, available imports.
+- Read foundation files for exact contracts: src/lib/types.ts (Demand / DemandEvent / Change / Service / ServiceOffering interfaces), src/lib/store.ts (useApp, navigate signature, ViewKey), src/lib/api.ts (apiGet/apiPost/apiPatch), src/components/shared.tsx (SectionCard signature — note: title/description are typed as `string`, NOT ReactNode; this constraint is respected), prisma/seed.ts (8 demands in varied statuses, change linkage, relatedServiceIds stored as JSON string array).
+- Created `/home/z/my-project/src/components/workspaces/shared/DemandDetail.tsx` — default export matching the exact contract:
+    `export default function DemandDetail({ id, role }: { id: string; role: 'SCM_WORKER' | 'CM_LEADER' })`
+- Layout per WS-02-003 spec:
+  1. Back button + PageHeader (title = demand.title, description = customer · submitted date · SCM worker).
+  2. DemandPipelineTimeline (SectionCard) showing full lifecycle.
+  3. Two-column grid (lg:grid-cols-3, main=col-span-2, side=col-span-1) with `items-start` so sticky side panel works.
+  4. Main column sections (all SectionCard):
+     - Outcome callout (terminal REJECTED/REDIRECTED).
+     - Customer Input: description + businessJustification + desiredTimeline (read-only).
+     - Catalog Check Panel (UNDER_REVIEW only): info callout + "Mark as Covered → Redirect" and "Proceed to Quote" buttons for SCM_WORKER.
+     - Assessment & Quote Draft (UNDER_REVIEW only, AssessmentFieldsSection sub-component): editable effort/cost/quoteNotes for SCM_WORKER; read-only for CM_LEADER with governance gate callout; "Save Quote Draft" button with validation; status callouts for pending-approval / approved.
+     - Quote (QUOTED+ read-only): effort/cost/quoteNotes/approval/quotation/acceptance dates with KeyValue grid.
+     - Commitment (ACCEPTED+ if commitmentNotes present, read-only).
+     - Linked Change Request (IN_CHANGE/FULFILLED): change title, type, complexity, status badge, implementation plan, "Open Change Record" button.
+     - Activity Log via shared ActivityLog component.
+  5. Side column:
+     - Demand Meta: customer, submitted by, assigned SCM worker (with UserAvatar + workload hint for CM_LEADER from /api/workers/scm), submitted date, last updated (RelativeTime).
+     - Related Services: parallel-fetched via useQueries on /api/services/[id] for each relatedServiceIds, with SlaClassBadge per service.
+     - Governance Actions (lg:sticky lg:top-4): StatusCallout + context-sensitive action buttons.
+  6. Role-gated actions in Governance Actions card:
+     - NEW: SCM_WORKER → [Assign to Me] (PATCH assignedScmWorkerId = session.id) + [Start Review]; CM_LEADER → [Assign Worker…] (dialog with workload hints) + [Start Review].
+     - UNDER_REVIEW SCM_WORKER: if quoteApprovedByCmLeader → [Submit Quote to Customer] (POST /quote); else → hint to fill assessment; [Redirect to Offering…] + [Reject Demand…].
+     - UNDER_REVIEW CM_LEADER: if !approved → [Approve Quote] (POST /approve-quote, disabled until savedQuoteFieldsFilled); else → success callout; [Reject Demand…].
+     - QUOTED: info callout (awaiting customer).
+     - ACCEPTED SCM_WORKER: [Create Change & Hand to CE…] (POST /hand-to-ce with affectedServiceIds + optional implementationPlan).
+     - ACCEPTED CM_LEADER: info callout (awaiting SCM).
+     - IN_CHANGE both roles: [Mark Fulfilled] (POST /fulfill, disabled unless linked change CLOSED) + warning callout if not yet closed.
+     - FULFILLED both roles: [Close Demand…] (POST /close with optional note).
+     - Terminal states: info callout.
+  7. Dialogs (all use shared shadcn/ui Dialog):
+     - RejectDialog: reason textarea (required).
+     - RedirectDialog: lazy-fetches /api/offerings when opened; Select of offerings + optional note.
+     - HandToCeDialog: shows related services as affected-service preview + optional implementation plan textarea.
+     - AssignDialog (CM_LEADER only): lazy-fetches /api/workers/scm with workload counts.
+     - CloseDialog: optional closing note.
+- Mutations: all use TanStack Query useMutation with toast (sonner) feedback on success/error; invalidate ['demand', id] and ['demands'] on success.
+- Form state design: extracted AssessmentFieldsSection sub-component with lazy `useState` initializers (no useEffect). Parent remounts it via `key={demand.id}` when the demand changes, so the form re-initializes cleanly without violating the `react-hooks/set-state-in-effect` lint rule. Dialog inputs are reset in their open-trigger handlers (also no setState-in-effect).
+- Design polish:
+  - Teal/emerald theme throughout (primary teal). NO indigo/blue primary colors.
+  - Callout component (info/warning/success/danger tones) for inline governance hints.
+  - Responsive: stacks columns on mobile (grid lg:grid-cols-3), action buttons full-width on mobile.
+  - Sticky Governance Actions card on lg screens.
+  - Loading skeletons (LoadingState) for demand fetch and related-services fetch.
+  - Empty states (EmptyState) for no-related-services, no-events, no-linked-change, demand-not-found.
+  - StatusCallout sub-component renders a contextual hint in the side panel for every demand status × role combination.
+  - Custom scrollbar styling on implementation-plan overflow (`scrollbar-thin`).
+- API endpoints assumed (other agents own these): GET /api/demands/[id], PATCH /api/demands/[id], POST /api/demands/[id]/{review,approve-quote,quote,reject,redirect,hand-to-ce,fulfill,close}, GET /api/services/[id], GET /api/offerings, GET /api/workers/scm. All requests use relative paths via the gateway. None of these are touched by this agent.
+- Verified:
+  - `bunx eslint src/components/workspaces/shared/DemandDetail.tsx` → 0 errors, 0 warnings.
+  - `bunx tsc --noEmit --skipLibCheck` for DemandDetail.tsx → 0 errors.
+  - Foundation files NOT modified. Only file created: src/components/workspaces/shared/DemandDetail.tsx.
+
+Stage Summary:
+- DemandDetail work surface COMPLETE and lint-clean.
+- Export contract honored exactly: `export default function DemandDetail({ id, role }: { id: string; role: 'SCM_WORKER' | 'CM_LEADER' })`.
+- Consumes GET /api/demands/[id] (TanStack Query), PATCH /api/demands/[id] (assignment + quote fields), and the full set of lifecycle POST endpoints. Invalidates ['demand', id] + ['demands'] on every successful mutation.
+- All role-gated actions implemented per the demand state machine. CM Leader governance gate (quote approval) is the central interaction.
+- Ready to be imported by SCM Worker (Task 6) and CM Leader (Task 7) workspaces via:
+    `import DemandDetail from '@/components/workspaces/shared/DemandDetail'`
+    then `case 'demand-detail': return <DemandDetail id={params.id} role={session.role === 'CM_LEADER' ? 'CM_LEADER' : 'SCM_WORKER'} />`
+- Note for downstream agents: the demand API must return `events[]`, `change` (with `id`, `title`, `type`, `status`, `complexity`, `implementationPlan`), `serviceCustomerName`, `submittedByName`, `assignedScmWorkerName`, and `relatedServiceIds` (parsed array). The /api/workers/scm endpoint should return `[{ id, name, title, avatarColor, openDemandCount }]`. The /api/offerings endpoint should return `ServiceOffering[]` with optional `serviceName`. All endpoints should be auth-gated per the role scoping rules in worklog.md.
+
+---
+
+Task ID: 7
+Agent: SCM Worker Workspace (WS-02 — CSM Workspace, SCM_WORKER role)
+Task: Build the SCM Worker workspace — owns the demand lifecycle (assess, quote, hand to CE, fulfill, communication ownership). Screens: Dashboard (WS-02-001), DemandQueue (WS-02-002), Catalog (WS-02-004), SlmDashboard (WS-02-005), Changes, Handovers.
+
+Work Log:
+- Read worklog.md (foundation contracts, demo accounts, demand state machine, design rules). Confirmed teal/emerald theme, sticky footer handled by AppShell, no indigo/blue primary.
+- Verified parallel-agent dependencies are present at compile time:
+  - `@/components/widgets` exports `DemandPipelineLanes({demands,onSelect,emptyLabel?})`, `WorkloadBars({items:{name,count,risk?:number}[]})`, `SlaTrendChart({data:{label,value}[],height?})`. Adjusted my workload `risk` to be a number (overdue count), not a string.
+  - `@/components/workspaces/shared/DemandDetail` default-exports `{id, role:'SCM_WORKER'|'CM_LEADER'}`. Used `next/dynamic` import for resilience (ssr:false, loading state).
+- Built `ScmWorkerWorkspace.tsx` — client component switching on `view`: dashboard / demands / demand-detail (dynamic DemandDetail) / catalog / sla / changes / handovers / default→Dashboard.
+- Built `Dashboard.tsx` (WS-02-001):
+  - PageHeader "My Workspace" with [New Demand on behalf] button → navigates to demands view.
+  - Top StatCards: My Active Demands, Awaiting Customer Action (QUOTED count), SLA Breaches, Open Changes — tone-coded (default/warning/danger/success).
+  - My Queue: `DemandPipelineLanes` for assigned demands, click → demand-detail.
+  - My Workload: `WorkloadBars` with risk = count of overdue QUOTED demands (>5 days since quote).
+  - Unassigned Demands panel: scrollable list with [Assign to Me] button — PATCH /api/demands/[id] {assignedScmWorkerId: session.id} (note: API expects real user id, not 'me' literal — adapted accordingly). Toast on success/error.
+  - Awaiting Customer Action: my QUOTED demands with days-since-quote + "Overdue" badge when >5 days.
+  - Change Status Feed: my IN_CHANGE demands with linked change status badge.
+  - SLA Health Snapshot: services with active warnings/breaches, sorted by severity, click → SLM dashboard.
+- Built `DemandQueue.tsx` (WS-02-002):
+  - DataTable of all demands (GET /api/demands). Columns: Title+description, Service Customer, Status, Assigned Worker (with UserAvatar or "Unassigned" badge), Created, Last updated.
+  - Filters: free-text search (title/description/customer/submitter/worker), unassigned-only switch, status multi-toggle (ToggleGroup, all 9 statuses), Clear button, count summary.
+  - [New Demand on behalf] button → opens create Dialog with Title, Description, customer Select (built from unique serviceCustomerName in existing demands). POST /api/demands → on success navigates to demand-detail.
+- Built `Catalog.tsx` (WS-02-004):
+  - Full catalog DataTable (GET /api/services?status=ALL — needed to override the default ACTIVE-only filter). Columns: Service+description, Domain/Chapter, Layer, SLA Class (badge), Status, Service/Technical owners.
+  - Filters: free-text search + 4 Selects (Domain, Layer, SLA Class, Status) each with "All" option.
+  - Row click → detail Dialog showing the full 9-field model: description, customerValue, commodityType, supportLevels, owners, SLA profile targets (availability + P1/P2 response/resolution), offerings list with requestType/fulfillmentDays.
+  - [Request Catalog Change] button → toast "Catalog changes are made via Change Enablement" + navigate to demands.
+- Built `SlmDashboard.tsx` (WS-02-005):
+  - Top tiles: Services Monitored, Active Breaches, Active Warnings, Avg Compliance %.
+  - SLA Compliance Summary table: Service × SLA Class × Closed-in-time / Breaches / Warnings / Compliance % (with colored progress bar — green ≥95%, amber ≥85%, red <85%). Computed client-side from sla-events.
+  - Compliance Trend chart: SlaTrendChart with synthetic 6-month monthly compliance data.
+  - Active Breaches list: BREACHED events with service name, message, detected date, [Communicate] button → opens Dialog with breach context + free-text message textarea → toast "Communication drafted" (no real send).
+- Built `Changes.tsx`:
+  - DataTable of changes (GET /api/changes). Scoped to changes whose originDemandId is in my assigned demands, fallback to all changes. Columns: Title, Type, Status (badge), Complexity, Origin Demand (title or origin type), Last update.
+  - Status filter (Select, "All statuses" + 8 statuses), count summary.
+  - Row click → detail Dialog with: header (status/type/complexity/origin badges), key dates grid, Implementation Plan (pre-formatted), Technical Owner Tasks (list with owner/chapter/status badges, done count), Affected Services (badges resolved via service map), Governance Notes (approval/verification/rejection).
+- Built `Handovers.tsx`:
+  - DataTable of CM_TO_CE handovers (GET /api/handovers?type=CM_TO_CE). Scoped to those whose source demand is assigned to me, fallback to all. Columns: Type badge, Source Demand (title+customer), Target Change (title+status badge), Acknowledged (yes+date or pending), Created.
+  - Unacknowledged-only switch, pending count + shown count.
+  - Read-only (acknowledgement is CE's action).
+- Cross-cutting: every list uses TanStack Query for fetching with appropriate query keys (demands:assigned:me, demands:unassigned, demands:status:QUOTED, demands:all, services:all-status, sla-events, changes:all, handovers:CM_TO_CE). Mutations invalidate demand/handover queries on success. Toasts for all user-facing success/error states. LoadingState/EmptyState used everywhere. Long lists scroll within `max-h-80 overflow-y-auto scrollbar-thin`. All screens are responsive (mobile-first, sm:/lg: breakpoints). Theme: teal/emerald via shared component library.
+
+Stage Summary:
+- All 7 SCM Worker workspace files created and TypeScript-clean (no TS errors in any scm-worker file).
+- Lint passes for all scm-worker files (other agents' files have lint errors — AppShell setState-in-effect, customer workspace unused directives, DemandDetail setState-in-effect — not mine to fix).
+- Verified end-to-end against running dev server: logged in as scm@cerebree.io, all 6 API endpoints (demands?assigned=me, demands?unassigned=1, demands?status=QUOTED, services?status=ALL, sla-events, changes, handovers?type=CM_TO_CE) return 200 with expected shapes. `quotedAt` and `change` (linked) fields confirmed in demand response.
+- DemandDetail is consumed via `next/dynamic` (ssr:false) so the SCM workspace boots independently of Task 5's bundle — the demand-detail view resolves on demand.
+- WorkloadBars `risk` field is a number (overdue count), matching Task 10's signature (not a string).
+- DemandQueue "Assign to Me" sends `{assignedScmWorkerId: session.id}` (real user id) since the API validates user existence.
+- Catalog fetch uses `?status=ALL` to override the services API's default ACTIVE-only filter, ensuring retired/planned services appear in the SCM's full-catalog view.
+- SCM worker can: see their queue + workload + unassigned pickup + awaiting-customer + change feed + SLA hotspots on the dashboard; filter/search the demand queue and create demands on behalf of customers; browse the full catalog with detail dialog; review SLA compliance + breaches + communicate; read change records linked to their demands; review CM→CE handovers (acknowledgement is CE's action).
+
+---
+
+Task ID: 1
+Agent: Demands API Builder
+Task: Build the complete Demands API — full demand lifecycle with state-machine transitions, role enforcement, event logging, and notifications.
+
+Work Log:
+- Read worklog.md + prisma/schema.prisma + src/lib/{auth,db,api,types}.ts to align with foundation contracts.
+- Created `src/app/api/demands/_serialize.ts` — shared helpers (Next.js-safe via `_` prefix, not a route):
+  - `DEMAND_INCLUDE` constant — canonical Prisma include shape (customer, submitter, scmWorker, events desc, change with handovers+ceWorker).
+  - `serializeDemand(d)` — maps Prisma demand to API `Demand` shape: parses `relatedServiceIds` JSON string → array, converts all dates to ISO strings, populates serviceCustomerName / submittedByName / assignedScmWorkerName from relations, serializes change if present.
+  - `serializeEvent(e)` and `serializeChange(c)` — companion serializers (parse affectedServiceIds + technicalOwnerTasksJson).
+  - `errorResponse(err)` — converts UNAUTHORIZED→401, FORBIDDEN→403, NOT_FOUND→404, CONFLICT→409, INVALID_*→400, fallback 500.
+- Created `src/app/api/demands/route.ts`:
+  - GET — list with filters: `status` (comma-separated multi), `assigned=me`, `unassigned=1`, `customer=<orgId>`, `q=<text>` (title contains), `mine=1`. Role scoping: SERVICE_CUSTOMER sees only own orgNode; SCM_WORKER sees assigned-to-me OR unassigned; CM_LEADER + SERVICE_OWNER see all. Returns serialized demand array.
+  - POST — create demand. Role: SERVICE_CUSTOMER or SCM_WORKER. Validates title+description, accepts optional businessJustification / desiredTimeline / relatedServiceIds[] / serviceCustomerId (defaults to caller.orgNodeId). SERVICE_CUSTOMER cannot override serviceCustomerId (must be own org). Sets status='NEW', submittedById=caller. Emits CREATED event. Notifies ALL CM_LEADER users (type 'DemandCreated', entityRef `demand:<id>`). Returns 201 with full demand (including the new event).
+- Created `src/app/api/demands/[id]/route.ts`:
+  - GET — single demand with full relations. 404 if not found. Scoping: customer must own; SCM must be assigned or unassigned.
+  - PATCH — updates editable fields: assignedScmWorkerId (validates user role SCM_WORKER/CM_LEADER), estimatedEffortDays, estimatedCost, quoteNotes, commitmentNotes. Role: SCM_WORKER/CM_LEADER (SCM scoping enforced).
+- Created `src/app/api/demands/[id]/review/route.ts` — POST: NEW → UNDER_REVIEW. Role: SCM_WORKER/CM_LEADER. Auto-assigns to caller if SCM and unassigned; CM_LEADER may pass assignedScmWorkerId in body. Emits REVIEW_STARTED event. 409 if status ≠ NEW.
+- Created `src/app/api/demands/[id]/approve-quote/route.ts` — POST: CM_LEADER-only gate. Sets quoteApprovedByCmLeader=true + quoteApprovedAt=now (status unchanged). Emits QUOTE_APPROVED event. 409 if already approved or terminal status.
+- Created `src/app/api/demands/[id]/quote/route.ts` — POST: UNDER_REVIEW → QUOTED. Role: SCM_WORKER/CM_LEADER. Body: { estimatedEffortDays (required), estimatedCost?, quoteNotes? }. Hard gate: returns 403 if quoteApprovedByCmLeader=false. Sets quotedAt=now. Emits QUOTED event. Notifies customer (type 'DemandQuoted').
+- Created `src/app/api/demands/[id]/accept/route.ts` — POST: QUOTED → ACCEPTED. Caller must be SERVICE_CUSTOMER with orgNodeId === demand.serviceCustomerId (else 403). Sets acceptedAt=now. Emits ACCEPTED event. Notifies assigned SCM worker (type 'DemandAccepted', falls back to all SCM workers if somehow unassigned).
+- Created `src/app/api/demands/[id]/reject/route.ts` — POST: UNDER_REVIEW|QUOTED → REJECTED. Role: SCM_WORKER/CM_LEADER. Body: { reason (required) }. Sets rejectionReason. Emits REJECTED event. Notifies customer (type 'DemandRejected').
+- Created `src/app/api/demands/[id]/redirect/route.ts` — POST: UNDER_REVIEW → REDIRECTED. Role: SCM_WORKER/CM_LEADER. Body: { offeringId (required, validated against db), reason? }. Sets redirectedToOfferingId, stores reason in rejectionReason. Emits REDIRECTED event (notes include the offering + service name). Notifies customer.
+- Created `src/app/api/demands/[id]/hand-to-ce/route.ts` — POST: ACCEPTED → IN_CHANGE. Role: SCM_WORKER/CM_LEADER. Body: { implementationPlan?, complexity? }. Uses a Prisma `$transaction` to atomically: (a) create Change (type NORMAL, originType DEMAND, originDemandId, affectedServiceIds = JSON.parse(demand.relatedServiceIds), status REQUESTED, complexity defaults MEDIUM, implementationPlan defaults to a templated message); (b) create ProcessHandover (type CM_TO_CE, sourceDemandId, targetChangeId); (c) update demand (status IN_CHANGE, changeRequestId, handedToCeAt); (d) emit HANDED_TO_CE event with both new ids. 409 if demand already has a changeRequestId.
+- Created `src/app/api/demands/[id]/fulfill/route.ts` — POST: IN_CHANGE → FULFILLED. Role: SCM_WORKER/CM_LEADER. Hard gate: returns 409 if linked change.status !== 'CLOSED'. Sets fulfilledAt=now. Emits FULFILLED event. Notifies customer (type 'DemandFulfilled').
+- Created `src/app/api/demands/[id]/close/route.ts` — POST: FULFILLED → CLOSED (customer OR SCM/CM, no reason required); OR QUOTED → CLOSED (customer-only decline, reason required in body, stored in rejectionReason). 409 otherwise. Emits CLOSED event. Caller must be SERVICE_CUSTOMER (own demand) or SCM_WORKER/CM_LEADER.
+
+Smoke-tested the full lifecycle end-to-end against the seeded DB (dev server is volatile in this sandbox — required restarts):
+  • GET /api/demands?assigned=me (SCM) → 200, returns assigned demands.
+  • GET /api/demands?status=NEW, ?unassigned=1 → 200, filters work.
+  • GET /api/demands (SERVICE_CUSTOMER) → only sees their own orgNode's demands (6 demands, all from "Finance Division"). ✓ scoping verified.
+  • POST /api/demands (SCM creates on behalf of customer) → 201 with CREATED event + DemandCreated notification to all CM_LEADER users. ✓
+  • POST /review → NEW→UNDER_REVIEW + REVIEW_STARTED event + auto-assigned to SCM caller. ✓
+  • POST /quote before approval → 403 ("Quote must be approved by a CM Leader before submission"). ✓ gate enforced.
+  • POST /approve-quote (CM_LEADER) → quoteApprovedByCmLeader=true + QUOTE_APPROVED event. ✓
+  • POST /quote (after approval) → QUOTED + QUOTED event + DemandQuoted notification to customer. ✓
+  • POST /accept (SERVICE_CUSTOMER) → ACCEPTED + ACCEPTED event + DemandAccepted notification to assigned SCM. ✓
+  • POST /hand-to-ce → IN_CHANGE + Change created (NORMAL/DEMAND/REQUESTED) + ProcessHandover created (CM_TO_CE) + HANDED_TO_CE event. ✓
+  • POST /fulfill before change CLOSED → 409. ✓ gate enforced.
+  • POST /fulfill after closing change in DB → FULFILLED + FULFILLED event + DemandFulfilled notification. ✓

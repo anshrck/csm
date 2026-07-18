@@ -8,6 +8,9 @@ import DemandDetail from './DemandDetail';
 import SubmitDemand from './SubmitDemand';
 import Catalog from './Catalog';
 import SlaPerformance from './SlaPerformance';
+import Knowledge from './Knowledge';
+import TicketList from '@/components/workspaces/shared/TicketList';
+import TicketDetail from '@/components/workspaces/shared/TicketDetail';
 
 const VALID_VIEWS: ViewKey[] = [
   'dashboard',
@@ -16,6 +19,9 @@ const VALID_VIEWS: ViewKey[] = [
   'submit-demand',
   'catalog',
   'sla',
+  'knowledge',
+  'tickets',
+  'ticket-detail',
 ];
 
 export default function CustomerWorkspace() {
@@ -41,6 +47,18 @@ export default function CustomerWorkspace() {
       return <Catalog />;
     case 'sla':
       return <SlaPerformance />;
+    case 'knowledge':
+      return <Knowledge />;
+    case 'tickets':
+      return (
+        <TicketList
+          role="SERVICE_CUSTOMER"
+          title="My Tickets"
+          description="Tickets and incidents raised by your organisational unit. Track triage, progress, and resolution."
+        />
+      );
+    case 'ticket-detail':
+      return <TicketDetail id={params.id} role="SERVICE_CUSTOMER" />;
     default:
       return <Dashboard />;
   }

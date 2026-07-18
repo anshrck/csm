@@ -293,6 +293,11 @@ async function main() {
   console.log('  scm@cerebree.io       — SCM Worker');
   console.log('  cmleader@cerebree.io  — CM Leader');
   console.log('  owner@cerebree.io     — Service Owner');
+
+  // Phase 2-6 additional seeds
+  await seedPermissions();
+  await seedSlaPolicies();
+  await seedTickets();
 }
 
 main()
@@ -303,3 +308,205 @@ main()
   .finally(async () => {
     await db.$disconnect();
   });
+
+// ---- Phase 6: Seed permissions ----
+async function seedPermissions() {
+  const { DEFAULT_PERMISSIONS } = await import('../src/lib/permissions');
+  for (const perm of DEFAULT_PERMISSIONS) {
+    const p = await db.permission.upsert({
+      where: { key: perm.key },
+      update: { description: perm.description },
+      create: { key: perm.key, description: perm.description },
+    });
+    for (const role of perm.roles) {
+      await db.rolePermission.upsert({
+        where: { role_permissionId: { role, permissionId: p.id } },
+        update: {},
+        create: { role, permissionId: p.id },
+      });
+    }
+  }
+  console.log(`  Permissions seeded (${DEFAULT_PERMISSIONS.length} keys).`);
+}
+
+// ---- Phase 3: Seed SLA policies ----
+async function seedSlaPolicies() {
+  const services = await db.service.findMany();
+  const policies = [
+    { priority: 'P1', responseMins: 15, resolutionMins: 120 },
+    { priority: 'P2', responseMins: 30, resolutionMins: 240 },
+    { priority: 'P3', responseMins: 60, resolutionMins: 480 },
+    { priority: 'P4', responseMins: 120, resolutionMins: 1440 },
+  ];
+  for (const svc of services) {
+    for (const pol of policies) {
+      await db.slaPolicy.create({
+        data: {
+          name: `${svc.name} ${pol.priority} Incident SLA`,
+          serviceId: svc.id,
+          ticketType: 'INCIDENT',
+          priority: pol.priority,
+          responseMins: pol.responseMins,
+          resolutionMins: pol.resolutionMins,
+        },
+      }).catch(() => {}); // ignore duplicates on re-seed
+    }
+  }
+  console.log('  SLA policies seeded.');
+}
+
+// ---- Phase 2: Seed tickets ----
+async function seedTickets() {
+  const financeOrg = await db.orgNode.findFirst({ where: { name: 'Finance Division' } });
+  const hrOrg = await db.orgNode.findFirst({ where: { name: 'HR Department' } });
+  const customer = await db.user.findFirst({ where: { email: 'customer@cerebree.io' } });
+  const customer2 = await db.user.findFirst({ where: { email: 'customer2@cerebree.io' } });
+  const scmWorker = await db.user.findFirst({ where: { email: 'scm@cerebree.io' } });
+  const identitySvc = await db.service.findFirst({ where: { chapter: 'IDENTITY_ACCESS' } });
+  const collabSvc = await db.service.findFirst({ where: { chapter: 'COLLABORATION' } });
+
+  if (!financeOrg || !customer || !scmWorker || !identitySvc) return;
+
+  const now = Date.now();
+  const hours = (n: number) => new Date(now - n * 3600000);
+  const days = (n: number) => new Date(now - n * 86400000);
+
+  // Ticket 1: P1 incident, resolved
+  const t1 = await db.ticket.create({
+    data: {
+      number: 'TKT-0001',
+      title: 'Cannot access ERP system — login page returns 500',
+      description: 'Multiple users in Finance Division cannot log into the ERP system. The login page returns a 500 error after entering credentials.',
+      type: 'INCIDENT',
+      priority: 'P1',
+      impact: 'HIGH',
+      urgency: 'HIGH',
+      status: 'RESOLVED',
+      serviceId: identitySvc.id,
+      serviceCustomerId: financeOrg.id,
+      requesterId: customer.id,
+      assignedUserId: scmWorker.id,
+      resolutionCode: 'FIXED',
+      resolutionNotes: 'Identified a corrupted session cache on the IdP. Cleared cache and restarted the SSO service. Verified login works for all test accounts.',
+      createdAt: days(3),
+      resolvedAt: new Date(days(3).getTime() + 2 * 3600000),
+      updatedAt: new Date(days(3).getTime() + 2 * 3600000),
+    },
+  });
+  await db.ticketEvent.create({ data: { ticketId: t1.id, eventType: 'CREATED', actorId: customer.id, actorName: customer.name, notes: 'Ticket created by customer.', createdAt: days(3) } });
+  await db.ticketEvent.create({ data: { ticketId: t1.id, eventType: 'ASSIGNED', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'Assigned to SCM Worker.', createdAt: new Date(days(3).getTime() + 300000) } });
+  await db.ticketEvent.create({ data: { ticketId: t1.id, eventType: 'RESOLVED', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'SSO cache cleared, service restored.', createdAt: new Date(days(3).getTime() + 2 * 3600000) } });
+
+  // Ticket 2: P2 incident, in progress
+  const t2 = await db.ticket.create({
+    data: {
+      number: 'TKT-0002',
+      title: 'Email delivery delays for HR Department',
+      description: 'HR Department reports emails are arriving 30-45 minutes late since this morning.',
+      type: 'INCIDENT',
+      priority: 'P2',
+      impact: 'MEDIUM',
+      urgency: 'MEDIUM',
+      status: 'IN_PROGRESS',
+      serviceId: collabSvc?.id,
+      serviceCustomerId: hrOrg!.id,
+      requesterId: customer2!.id,
+      assignedUserId: scmWorker.id,
+      createdAt: hours(6),
+      updatedAt: hours(2),
+    },
+  });
+  await db.ticketEvent.create({ data: { ticketId: t2.id, eventType: 'CREATED', actorId: customer2!.id, actorName: customer2!.name, notes: 'Ticket created.', createdAt: hours(6) } });
+  await db.ticketEvent.create({ data: { ticketId: t2.id, eventType: 'ASSIGNED', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'Assigned and investigation started.', createdAt: hours(5) } });
+  await db.ticketEvent.create({ data: { ticketId: t2.id, eventType: 'IN_PROGRESS', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'Checking mail queue and transport rules.', createdAt: hours(4) } });
+
+  // Ticket 3: P3 service request, new
+  const t3 = await db.ticket.create({
+    data: {
+      number: 'TKT-0003',
+      title: 'Request: additional shared mailbox for AP team',
+      description: 'Accounts Payable team needs a shared mailbox for vendor invoice submissions.',
+      type: 'SERVICE_REQUEST',
+      priority: 'P3',
+      status: 'NEW',
+      serviceId: collabSvc?.id,
+      serviceCustomerId: financeOrg.id,
+      requesterId: customer.id,
+      createdAt: hours(2),
+      updatedAt: hours(2),
+    },
+  });
+  await db.ticketEvent.create({ data: { ticketId: t3.id, eventType: 'CREATED', actorId: customer.id, actorName: customer.name, notes: 'Ticket created.', createdAt: hours(2) } });
+
+  // Ticket 4: P2 complaint, waiting customer
+  const t4 = await db.ticket.create({
+    data: {
+      number: 'TKT-0004',
+      title: 'VPN disconnects every 10 minutes for remote contractors',
+      description: 'Remote contractors report VPN sessions drop every 10 minutes, requiring reconnection.',
+      type: 'COMPLAINT',
+      priority: 'P2',
+      impact: 'MEDIUM',
+      urgency: 'HIGH',
+      status: 'WAITING_CUSTOMER',
+      serviceId: identitySvc.id,
+      serviceCustomerId: financeOrg.id,
+      requesterId: customer.id,
+      assignedUserId: scmWorker.id,
+      createdAt: days(1),
+      updatedAt: hours(8),
+    },
+  });
+  await db.ticketEvent.create({ data: { ticketId: t4.id, eventType: 'CREATED', actorId: customer.id, actorName: customer.name, createdAt: days(1) } });
+  await db.ticketEvent.create({ data: { ticketId: t4.id, eventType: 'IN_PROGRESS', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'Reviewing VPN concentrator logs.', createdAt: hours(20) } });
+  await db.ticketEvent.create({ data: { ticketId: t4.id, eventType: 'WAITING', actorId: scmWorker.id, actorName: scmWorker.name, notes: 'Requested contractor VPN client version and OS details from customer.', createdAt: hours(8) } });
+
+  // Create SLA clocks for the tickets
+  for (const ticket of [t1, t2, t3, t4]) {
+    const policy = await db.slaPolicy.findFirst({
+      where: { serviceId: ticket.serviceId ?? undefined, priority: ticket.priority, ticketType: 'INCIDENT' },
+    });
+    if (!policy) {
+      // fallback: any policy with this priority
+      const fallback = await db.slaPolicy.findFirst({ where: { priority: ticket.priority } });
+      if (!fallback) continue;
+      const respDue = new Date(ticket.createdAt.getTime() + fallback.responseMins * 60000);
+      const resDue = new Date(ticket.createdAt.getTime() + fallback.resolutionMins * 60000);
+      await db.slaClock.create({ data: { ticketId: ticket.id, policyId: fallback.id, type: 'RESPONSE', status: ticket.status === 'RESOLVED' || ticket.status === 'CLOSED' ? 'MET' : 'BREACHED', startedAt: ticket.createdAt, dueAt: respDue, metAt: ticket.status === 'RESOLVED' ? ticket.resolvedAt : null, breachedAt: new Date() > respDue && ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED' ? new Date() : null } });
+      await db.slaClock.create({ data: { ticketId: ticket.id, policyId: fallback.id, type: 'RESOLUTION', status: ticket.status === 'RESOLVED' ? 'MET' : (new Date() > resDue ? 'BREACHED' : 'RUNNING'), startedAt: ticket.createdAt, dueAt: resDue, metAt: ticket.status === 'RESOLVED' ? ticket.resolvedAt : null, breachedAt: new Date() > resDue && ticket.status !== 'RESOLVED' ? new Date() : null } });
+    } else {
+      const respDue = new Date(ticket.createdAt.getTime() + policy.responseMins * 60000);
+      const resDue = new Date(ticket.createdAt.getTime() + policy.resolutionMins * 60000);
+      await db.slaClock.create({ data: { ticketId: ticket.id, policyId: policy.id, type: 'RESPONSE', status: ticket.status === 'RESOLVED' || ticket.status === 'CLOSED' ? 'MET' : (new Date() > respDue ? 'BREACHED' : 'RUNNING'), startedAt: ticket.createdAt, dueAt: respDue, metAt: ticket.status === 'RESOLVED' ? ticket.resolvedAt : null, breachedAt: new Date() > respDue && ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED' ? new Date() : null } });
+      await db.slaClock.create({ data: { ticketId: ticket.id, policyId: policy.id, type: 'RESOLUTION', status: ticket.status === 'RESOLVED' ? 'MET' : (new Date() > resDue ? 'BREACHED' : 'RUNNING'), startedAt: ticket.createdAt, dueAt: resDue, metAt: ticket.status === 'RESOLVED' ? ticket.resolvedAt : null, breachedAt: new Date() > resDue && ticket.status !== 'RESOLVED' ? new Date() : null } });
+    }
+  }
+
+  // Seed a knowledge article
+  const ka1 = await db.knowledgeArticle.create({
+    data: {
+      title: 'How to reset your SSO password',
+      body: '# Password Reset\n\n1. Go to the self-service portal at https://reset.example.com\n2. Enter your corporate email\n3. Verify via the code sent to your phone\n4. Set a new password meeting complexity requirements\n5. Log in with the new password\n\nIf you still cannot log in, contact the Service Desk.',
+      type: 'HOW_TO',
+      status: 'PUBLISHED',
+      serviceId: identitySvc.id,
+      authorId: scmWorker.id,
+      publishedAt: days(10),
+    },
+  });
+
+  const ka2 = await db.knowledgeArticle.create({
+    data: {
+      title: 'Known Error: VPN disconnects on unstable connections',
+      body: '# Known Error: VPN Disconnects\n\n**Symptom:** VPN sessions drop every 5-10 minutes when on unstable network connections.\n\n**Workaround:** Use a wired connection or switch to a more stable WiFi network. If the issue persists, use the web-based VPN portal as an alternative.\n\n**Status:** Under investigation by the network team. A fix is expected in the next VPN client release.',
+      type: 'KNOWN_ERROR',
+      status: 'PUBLISHED',
+      serviceId: identitySvc.id,
+      authorId: scmWorker.id,
+      publishedAt: days(5),
+    },
+  });
+
+  console.log('  Tickets, SLA clocks, and knowledge articles seeded.');
+}
+

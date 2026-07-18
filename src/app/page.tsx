@@ -1,21 +1,28 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useApp } from '@/lib/store';
 import { apiGet } from '@/lib/api';
 import { type SessionUser } from '@/lib/types';
 import { LoginScreen } from '@/components/shell/LoginScreen';
-import { AppShell } from '@/components/shell/AppShell';
-import { AiPanel } from '@/components/ai/AiPanel';
-import CustomerWorkspace from '@/components/workspaces/customer/CustomerWorkspace';
-import ScmWorkerWorkspace from '@/components/workspaces/scm-worker/ScmWorkerWorkspace';
-import CmLeaderWorkspace from '@/components/workspaces/cm-leader/CmLeaderWorkspace';
-import ServiceOwnerWorkspace from '@/components/workspaces/service-owner/ServiceOwnerWorkspace';
-import GlobalSearch from '@/components/search/GlobalSearch';
-import RoleGuidePanel from '@/components/guide/RoleGuidePanel';
+import { dashboardPath } from '@/lib/routing';
 import { Loader2, ShieldCheck } from 'lucide-react';
 
+/**
+ * Root entry.
+ *
+ * - While hydrating: full-screen loader.
+ * - If unauthenticated: render the login screen (also at `/`).
+ * - If authenticated: redirect to the role-prefixed dashboard
+ *   (`/<role-prefix>/dashboard`) — the catch-all route under
+ *   `/[...slug]` renders the actual workspace from there.
+ *
+ * After successful login (handled inside `LoginScreen`), this component re-
+ * renders with a session and the redirect effect kicks in.
+ */
 export default function Home() {
+  const router = useRouter();
   const { session, hydrated, setSession, setHydrated } = useApp();
 
   useEffect(() => {
@@ -32,6 +39,13 @@ export default function Home() {
       active = false;
     };
   }, [setSession, setHydrated]);
+
+  // Once we have a session, hand off to the catch-all workspace route.
+  useEffect(() => {
+    if (hydrated && session) {
+      router.replace(dashboardPath(session.role));
+    }
+  }, [hydrated, session, router]);
 
   if (!hydrated) {
     return (
@@ -50,27 +64,12 @@ export default function Home() {
     return <LoginScreen />;
   }
 
-  const workspace = (() => {
-    switch (session.role) {
-      case 'SERVICE_CUSTOMER':
-        return <CustomerWorkspace />;
-      case 'SCM_WORKER':
-        return <ScmWorkerWorkspace />;
-      case 'CM_LEADER':
-        return <CmLeaderWorkspace />;
-      case 'SERVICE_OWNER':
-        return <ServiceOwnerWorkspace />;
-      default:
-        return null;
-    }
-  })();
-
+  // Brief loader while we hand off to the workspace route.
   return (
-    <>
-      <AppShell>{workspace}</AppShell>
-      <AiPanel />
-      <GlobalSearch />
-      <RoleGuidePanel />
-    </>
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Opening your workspace…
+      </div>
+    </div>
   );
 }

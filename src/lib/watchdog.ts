@@ -14,6 +14,7 @@
 import { appendFileSync, readFileSync, writeFileSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
+import { processPendingDeliveries } from './notification-delivery';
 
 const PROJECT_ROOT = process.cwd();
 const DEV_LOG = join(PROJECT_ROOT, 'dev.log');
@@ -33,6 +34,9 @@ interface WatchdogState {
   newDevErrors: number;
   http5xx: number;
   health: string;
+  notificationsProcessed: number;
+  notificationsSent: number;
+  notificationsFailed: number;
 }
 
 function wdLog(line: string) {
@@ -114,6 +118,50 @@ function startWatchdog(): void {
       const shouldLint = iteration % 10 === 0;
       const lint = shouldLint ? runLint() : { errors: 0, warnings: 0, clean: true };
       const devScan = scanDevLog(lastSizeRef);
+
+      // Flush pending notification deliveries (PORTAL/EMAIL/TEAMS/SLACK).
+      // The worker is idempotent and capped at 100 per tick, so calling it
+      // every iteration is safe — it short-circuits to a no-op when nothing
+      // is pending. We intentionally swallow errors here so a transient DB
+      // hiccup never takes the watchdog down.
+      //
+      // The worker is async; we attach .then/.catch so the synchronous tick
+      // can keep running without blocking. Notification counts are written
+      // to the next iteration's state (the current iteration writes zeros
+      // while the previous tick's worker is still in flight) — acceptable
+      // for an oversight dashboard.
+      processPendingDeliveries()
+        .then((r) => {
+          try {
+            wdLog(
+              `  notification-delivery worker: ${r.processed} processed / ${r.sent} sent / ${r.failed} failed / ${r.skipped} skipped in ${r.durationMs}ms`,
+            );
+            // Update the state file with the worker counts so the dashboard
+            // sees them on the next read. We merge into the existing file
+            // rather than overwrite the full state (which would clobber the
+            // most recent lint/devlog counts).
+            try {
+              if (existsSync(STATE_FILE)) {
+                const cur = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as Partial<WatchdogState>;
+                const merged: Partial<WatchdogState> = {
+                  ...cur,
+                  notificationsProcessed: r.processed,
+                  notificationsSent: r.sent,
+                  notificationsFailed: r.failed,
+                };
+                writeFileSync(STATE_FILE, JSON.stringify(merged, null, 2));
+              }
+            } catch {
+              /* ignore state-merge write errors */
+            }
+          } catch {
+            /* ignore */
+          }
+        })
+        .catch((ndErr) => {
+          wdLog(`  notification-delivery worker threw: ${ndErr}`);
+        });
+
       const health = lint.clean && devScan.newErrors === 0 && devScan.http5xx === 0 ? 'CLEAN' : 'ISSUES';
       const lintLabel = shouldLint
         ? `lint=${lint.errors}err/${lint.warnings}warn`
@@ -130,6 +178,9 @@ function startWatchdog(): void {
         newDevErrors: devScan.newErrors,
         http5xx: devScan.http5xx,
         health,
+        notificationsProcessed: 0,
+        notificationsSent: 0,
+        notificationsFailed: 0,
       };
       try { writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch { /* ignore */ }
 

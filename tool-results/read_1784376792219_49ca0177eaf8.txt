@@ -1,0 +1,1048 @@
+     1→     1→# CSM Project Remediation Plan
+     2→     2→
+     3→     3→This plan converts the project review findings into an execution-ready backlog. Follow the phases in order. Do not skip the stabilization phase, because later product work depends on type checking, migrations, and reliable builds.
+     4→     4→
+     5→     5→## Current Project Summary
+     6→     6→
+     7→     7→The app is a Next.js + Prisma customer service management prototype with role-based workspaces for:
+     8→     8→
+     9→     9→- Service Customer
+    10→    10→- SCM Worker
+    11→    11→- CM Leader
+    12→    12→- Service Owner
+    13→    13→
+    14→    14→It already contains demand lifecycle, service catalog, change handover, SLA events, SLA reports, governance decisions, notifications, global search, and an AI panel.
+    15→    15→
+    16→    16→The main weakness is that it behaves more like a governed demand/change demo than a production-quality CSM platform. The following plan fixes that in controlled phases.
+    17→    17→
+    18→    18→## Phase 1: Stabilize The Application
+    19→    19→
+    20→    20→### 1. Fix TypeScript Route Validation
+    21→    21→
+    22→    22→Issue:
+    23→    23→`tsc --noEmit` fails because `.next/types/validator.ts` rejects `src/app/api/demands/[id]/request-changes/route.ts`.
+    24→    24→
+    25→    25→Relevant file:
+    26→    26→
+    27→    27→- `src/app/api/demands/[id]/request-changes/route.ts`
+    28→    28→
+    29→    29→Plan:
+    30→    30→
+    31→    31→1. Update the route handler signature to match the app's Next.js 16 generated route handler expectations.
+    32→    32→2. Use a broad context type if needed:
+    33→    33→
+    34→    34→```ts
+    35→    35→export async function POST(
+    36→    36→  req: NextRequest,
+    37→    37→  context: { params: Promise<{ id: string }> },
+    38→    38→) {
+    39→    39→  const { id } = await context.params;
+    40→    40→}
+    41→    41→```
+    42→    42→
+    43→    43→3. If Next still rejects it, align with the exact pattern used by working dynamic routes in the project.
+    44→    44→4. Re-run:
+    45→    45→
+    46→    46→```powershell
+    47→    47→node node_modules\typescript\bin\tsc --noEmit
+    48→    48→```
+    49→    49→
+    50→    50→Acceptance criteria:
+    51→    51→
+    52→    52→- `tsc --noEmit` completes with zero errors.
+    53→    53→- The request-changes API still supports `QUOTED -> UNDER_REVIEW`.
+    54→    54→- Customer ownership checks still work.
+    55→    55→
+    56→    56→### 2. Remove Build Error Hiding
+    57→    57→
+    58→    58→Issue:
+    59→    59→`next.config.ts` has `typescript.ignoreBuildErrors = true`, which allows broken builds to pass.
+    60→    60→
+    61→    61→Relevant file:
+    62→    62→
+    63→    63→- `next.config.ts`
+    64→    64→
+    65→    65→Plan:
+    66→    66→
+    67→    67→1. Remove this block:
+    68→    68→
+    69→    69→```ts
+    70→    70→typescript: {
+    71→    71→  ignoreBuildErrors: true,
+    72→    72→},
+    73→    73→```
+    74→    74→
+    75→    75→2. Keep `output: "standalone"` if standalone deployment is still required.
+    76→    76→3. Re-run type check and build.
+    77→    77→
+    78→    78→Acceptance criteria:
+    79→    79→
+    80→    80→- Build does not ignore TypeScript errors.
+    81→    81→- `next.config.ts` does not mask production issues.
+    82→    82→
+    83→    83→### 3. Fix Offline Production Build Fonts
+    84→    84→
+    85→    85→Issue:
+    86→    86→`next build` fails in restricted/offline environments because `src/app/layout.tsx` uses `next/font/google`.
+    87→    87→
+    88→    88→Relevant file:
+    89→    89→
+    90→    90→- `src/app/layout.tsx`
+    91→    91→
+    92→    92→Plan:
+    93→    93→
+    94→    94→1. Remove:
+    95→    95→
+    96→    96→```ts
+    97→    97→import { Geist, Geist_Mono } from "next/font/google";
+    98→    98→```
+    99→    99→
+   100→   100→2. Remove the `Geist` and `Geist_Mono` constants.
+   101→   101→3. Replace the body class with local/system font classes:
+   102→   102→
+   103→   103→```tsx
+   104→   104→<body className="font-sans antialiased bg-background text-foreground">
+   105→   105→```
+   106→   106→
+   107→   107→4. In `src/app/globals.css`, define a strong system font stack if not already present:
+   108→   108→
+   109→   109→```css
+   110→   110→body {
+   111→   111→  font-family: Arial, Helvetica, sans-serif;
+   112→   112→}
+   113→   113→
+   114→   114→code,
+   115→   115→pre,
+   116→   116→kbd {
+   117→   117→  font-family: "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+   118→   118→}
+   119→   119→```
+   120→   120→
+   121→   121→Acceptance criteria:
+   122→   122→
+   123→   123→- `next build` no longer fetches Google Fonts.
+   124→   124→- Production build works without network access.
+   125→   125→
+   126→   126→### 4. Fix Package Scripts For Windows And Production
+   127→   127→
+   128→   128→Issue:
+   129→   129→`package.json` scripts assume Bun and Unix commands like `cp -r` and `tee`.
+   130→   130→
+   131→   131→Relevant file:
+   132→   132→
+   133→   133→- `package.json`
+   134→   134→
+   135→   135→Plan:
+   136→   136→
+   137→   137→1. Replace Bun-dependent scripts with Node/npm-compatible scripts.
+   138→   138→2. Use `next dev`, `next build`, and `next start` directly where possible.
+   139→   139→3. Avoid `cp -r`, `tee`, and shell-specific redirection.
+   140→   140→4. Suggested scripts:
+   141→   141→
+   142→   142→```json
+   143→   143→{
+   144→   144→  "dev": "next dev -p 3000",
+   145→   145→  "build": "next build",
+   146→   146→  "start": "next start -p 3000",
+   147→   147→  "lint": "eslint .",
+   148→   148→  "typecheck": "tsc --noEmit",
+   149→   149→  "check": "npm run lint && npm run typecheck && npm run build",
+   150→   150→  "db:push": "prisma db push",
+   151→   151→  "db:generate": "prisma generate",
+   152→   152→  "db:migrate": "prisma migrate dev",
+   153→   153→  "db:reset": "prisma migrate reset"
+   154→   154→}
+   155→   155→```
+   156→   156→
+   157→   157→5. If Bun is required by the environment, add separate `bun:*` scripts instead of making default scripts depend on Bun.
+   158→   158→
+   159→   159→Acceptance criteria:
+   160→   160→
+   161→   161→- `npm run lint` works.
+   162→   162→- `npm run typecheck` works.
+   163→   163→- `npm run build` works.
+   164→   164→- Scripts are usable on Windows.
+   165→   165→
+   166→   166→### 5. Fix Broken Text Encoding
+   167→   167→
+   168→   168→Issue:
+   169→   169→Many files contain broken characters such as `â€”`, `Â·`, `â€¦`, and `â†’`.
+   170→   170→
+   171→   171→Relevant areas:
+   172→   172→
+   173→   173→- `src`
+   174→   174→- `prisma/seed.ts`
+   175→   175→- `worklog.md`
+   176→   176→- `agent-ctx`
+   177→   177→- uploaded guide text files if used in UI
+   178→   178→
+   179→   179→Plan:
+   180→   180→
+   181→   181→1. Search for common mojibake:
+   182→   182→
+   183→   183→```powershell
+   184→   184→rg "â|Â|Ã|�" src prisma worklog.md agent-ctx upload
+   185→   185→```
+   186→   186→
+   187→   187→2. Replace broken text with clean ASCII or proper UTF-8.
+   188→   188→3. Prefer ASCII in source code comments and UI copy unless the app already requires Unicode.
+   189→   189→4. Examples:
+   190→   190→
+   191→   191→- `â€”` -> `-`
+   192→   192→- `Â·` -> `·` or `-`
+   193→   193→- `â€¦` -> `...`
+   194→   194→- `â†’` -> `->`
+   195→   195→
+   196→   196→Acceptance criteria:
+   197→   197→
+   198→   198→- No broken mojibake remains in visible UI strings.
+   199→   199→- Seeded demo data displays cleanly.
+   200→   200→- Metadata displays cleanly.
+   201→   201→
+   202→   202→## Phase 2: Database And Domain Foundation
+   203→   203→
+   204→   204→### 6. Add Prisma Migrations
+   205→   205→
+   206→   206→Issue:
+   207→   207→The project has `schema.prisma` and `seed.ts`, but no migrations directory.
+   208→   208→
+   209→   209→Relevant files:
+   210→   210→
+   211→   211→- `prisma/schema.prisma`
+   212→   212→- `prisma/seed.ts`
+   213→   213→
+   214→   214→Plan:
+   215→   215→
+   216→   216→1. Create an initial migration from the current schema:
+   217→   217→
+   218→   218→```powershell
+   219→   219→npx prisma migrate dev --name init
+   220→   220→```
+   221→   221→
+   222→   222→2. Verify `prisma/migrations` is created.
+   223→   223→3. Do not rely only on `prisma db push` for project evolution.
+   224→   224→4. Document migration usage in `download/README.md` or a root `README.md`.
+   225→   225→
+   226→   226→Acceptance criteria:
+   227→   227→
+   228→   228→- `prisma/migrations` exists.
+   229→   229→- A clean database can be created from migrations.
+   230→   230→- Seed script still runs.
+   231→   231→
+   232→   232→### 7. Replace JSON String Relation Fields With Join Tables
+   233→   233→
+   234→   234→Issue:
+   235→   235→Several relational concepts are stored as JSON strings, blocking joins, constraints, analytics, and search.
+   236→   236→
+   237→   237→Current fields:
+   238→   238→
+   239→   239→- `Demand.relatedServiceIds`
+   240→   240→- `Change.affectedServiceIds`
+   241→   241→- `Change.technicalOwnerTasksJson`
+   242→   242→- `SlaReport.serviceIds`
+   243→   243→- `SlaReport.serviceCustomerIds`
+   244→   244→- `SlaReport.metricsJson`
+   245→   245→
+   246→   246→Plan:
+   247→   247→
+   248→   248→1. Add join models:
+   249→   249→
+   250→   250→```prisma
+   251→   251→model DemandService {
+   252→   252→  id        String @id @default(cuid())
+   253→   253→  demandId  String
+   254→   254→  serviceId String
+   255→   255→  demand    Demand  @relation(fields: [demandId], references: [id], onDelete: Cascade)
+   256→   256→  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+   257→   257→
+   258→   258→  @@unique([demandId, serviceId])
+   259→   259→  @@index([serviceId])
+   260→   260→}
+   261→   261→
+   262→   262→model ChangeService {
+   263→   263→  id        String @id @default(cuid())
+   264→   264→  changeId  String
+   265→   265→  serviceId String
+   266→   266→  change    Change  @relation(fields: [changeId], references: [id], onDelete: Cascade)
+   267→   267→  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+   268→   268→
+   269→   269→  @@unique([changeId, serviceId])
+   270→   270→  @@index([serviceId])
+   271→   271→}
+   272→   272→
+   273→   273→model SlaReportService {
+   274→   274→  id          String @id @default(cuid())
+   275→   275→  slaReportId String
+   276→   276→  serviceId   String
+   277→   277→
+   278→   278→  @@unique([slaReportId, serviceId])
+   279→   279→  @@index([serviceId])
+   280→   280→}
+   281→   281→
+   282→   282→model SlaReportCustomer {
+   283→   283→  id          String @id @default(cuid())
+   284→   284→  slaReportId String
+   285→   285→  orgNodeId   String
+   286→   286→
+   287→   287→  @@unique([slaReportId, orgNodeId])
+   288→   288→  @@index([orgNodeId])
+   289→   289→}
+   290→   290→```
+   291→   291→
+   292→   292→2. Add a proper `TechnicalOwnerTask` model instead of `technicalOwnerTasksJson`.
+   293→   293→3. Keep old JSON fields temporarily for migration compatibility.
+   294→   294→4. Write migration scripts to backfill join tables from JSON strings.
+   295→   295→5. Update serializers and API routes to use relations.
+   296→   296→6. Remove old JSON fields only after all code uses new tables.
+   297→   297→
+   298→   298→Acceptance criteria:
+   299→   299→
+   300→   300→- Related services are queryable through Prisma relations.
+   301→   301→- Service owner scoping no longer requires loading all records and filtering in JavaScript.
+   302→   302→- SLA report customers/services are queryable.
+   303→   303→
+   304→   304→### 8. Add First-Class Ticket And Incident Models
+   305→   305→
+   306→   306→Issue:
+   307→   307→The app lacks core CSM case/ticket/incident functionality.
+   308→   308→
+   309→   309→Plan:
+   310→   310→
+   311→   311→1. Add models:
+   312→   312→
+   313→   313→```prisma
+   314→   314→model Ticket {
+   315→   315→  id              String   @id @default(cuid())
+   316→   316→  number          String   @unique
+   317→   317→  title           String
+   318→   318→  description     String
+   319→   319→  type            String   // INCIDENT | SERVICE_REQUEST | QUESTION | COMPLAINT
+   320→   320→  priority        String   // P1 | P2 | P3 | P4
+   321→   321→  impact          String?
+   322→   322→  urgency         String?
+   323→   323→  status          String   // NEW | TRIAGED | ASSIGNED | IN_PROGRESS | WAITING_CUSTOMER | RESOLVED | CLOSED | CANCELED
+   324→   324→  serviceId       String?
+   325→   325→  serviceCustomerId String
+   326→   326→  requesterId     String
+   327→   327→  assignedUserId  String?
+   328→   328→  assignmentGroupId String?
+   329→   329→  resolutionCode  String?
+   330→   330→  resolutionNotes String?
+   331→   331→  createdAt       DateTime @default(now())
+   332→   332→  updatedAt       DateTime @updatedAt
+   333→   333→  resolvedAt      DateTime?
+   334→   334→  closedAt        DateTime?
+   335→   335→}
+   336→   336→
+   337→   337→model AssignmentGroup {
+   338→   338→  id        String @id @default(cuid())
+   339→   339→  name      String
+   340→   340→  type      String // SCM | SERVICE_DESK | TECHNICAL | GOVERNANCE
+   341→   341→  active    Boolean @default(true)
+   342→   342→  createdAt DateTime @default(now())
+   343→   343→}
+   344→   344→```
+   345→   345→
+   346→   346→2. Add ticket event/audit model:
+   347→   347→
+   348→   348→```prisma
+   349→   349→model TicketEvent {
+   350→   350→  id        String   @id @default(cuid())
+   351→   351→  ticketId  String
+   352→   352→  eventType String
+   353→   353→  actorId   String?
+   354→   354→  actorName String
+   355→   355→  notes     String?
+   356→   356→  createdAt DateTime @default(now())
+   357→   357→}
+   358→   358→```
+   359→   359→
+   360→   360→3. Add API routes:
+   361→   361→
+   362→   362→- `GET/POST /api/tickets`
+   363→   363→- `GET/PATCH /api/tickets/[id]`
+   364→   364→- `POST /api/tickets/[id]/assign`
+   365→   365→- `POST /api/tickets/[id]/resolve`
+   366→   366→- `POST /api/tickets/[id]/close`
+   367→   367→- `POST /api/tickets/[id]/reopen`
+   368→   368→
+   369→   369→4. Add role scoping:
+   370→   370→
+   371→   371→- Service Customer: only own org tickets.
+   372→   372→- SCM Worker: assigned tickets, unassigned queue, and customer orgs they serve.
+   373→   373→- CM Leader: all tickets.
+   374→   374→- Service Owner: tickets touching owned services.
+   375→   375→
+   376→   376→Acceptance criteria:
+   377→   377→
+   378→   378→- Customers can raise an incident/case separately from a demand.
+   379→   379→- Workers can triage, assign, resolve, close, and reopen tickets.
+   380→   380→- Every transition writes an audit event.
+   381→   381→
+   382→   382→## Phase 3: SLA Engine
+   383→   383→
+   384→   384→### 9. Add SLA Policy And SLA Clock
+   385→   385→
+   386→   386→Issue:
+   387→   387→SLA is currently manually represented by events; there is no enforceable clock.
+   388→   388→
+   389→   389→Plan:
+   390→   390→
+   391→   391→1. Add models:
+   392→   392→
+   393→   393→```prisma
+   394→   394→model SlaPolicy {
+   395→   395→  id              String @id @default(cuid())
+   396→   396→  name            String
+   397→   397→  serviceId       String?
+   398→   398→  ticketType      String
+   399→   399→  priority        String
+   400→   400→  responseMins    Int
+   401→   401→  resolutionMins  Int
+   402→   402→  businessCalendarId String?
+   403→   403→  active          Boolean @default(true)
+   404→   404→  createdAt       DateTime @default(now())
+   405→   405→}
+   406→   406→
+   407→   407→model SlaClock {
+   408→   408→  id              String @id @default(cuid())
+   409→   409→  ticketId        String
+   410→   410→  policyId        String
+   411→   411→  type            String // RESPONSE | RESOLUTION
+   412→   412→  status          String // RUNNING | PAUSED | MET | BREACHED | CANCELED
+   413→   413→  startedAt       DateTime
+   414→   414→  dueAt           DateTime
+   415→   415→  pausedAt        DateTime?
+   416→   416→  totalPausedMins Int @default(0)
+   417→   417→  metAt           DateTime?
+   418→   418→  breachedAt      DateTime?
+   419→   419→}
+   420→   420→
+   421→   421→model BusinessCalendar {
+   422→   422→  id        String @id @default(cuid())
+   423→   423→  name      String
+   424→   424→  timezone  String
+   425→   425→  rulesJson String
+   426→   426→}
+   427→   427→```
+   428→   428→
+   429→   429→2. When a ticket is created, attach response and resolution clocks based on service, ticket type, and priority.
+   430→   430→3. Pause SLA when status is `WAITING_CUSTOMER`.
+   431→   431→4. Resume SLA when customer responds.
+   432→   432→5. Mark response SLA met when first worker response is sent.
+   433→   433→6. Mark resolution SLA met when ticket is resolved.
+   434→   434→7. Add a scheduled job or API-safe function to detect warnings and breaches.
+   435→   435→
+   436→   436→Acceptance criteria:
+   437→   437→
+   438→   438→- SLA warnings/breaches are calculated, not manually inserted.
+   439→   439→- Dashboard counts are derived from live clocks.
+   440→   440→- SLA reports are generated from clock history.
+   441→   441→
+   442→   442→### 10. Replace Approximate Dashboard Metrics
+   443→   443→
+   444→   444→Issue:
+   445→   445→`/api/stats` includes approximate calculations, such as CM Leader pending approvals based on all `UNDER_REVIEW` demands.
+   446→   446→
+   447→   447→Relevant file:
+   448→   448→
+   449→   449→- `src/app/api/stats/route.ts`
+   450→   450→
+   451→   451→Plan:
+   452→   452→
+   453→   453→1. Replace approximate approval count with exact criteria:
+   454→   454→
+   455→   455→- Demand quote fields present.
+   456→   456→- `status = UNDER_REVIEW`.
+   457→   457→- `quoteApprovedByCmLeader = false`.
+   458→   458→- Quote approval requested event exists or a dedicated approval request model exists.
+   459→   459→
+   460→   460→2. Replace SLA warning/breach counts with `SlaClock` status once Phase 3 exists.
+   461→   461→3. Avoid loading all records then filtering in JavaScript where relations can handle it.
+   462→   462→
+   463→   463→Acceptance criteria:
+   464→   464→
+   465→   465→- Dashboard metrics match actual actionable work.
+   466→   466→- Service owner stats use relational service ownership queries.
+   467→   467→
+   468→   468→## Phase 4: Communication, Collaboration, And Attachments
+   469→   469→
+   470→   470→### 11. Add Threaded Comments
+   471→   471→
+   472→   472→Issue:
+   473→   473→`Communication` is too shallow for real customer service interaction.
+   474→   474→
+   475→   475→Plan:
+   476→   476→
+   477→   477→1. Add models:
+   478→   478→
+   479→   479→```prisma
+   480→   480→model Conversation {
+   481→   481→  id                String @id @default(cuid())
+   482→   482→  entityType        String // TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
+   483→   483→  entityId          String
+   484→   484→  serviceCustomerId String?
+   485→   485→  createdAt         DateTime @default(now())
+   486→   486→  updatedAt         DateTime @updatedAt
+   487→   487→}
+   488→   488→
+   489→   489→model Comment {
+   490→   490→  id             String @id @default(cuid())
+   491→   491→  conversationId String
+   492→   492→  authorId       String
+   493→   493→  authorName     String
+   494→   494→  visibility     String // CUSTOMER_VISIBLE | INTERNAL
+   495→   495→  body           String
+   496→   496→  createdAt      DateTime @default(now())
+   497→   497→  editedAt        DateTime?
+   498→   498→}
+   499→   499→```
+   500→   500→
+   501→   501→2. Connect demands, tickets, changes, problems, and SLA events to conversations.
+   502→   502→3. Replace one-off communication display with timeline threads.
+   503→   503→4. Preserve current `Communication` as outbound message records if needed.
+   504→   504→
+   505→   505→Acceptance criteria:
+   506→   506→
+   507→   507→- Customers and workers can have threaded conversations.
+   508→   508→- Internal notes are hidden from customers.
+   509→   509→- Threads appear in demand/ticket detail pages.
+   510→   510→
+   511→   511→### 12. Add Attachments
+   512→   512→
+   513→   513→Issue:
+   514→   514→No file/evidence support exists.
+   515→   515→
+   516→   516→Plan:
+   517→   517→
+   518→   518→1. Add model:
+   519→   519→
+   520→   520→```prisma
+   521→   521→model Attachment {
+   522→   522→  id          String @id @default(cuid())
+   523→   523→  entityType  String
+   524→   524→  entityId    String
+   525→   525→  fileName    String
+   526→   526→  mimeType    String
+   527→   527→  sizeBytes   Int
+   528→   528→  storageKey  String
+   529→   529→  uploadedById String
+   530→   530→  createdAt   DateTime @default(now())
+   531→   531→}
+   532→   532→```
+   533→   533→
+   534→   534→2. Add upload API route:
+   535→   535→
+   536→   536→- `POST /api/attachments`
+   537→   537→- `GET /api/attachments?entityType=&entityId=`
+   538→   538→- `DELETE /api/attachments/[id]`
+   539→   539→
+   540→   540→3. Store locally for development, object storage for production.
+   541→   541→4. Enforce file size and MIME type restrictions.
+   542→   542→
+   543→   543→Acceptance criteria:
+   544→   544→
+   545→   545→- Users can attach evidence to demands/tickets/problems.
+   546→   546→- Attachments respect role scoping.
+   547→   547→
+   548→   548→### 13. Add Customer Satisfaction Feedback
+   549→   549→
+   550→   550→Issue:
+   551→   551→No CSAT/NPS feedback after closure.
+   552→   552→
+   553→   553→Plan:
+   554→   554→
+   555→   555→1. Add model:
+   556→   556→
+   557→   557→```prisma
+   558→   558→model SatisfactionSurvey {
+   559→   559→  id          String @id @default(cuid())
+   560→   560→  entityType  String // TICKET | DEMAND
+   561→   561→  entityId    String
+   562→   562→  customerId  String
+   563→   563→  rating      Int
+   564→   564→  comment     String?
+   565→   565→  createdAt   DateTime @default(now())
+   566→   566→}
+   567→   567→```
+   568→   568→
+   569→   569→2. Trigger survey notification when a ticket/demand closes.
+   570→   570→3. Add customer UI for rating.
+   571→   571→4. Add CM Leader dashboard for CSAT trends.
+   572→   572→
+   573→   573→Acceptance criteria:
+   574→   574→
+   575→   575→- Closed records can collect customer satisfaction.
+   576→   576→- Leaders can see low-rated cases and trends.
+   577→   577→
+   578→   578→## Phase 5: Knowledge Management
+   579→   579→
+   580→   580→### 14. Add Knowledge Base And Known Error Articles
+   581→   581→
+   582→   582→Issue:
+   583→   583→Problem records exist but there is no operational knowledge base.
+   584→   584→
+   585→   585→Plan:
+   586→   586→
+   587→   587→1. Add models:
+   588→   588→
+   589→   589→```prisma
+   590→   590→model KnowledgeArticle {
+   591→   591→  id          String @id @default(cuid())
+   592→   592→  title       String
+   593→   593→  body        String
+   594→   594→  type        String // HOW_TO | KNOWN_ERROR | FAQ | RUNBOOK
+   595→   595→  status      String // DRAFT | REVIEW | PUBLISHED | RETIRED
+   596→   596→  serviceId   String?
+   597→   597→  authorId    String
+   598→   598→  reviewerId  String?
+   599→   599→  createdAt   DateTime @default(now())
+   600→   600→  updatedAt   DateTime @updatedAt
+   601→   601→  publishedAt DateTime?
+   602→   602→}
+   603→   603→```
+   604→   604→
+   605→   605→2. Link articles to problems, tickets, and service offerings.
+   606→   606→3. Add article search in the customer portal and worker workspace.
+   607→   607→4. Add review/publish workflow for CM Leader or Service Owner.
+   608→   608→
+   609→   609→Acceptance criteria:
+   610→   610→
+   611→   611→- Known errors become reusable articles.
+   612→   612→- Workers can link resolutions to knowledge articles.
+   613→   613→- Customers can self-serve published articles.
+   614→   614→
+   615→   615→## Phase 6: Authorization And Audit
+   616→   616→
+   617→   617→### 15. Add Permission Matrix
+   618→   618→
+   619→   619→Issue:
+   620→   620→Current authorization is role-only.
+   621→   621→
+   622→   622→Plan:
+   623→   623→
+   624→   624→1. Add models:
+   625→   625→
+   626→   626→```prisma
+   627→   627→model Permission {
+   628→   628→  id          String @id @default(cuid())
+   629→   629→  key         String @unique
+   630→   630→  description String
+   631→   631→}
+   632→   632→
+   633→   633→model RolePermission {
+   634→   634→  id           String @id @default(cuid())
+   635→   635→  role         String
+   636→   636→  permissionId String
+   637→   637→
+   638→   638→  @@unique([role, permissionId])
+   639→   639→}
+   640→   640→```
+   641→   641→
+   642→   642→2. Add permissions such as:
+   643→   643→
+   644→   644→- `demand.read.own`
+   645→   645→- `demand.read.all`
+   646→   646→- `demand.quote.create`
+   647→   647→- `demand.quote.approve`
+   648→   648→- `ticket.assign`
+   649→   649→- `ticket.resolve`
+   650→   650→- `sla.report.approve`
+   651→   651→- `service.manage`
+   652→   652→- `knowledge.publish`
+   653→   653→
+   654→   654→3. Replace many direct `requireRole(...)` checks with a helper:
+   655→   655→
+   656→   656→```ts
+   657→   657→await requirePermission("demand.quote.approve");
+   658→   658→```
+   659→   659→
+   660→   660→4. Keep role checks only where role identity itself matters.
+   661→   661→
+   662→   662→Acceptance criteria:
+   663→   663→
+   664→   664→- Permissions are centralized.
+   665→   665→- Role access can be audited and changed without editing every route.
+   666→   666→
+   667→   667→### 16. Add Audit Log For All Mutations
+   668→   668→
+   669→   669→Issue:
+   670→   670→Demand has events, but other writes are not consistently audited.
+   671→   671→
+   672→   672→Plan:
+   673→   673→
+   674→   674→1. Add model:
+   675→   675→
+   676→   676→```prisma
+   677→   677→model AuditLog {
+   678→   678→  id         String @id @default(cuid())
+   679→   679→  actorId    String?
+   680→   680→  actorName  String
+   681→   681→  action     String
+   682→   682→  entityType String
+   683→   683→  entityId   String
+   684→   684→  beforeJson String?
+   685→   685→  afterJson  String?
+   686→   686→  ipAddress  String?
+   687→   687→  userAgent  String?
+   688→   688→  createdAt  DateTime @default(now())
+   689→   689→}
+   690→   690→```
+   691→   691→
+   692→   692→2. Create a helper:
+   693→   693→
+   694→   694→```ts
+   695→   695→await auditLog({
+   696→   696→  actor: session,
+   697→   697→  action: "DEMAND_QUOTE_APPROVED",
+   698→   698→  entityType: "Demand",
+   699→   699→  entityId: demand.id,
+   700→   700→  before,
+   701→   701→  after,
+   702→   702→});
+   703→   703→```
+   704→   704→
+   705→   705→3. Use the helper in every POST/PATCH/DELETE route.
+   706→   706→
+   707→   707→Acceptance criteria:
+   708→   708→
+   709→   709→- All important mutations are audit logged.
+   710→   710→- CM Leader/Admin can inspect audit history.
+   711→   711→
+   712→   712→## Phase 7: Security Hardening
+   713→   713→
+   714→   714→### 17. Harden Login And Sessions
+   715→   715→
+   716→   716→Issue:
+   717→   717→Login has no rate limiting, lockout, password reset, MFA, or revocation.
+   718→   718→
+   719→   719→Plan:
+   720→   720→
+   721→   721→1. Require `SESSION_SECRET` in production. Do not allow fallback secret in production.
+   722→   722→2. Add session expiry validation based on the cookie timestamp.
+   723→   723→3. Add server-side session table if revocation is required.
+   724→   724→4. Add login rate limiting by email and IP.
+   725→   725→5. Add failed-login lockout policy.
+   726→   726→6. Remove demo quick-login in production.
+   727→   727→7. Add password reset or integrate SSO.
+   728→   728→
+   729→   729→Acceptance criteria:
+   730→   730→
+   731→   731→- Production cannot boot with fallback session secret.
+   732→   732→- Brute-force login attempts are blocked.
+   733→   733→- Demo credentials are not exposed in production UI.
+   734→   734→
+   735→   735→### 18. Add Input Validation With Zod
+   736→   736→
+   737→   737→Issue:
+   738→   738→Many routes manually parse `body: any`.
+   739→   739→
+   740→   740→Plan:
+   741→   741→
+   742→   742→1. Add Zod schemas per route.
+   743→   743→2. Validate request bodies and query params.
+   744→   744→3. Return consistent 400 errors with field-level messages.
+   745→   745→4. Replace `any` in API routes where practical.
+   746→   746→
+   747→   747→Acceptance criteria:
+   748→   748→
+   749→   749→- Invalid payloads return clear validation errors.
+   750→   750→- API routes avoid unsafe `any` parsing.
+   751→   751→
+   752→   752→## Phase 8: UX And Navigation
+   753→   753→
+   754→   754→### 19. Add URL-Based Routing
+   755→   755→
+   756→   756→Issue:
+   757→   757→Workspace navigation is held in Zustand only. Deep links and browser history are weak.
+   758→   758→
+   759→   759→Relevant file:
+   760→   760→
+   761→   761→- `src/lib/store.ts`
+   762→   762→
+   763→   763→Plan:
+   764→   764→
+   765→   765→1. Add real routes:
+   766→   766→
+   767→   767→- `/customer/dashboard`
+   768→   768→- `/customer/demands`
+   769→   769→- `/customer/demands/[id]`
+   770→   770→- `/scm/demands`
+   771→   771→- `/cm/approvals`
+   772→   772→- `/owner/services`
+   773→   773→
+   774→   774→2. Keep Zustand for UI state only, not primary navigation.
+   775→   775→3. Update global search to navigate to URLs.
+   776→   776→
+   777→   777→Acceptance criteria:
+   778→   778→
+   779→   779→- Refreshing a detail page preserves location.
+   780→   780→- Browser back/forward works.
+   781→   781→- Notifications can deep-link to target records.
+   782→   782→
+   783→   783→### 20. Improve Queue And Work Management UX
+   784→   784→
+   785→   785→Issue:
+   786→   786→The app has queues, but not mature work management.
+   787→   787→
+   788→   788→Plan:
+   789→   789→
+   790→   790→1. Add saved filters:
+   791→   791→
+   792→   792→- My open work
+   793→   793→- Unassigned
+   794→   794→- Breaching soon
+   795→   795→- Waiting customer
+   796→   796→- Pending approval
+   797→   797→- Accepted needs change
+   798→   798→
+   799→   799→2. Add sorting by age, priority, SLA due time, customer, owner.
+   800→   800→3. Add bulk assignment for CM Leader.
+   801→   801→4. Add aging badges and overdue indicators.
+   802→   802→5. Add workload balancing view.
+   803→   803→
+   804→   804→Acceptance criteria:
+   805→   805→
+   806→   806→- SCM and CM Leader can work from actionable queues.
+   807→   807→- High-risk items are visible without manual filtering.
+   808→   808→
+   809→   809→## Phase 9: Notifications And Integrations
+   810→   810→
+   811→   811→### 21. Add Real Notification Delivery
+   812→   812→
+   813→   813→Issue:
+   814→   814→Notifications are in-app only.
+   815→   815→
+   816→   816→Plan:
+   817→   817→
+   818→   818→1. Keep `Notification` for in-app notification.
+   819→   819→2. Add `NotificationDelivery` model:
+   820→   820→
+   821→   821→```prisma
+   822→   822→model NotificationDelivery {
+   823→   823→  id             String @id @default(cuid())
+   824→   824→  notificationId String
+   825→   825→  channel        String // EMAIL | TEAMS | SLACK | PORTAL
+   826→   826→  status         String // PENDING | SENT | FAILED
+   827→   827→  error          String?
+   828→   828→  sentAt         DateTime?
+   829→   829→  createdAt      DateTime @default(now())
+   830→   830→}
+   831→   831→```
+   832→   832→
+   833→   833→3. Add delivery worker/service.
+   834→   834→4. Add user notification preferences.
+   835→   835→5. Add retry policy.
+   836→   836→
+   837→   837→Acceptance criteria:
+   838→   838→
+   839→   839→- Notifications can be delivered externally.
+   840→   840→- Failed delivery is visible and retryable.
+   841→   841→
+   842→   842→### 22. Prepare External Integrations
+   843→   843→
+   844→   844→Plan:
+   845→   845→
+   846→   846→1. Add integration configuration model.
+   847→   847→2. Prioritize:
+   848→   848→
+   849→   849→- Email inbound/outbound
+   850→   850→- Teams/Slack notifications
+   851→   851→- Calendar for change windows
+   852→   852→- Identity provider/SSO
+   853→   853→- External ITSM connector if needed
+   854→   854→
+   855→   855→Acceptance criteria:
+   856→   856→
+   857→   857→- Integration secrets are not stored in plain text.
+   858→   858→- Integration failures are logged.
+   859→   859→
+   860→   860→## Phase 10: Reporting And Analytics
+   861→   861→
+   862→   862→### 23. Add Operational Reports
+   863→   863→
+   864→   864→Issue:
+   865→   865→Current analytics are basic.
+   866→   866→
+   867→   867→Plan:
+   868→   868→
+   869→   869→1. Add reports:
+   870→   870→
+   871→   871→- Ticket volume by customer/service/priority
+   872→   872→- SLA compliance by service/customer
+   873→   873→- Average response/resolution time
+   874→   874→- Backlog aging
+   875→   875→- Reopen rate
+   876→   876→- CSAT trend
+   877→   877→- Worker workload
+   878→   878→- Demand conversion to change
+   879→   879→
+   880→   880→2. Add export API:
+   881→   881→
+   882→   882→- CSV export
+   883→   883→- JSON export
+   884→   884→
+   885→   885→3. Add date range filters.
+   886→   886→
+   887→   887→Acceptance criteria:
+   888→   888→
+   889→   889→- CM Leader can use reports for operations review.
+   890→   890→- Service Owner can see service health and trends.
+   891→   891→
+   892→   892→## Phase 11: Testing
+   893→   893→
+   894→   894→### 24. Add Unit Tests For State Machines
+   895→   895→
+   896→   896→Plan:
+   897→   897→
+   898→   898→1. Extract demand, change, ticket, and SLA transition rules into testable modules.
+   899→   899→2. Test valid transitions.
+   900→   900→3. Test invalid transitions.
+   901→   901→4. Test role/permission constraints.
+   902→   902→
+   903→   903→Acceptance criteria:
+   904→   904→
+   905→   905→- State machine tests pass.
+   906→   906→- Invalid workflow transitions are blocked.
+   907→   907→
+   908→   908→### 25. Add API Integration Tests
+   909→   909→
+   910→   910→Plan:
+   911→   911→
+   912→   912→1. Use a test database.
+   913→   913→2. Seed minimal users and services.
+   914→   914→3. Test key workflows:
+   915→   915→
+   916→   916→- Customer creates ticket.
+   917→   917→- SCM assigns and responds.
+   918→   918→- SLA response clock is met.
+   919→   919→- Ticket resolves and closes.
+   920→   920→- Demand quote approval path.
+   921→   921→- Customer requests quote changes.
+   922→   922→- Change handover path.
+   923→   923→
+   924→   924→Acceptance criteria:
+   925→   925→
+   926→   926→- API tests can run without a manually started dev server.
+   927→   927→- Tests do not depend on Bun unless Bun is explicitly part of the project standard.
+   928→   928→
+   929→   929→### 26. Add Playwright E2E Tests
+   930→   930→
+   931→   931→Plan:
+   932→   932→
+   933→   933→1. Add Playwright.
+   934→   934→2. Test role login.
+   935→   935→3. Test customer demand submission.
+   936→   936→4. Test SCM review and quote draft.
+   937→   937→5. Test CM approval.
+   938→   938→6. Test customer accept/request changes.
+   939→   939→7. Test notification drawer.
+   940→   940→
+   941→   941→Acceptance criteria:
+   942→   942→
+   943→   943→- Main user journeys are covered end to end.
+   944→   944→- Screens render correctly on desktop and mobile.
+   945→   945→
+   946→   946→## Phase 12: Documentation
+   947→   947→
+   948→   948→### 27. Add Project README
+   949→   949→
+   950→   950→Plan:
+   951→   951→
+   952→   952→1. Create or update root `README.md`.
+   953→   953→2. Include:
+   954→   954→
+   955→   955→- Project purpose
+   956→   956→- Tech stack
+   957→   957→- Setup
+   958→   958→- Environment variables
+   959→   959→- Database migration
+   960→   960→- Seed
+   961→   961→- Dev server
+   962→   962→- Build
+   963→   963→- Test
+   964→   964→- Demo accounts
+   965→   965→- Production warnings
+   966→   966→
+   967→   967→Acceptance criteria:
+   968→   968→
+   969→   969→- New developer can run the app from README only.
+   970→   970→
+   971→   971→### 28. Add Architecture Documentation
+   972→   972→
+   973→   973→Plan:
+   974→   974→
+   975→   975→1. Add `docs/architecture.md`.
+   976→   976→2. Document:
+   977→   977→
+   978→   978→- Roles
+   979→   979→- Permission model
+   980→   980→- Entity model
+   981→   981→- Demand lifecycle
+   982→   982→- Ticket lifecycle
+   983→   983→- SLA engine
+   984→   984→- Notification flow
+   985→   985→- Deployment assumptions
+   986→   986→
+   987→   987→Acceptance criteria:
+   988→   988→
+   989→   989→- Architecture is understandable without reading all source code.
+   990→   990→
+   991→   991→## Recommended Execution Order
+   992→   992→
+   993→   993→Run the work in this exact order:
+   994→   994→
+   995→   995→1. Fix typecheck and build.
+   996→   996→2. Remove build error hiding.
+   997→   997→3. Fix fonts and scripts.
+   998→   998→4. Fix encoding.
+   999→   999→5. Add migrations.
+  1000→  1000→6. Add audit log.
+  1001→  1001→7. Add permission model.
+  1002→  1002→8. Replace JSON relation fields with join tables.
+  1003→  1003→9. Add ticket/case/incident domain.
+  1004→  1004→10. Add SLA policy and clock engine.
+  1005→  1005→11. Add threaded comments and attachments.
+  1006→  1006→12. Add CSAT.
+  1007→  1007→13. Add knowledge base.
+  1008→  1008→14. Add URL routing.
+  1009→  1009→15. Improve queues and dashboards.
+  1010→  1010→16. Add notification delivery.
+  1011→  1011→17. Add reports.
+  1012→  1012→18. Add unit, API, and E2E tests.
+  1013→  1013→19. Complete README and architecture docs.
+  1014→  1014→
+  1015→  1015→## Verification Commands
+  1016→  1016→
+  1017→  1017→Use these after each phase:
+  1018→  1018→
+  1019→  1019→```powershell
+  1020→  1020→npm run lint
+  1021→  1021→npm run typecheck
+  1022→  1022→npm run build
+  1023→  1023→npx prisma validate
+  1024→  1024→npx prisma migrate status
+  1025→  1025→```
+  1026→  1026→
+  1027→  1027→If tests are added:
+  1028→  1028→
+  1029→  1029→```powershell
+  1030→  1030→npm run test
+  1031→  1031→npm run test:e2e
+  1032→  1032→```
+  1033→  1033→
+  1034→  1034→## Definition Of Done
+  1035→  1035→
+  1036→  1036→The project can be considered a good-quality CSM foundation when:
+  1037→  1037→
+  1038→  1038→- Production build passes without network-only font dependencies.
+  1039→  1039→- TypeScript errors are not ignored.
+  1040→  1040→- Database schema is migration-controlled.
+  1041→  1041→- Core work is based on tickets/cases/incidents, not only demands.
+  1042→  1042→- SLA compliance is calculated by clocks and policies.
+  1043→  1043→- Communications are threaded with customer/internal visibility.
+  1044→  1044→- Attachments, audit logs, permissions, and CSAT exist.
+  1045→  1045→- Role workspaces operate from actionable queues.
+  1046→  1046→- Important workflows have automated tests.
+  1047→  1047→- README and architecture docs explain setup and system behavior.
+  1048→  1048→

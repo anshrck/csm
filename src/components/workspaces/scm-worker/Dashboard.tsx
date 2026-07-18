@@ -94,6 +94,16 @@ export default function Dashboard() {
     queryFn: () => apiGet('/api/changes'),
   });
 
+  // Open tickets (NEW + active) — scope is enforced server-side (assigned-to-me
+  // + unassigned + customers I serve).
+  const { data: openTickets } = useQuery<Array<{ id: string; status: string }>>({
+    queryKey: ['tickets', 'scm-dashboard', 'open'],
+    queryFn: () =>
+      apiGet('/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER'),
+    staleTime: 30_000,
+  });
+  const openTicketCount = openTickets?.length ?? 0;
+
   const assignMe = useMutation({
     mutationFn: (id: string) =>
       apiPatch(`/api/demands/${id}`, { assignedScmWorkerId: session?.id }),
@@ -173,13 +183,21 @@ export default function Dashboard() {
       />
 
       {/* Top stat cards */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="My Active Demands"
           value={myLoading ? '—' : myActive.length}
           hint={`${(myDemands ?? []).length} total assigned`}
           icon={<ClipboardList className="h-4 w-4" />}
           onClick={() => navigate('demands')}
+        />
+        <StatCard
+          label="Open Tickets"
+          value={openTicketCount}
+          hint="In your ticket scope"
+          icon={<Inbox className="h-4 w-4" />}
+          tone={openTicketCount > 0 ? 'warning' : 'default'}
+          onClick={() => navigate('tickets')}
         />
         <StatCard
           label="Awaiting Customer Action"

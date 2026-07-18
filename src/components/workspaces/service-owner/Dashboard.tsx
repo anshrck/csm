@@ -206,6 +206,16 @@ export default function Dashboard() {
   const problemsQ = useOwnerProblems();
   const demandsQ = useAcceptedDemands();
 
+  // Open tickets on services owned by this Service Owner (server enforces
+  // the owned-service scope based on the caller's id).
+  const openTicketsQ = useQuery<Array<{ id: string; status: string }>>({
+    queryKey: ['tickets', 'owner-dashboard', 'open'],
+    queryFn: () =>
+      apiGet('/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER'),
+    staleTime: 30_000,
+  });
+  const openTicketCount = openTicketsQ.data?.length ?? 0;
+
   const services = servicesQ.data ?? [];
   const myServiceIds = useMemo(() => new Set(services.map((s) => s.id)), [services]);
 
@@ -313,13 +323,21 @@ export default function Dashboard() {
       ) : (
         <>
           {/* Top stat cards */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <StatCard
               label="My Services"
               value={services.length}
               icon={<Briefcase className="h-4 w-4" />}
               hint="Active portfolio under your ownership"
               onClick={() => navigate('portfolio')}
+            />
+            <StatCard
+              label="Open Tickets"
+              value={openTicketCount}
+              icon={<Activity className="h-4 w-4" />}
+              hint="On your owned services"
+              tone={openTicketCount > 0 ? 'warning' : 'default'}
+              onClick={() => navigate('tickets')}
             />
             <StatCard
               label="SLA Warnings"

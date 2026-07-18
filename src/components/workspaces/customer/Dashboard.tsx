@@ -12,6 +12,7 @@ import {
   ArrowRight,
   Activity,
   HeartPulse,
+  Inbox,
 } from 'lucide-react';
 import { useApp } from '@/lib/store';
 import { apiGet } from '@/lib/api';
@@ -85,6 +86,17 @@ export default function Dashboard() {
     queryKey: ['sla-events'],
     queryFn: () => apiGet<SlaEvent[]>('/api/sla-events'),
   });
+
+  // Tickets raised by this customer's org that are still in an open state.
+  const openTicketsQ = useQuery({
+    queryKey: ['tickets', 'customer-dashboard', 'open'],
+    queryFn: () =>
+      apiGet<Array<{ id: string; status: string }>>(
+        '/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER',
+      ),
+    staleTime: 30_000,
+  });
+  const openTicketCount = openTicketsQ.data?.length ?? 0;
 
   const demands = demandsQ.data ?? [];
   const services = servicesQ.data ?? [];
@@ -164,7 +176,7 @@ export default function Dashboard() {
       />
 
       {/* Stat cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="Total Demands"
           value={loading ? '—' : totalDemands}
@@ -179,6 +191,14 @@ export default function Dashboard() {
           hint="Quotes awaiting your decision"
           tone={pendingCount > 0 ? 'warning' : 'default'}
           onClick={() => navigate('demands')}
+        />
+        <StatCard
+          label="Open Tickets"
+          value={openTicketCount}
+          icon={<Inbox className="h-4 w-4" />}
+          hint="Tickets raised by your org — NEW + active"
+          tone={openTicketCount > 0 ? 'warning' : 'default'}
+          onClick={() => navigate('tickets')}
         />
         <StatCard
           label="SLA Warnings"

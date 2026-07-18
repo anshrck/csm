@@ -159,6 +159,17 @@ export default function Dashboard() {
   const slaQ = useSlaEvents();
   const changesQ = useChanges();
 
+  // Open tickets across the tenant (CM Leader sees all).
+  const openTicketsQ = useQuery<Array<{ id: string; status: string }>>({
+    queryKey: ['tickets', 'cm-leader-dashboard', 'open'],
+    queryFn: () =>
+      apiGet('/api/tickets?status=NEW,TRIAGED,ASSIGNED,IN_PROGRESS,WAITING_CUSTOMER'),
+    staleTime: 30_000,
+  });
+  const openTicketCount = openTicketsQ.data?.length ?? 0;
+  const newTicketCount =
+    openTicketsQ.data?.filter((t) => t.status === 'NEW').length ?? 0;
+
   const demands = demandsQ.data ?? [];
   const stats = statsQ.data;
   const slaEvents = slaQ.data ?? [];
@@ -209,13 +220,21 @@ export default function Dashboard() {
       />
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard
           label="Active Demands"
           value={stats?.totalDemands ?? activeDemands.length}
           hint="Across all service customers"
           icon={<FileText className="h-4 w-4" />}
           onClick={() => navigate('demands')}
+        />
+        <StatCard
+          label="Open Tickets"
+          value={openTicketCount}
+          hint={`${newTicketCount} NEW — awaiting triage`}
+          icon={<Inbox className="h-4 w-4" />}
+          tone={newTicketCount > 0 ? 'warning' : 'default'}
+          onClick={() => navigate('tickets')}
         />
         <StatCard
           label="Unassigned"
