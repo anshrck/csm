@@ -1,0 +1,625 @@
+================================================================================
+  ROLE GUIDE: SERVICE OWNER
+  CereBree · Universal Service Management System (uSMS)
+  Version 1.0  |  March 2026
+================================================================================
+
+  This guide is written entirely from your perspective as a Service Owner.
+  It tells you what service ownership means structurally, where your authority
+  sits in the governance architecture, and what is expected of you across
+  every process that involves your services.
+
+  Read this once. Then use it as a reference when something is unclear.
+
+────────────────────────────────────────────────────────────────────────────────
+
+CONTENTS
+
+  1.   Who You Are
+  2.   Your Position in the Governance Architecture
+  3.   What You Are Accountable For
+  4.   What Service Ownership Is Not
+  5.   Your Touchpoints in Demand Management
+  6.   Your Touchpoints in Service Level Management
+  7.   Your Touchpoints in Service Catalog Management
+  8.   Your Touchpoints in Change Enablement
+  9.   Your Touchpoints in Problem Management
+  10.  Your Relationship to the Technical Owner
+  11.  Your Relationship to CSM and the SCM Worker
+  12.  The Escalation Chain — When It Reaches You
+  13.  Your View in the Portal
+  14.  What Good Looks Like
+
+────────────────────────────────────────────────────────────────────────────────
+1.  WHO YOU ARE
+────────────────────────────────────────────────────────────────────────────────
+
+You are a Service Owner.
+
+You sit in the Owner layer of the SeOS role model — the highest accountability
+tier in the operational governance structure of uSMS. The Owner layer does not
+execute operational work. It holds structural accountability: for the integrity,
+quality, and commitment fulfillment of specific services.
+
+A Service Owner is accountable for one or more discrete services in the uSeC
+Service Catalog. Not the processes that operate around those services. Not the
+teams that deliver them. The services themselves: their value, their quality,
+their SLA commitments, and their lifecycle governance.
+
+Your accountability is permanent and structural. It does not activate when a
+ticket is assigned to you. It does not pause between incidents. You are
+accountable for your services continuously — even when everything is running
+well, and especially when it is not.
+
+What the Service Owner role means in the SeOS model:
+
+  SeOS defines three role layers:
+    Owner layer:   Process Owner, Service Owner, Technical Owner, Governance Owner
+    Leader layer:  CM Leader, SD Leader, CE Leader, PM Leader
+    Worker layer:  SCM Worker, SD Agent, CE Worker, PM Worker
+
+  Your layer holds governance authority, not operational execution. You approve.
+  You escalate. You make decisions that affect the structural quality of services.
+  You do not manage day-to-day incident queues or participate in change planning
+  meetings as an executor. You appear at defined governance touchpoints — and
+  when you appear, the decisions you make matter.
+
+Your services in the SeOS governance chain:
+  CUSTOMER → DEMAND → QUOTE → SERVICE → EXECUTION → OUTCOME → EXPERIENCE
+
+You own the SERVICE step. You are accountable for what is in the catalog, what
+commitments were made around it, and whether the OUTCOME delivered matches
+what was committed. You are consulted when DEMAND transitions to QUOTE (does
+this commitment make sense?). You are escalated to when OUTCOME fails (what
+is the governance response?).
+
+
+────────────────────────────────────────────────────────────────────────────────
+2.  YOUR POSITION IN THE GOVERNANCE ARCHITECTURE
+────────────────────────────────────────────────────────────────────────────────
+
+You occupy the Owner layer. This means:
+
+  You are an escalation target, not an operational participant.
+    The CM Leader escalates to you. The PM Leader escalates to you. The CE
+    Leader escalates to you. You do not routinely participate in demand
+    assessment, change planning, or incident triage. You are brought in when
+    a decision exceeds the authority of the Leader layer — or when structural
+    commitments are at stake.
+
+  Your decisions are governance decisions.
+    When you approve a service commitment at demand acceptance, that approval
+    is a governance act. When you authorize additional resources in response
+    to an SLA breach, that is a governance decision. When you approve a service
+    retirement, that is a governance decision. These are not operational tasks.
+    They are accountability checkpoints.
+
+  You span processes, but you are not owned by any single process.
+    Demand Management, Service Level Management, Service Catalog Management,
+    Change Enablement, and Problem Management all have defined touchpoints
+    with you. You are not a member of any of those process teams. You are an
+    Owner-layer actor who appears at those touchpoints with authority.
+
+Inheritance chain you operate within:
+  HRX → SeOS → uSMS → uSeC
+
+Every governance decision you make about your services must be consistent with
+the HRX principle of human coherence — does this decision preserve structure
+and reduce fragmentation? — and with SeOS structural logic — is responsibility
+explicit, is execution governed, is outcome measurable?
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.  WHAT YOU ARE ACCOUNTABLE FOR
+────────────────────────────────────────────────────────────────────────────────
+
+You are accountable for the following, for each service in your ownership:
+
+  Service value and fitness for purpose
+    Your service exists to deliver a specific value to specific Service
+    Customers. You are accountable for ensuring that the service description
+    in the catalog accurately reflects what is delivered, that the service
+    continues to serve its intended purpose as the organization evolves, and
+    that gaps between what is promised and what is delivered are identified
+    and governed — not absorbed silently.
+
+  SLA commitment quality
+    The SLA class assigned to your service carries concrete commitments: response
+    times, resolution targets, availability expectations. You are the governance
+    authority that approves those commitments. If the SLA class is wrong for
+    the service's actual operational profile — too ambitious, or not ambitious
+    enough — that misalignment is your governance responsibility to identify
+    and correct.
+
+  Commitment approval at demand acceptance
+    When a Service Customer accepts a quote that creates or significantly modifies
+    a commitment around your service, you approve that commitment. Your approval
+    is the governance gate that ensures the IT organization does not make promises
+    that cannot be technically delivered or structurally supported.
+
+  SLA breach response
+    When an SLA breach occurs for your service, you are notified immediately.
+    You make governance decisions about the response: authorize additional
+    resources, engage vendor support, trigger an emergency change, or formally
+    accept the breach with a documented remediation commitment. Inaction is not
+    a governance response.
+
+  Service lifecycle governance
+    Services do not exist forever. When a service in your ownership is no longer
+    fit for purpose, no longer used, or superseded by a better solution, you
+    approve its retirement. When a service needs to evolve significantly, you
+    approve the direction of that evolution. You are the governance authority
+    for the lifecycle of your services.
+
+  Catalog accuracy for your services
+    The catalog entry for each of your services must reflect current reality:
+    scope, SLA class, Technical Owner assignments, supported request types. When
+    catalog accuracy reviews identify discrepancies in your service's entry,
+    you confirm the correct state and authorize the change.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.  WHAT SERVICE OWNERSHIP IS NOT
+────────────────────────────────────────────────────────────────────────────────
+
+Understanding what you are not accountable for is as important as
+understanding what you are.
+
+  You are not a demand assessment role.
+    You do not assess individual demands or prepare quotes. That is the SCM
+    Worker's function. You are involved at the commitment approval point, not
+    at the assessment phase.
+
+  You are not a change execution authority.
+    The CE Leader approves changes. You are involved when a change materially
+    affects your service's committed scope or SLA — as an approval authority
+    for that governance dimension, not as a change approval authority in the
+    technical execution sense.
+
+  You are not the technical owner of your services.
+    Technical Ownership is a separate Owner-layer role. The Technical Owner
+    holds accountability for the technical elements (CIs) that compose your
+    service. You hold accountability for the service-level commitments and
+    customer-facing value. These are complementary — not the same.
+
+  You are not the customer's primary contact.
+    That is the SCM Worker. When escalation reaches you — through the CM Leader
+    — you may communicate directly with Service Customers in high-stakes
+    scenarios (contractual breach, governance dispute). But routine customer
+    communication is not your function.
+
+  You are not the Service Desk.
+    Incidents, requests, and access management for Service Users are not your
+    domain. If an incident escalation reaches you, it has gone through defined
+    escalation paths — you did not receive it because you are the person who
+    fixes things. You received it because a governance decision is required.
+
+  You are not a Process Owner.
+    Process Owners govern the design and quality of specific processes (Demand
+    Management, Incident Management, etc.). You govern the services that those
+    processes operate around. These roles interact but do not overlap.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.  YOUR TOUCHPOINTS IN DEMAND MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+You appear in Demand Management at two points: commitment approval and
+escalation.
+
+  Commitment approval at demand acceptance
+    When a Service Customer accepts a quote that creates a new service or
+    significantly modifies an existing commitment around one of your services,
+    you approve the service commitment and SLA agreement.
+
+    What "significantly modifies" means in practice:
+      – New service creation in your ownership scope
+      – SLA class change for an existing service
+      – Scope expansion that increases the delivery obligation
+      – Extension of the service to a new organizational scope or customer
+
+    You review the committed scope and SLA class — not the operational delivery
+    plan, which belongs to CE. Your question is: does this commitment make
+    structural sense for this service? Is the SLA class consistent with the
+    service's actual operational profile? Can the IT organization sustain what
+    is being promised?
+
+    If yes: you approve. The demand proceeds.
+    If no: you raise the concern with the CM Leader before acceptance is
+    finalized. This is your governance checkpoint. Once acceptance is recorded,
+    the commitment is live and governed.
+
+  Escalation target for commitment disputes
+    If a Service Customer disputes a quote, a rejection, or an SLA commitment
+    at the level of the CM Leader, the CM Leader escalates to you. You are the
+    next authority in the governance chain. You make the decision that resolves
+    the dispute — or that establishes the organizational position from which
+    further escalation (to the Governance Owner) may occur if required.
+
+    In a B2B context, commitment disputes can carry contractual weight. Your
+    governance decision at this level may have direct contractual implications.
+    Act with the appropriate level of care.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6.  YOUR TOUCHPOINTS IN SERVICE LEVEL MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+SLM is where your accountability becomes most visible. Every SLA class you
+approved at demand acceptance is now being monitored continuously. Every breach
+is an accountability event that reaches you.
+
+  Receive immediate notification on SLA breach
+    When an SLABreached event is emitted for one of your services, you are
+    notified — always. Not after an internal review. Not after the CM Leader
+    decides it is worth escalating. Immediately. The notification includes:
+    the entity reference (Incident/Request/Demand ID), the affected service,
+    the SLA class and target, and the elapsed time at breach.
+
+  Make governance decisions in response to breach
+    You are not notified to be informed. You are notified because a governance
+    decision is required. What that decision looks like depends on the nature
+    and severity of the breach:
+
+    – Authorize additional technical resources to accelerate resolution
+    – Engage vendor or external support for the Technical Owner
+    – Trigger an emergency change through Change Enablement
+    – Accept the breach with a documented remediation commitment and timeline
+    – Escalate to the Governance Owner if the breach has contractual implications
+
+    What you do not do: defer the decision. An SLA breach without a governance
+    response is a governance failure — not a bad day.
+
+  Communicate with the Service Customer in high-stakes breaches
+    When an SLA breach escalation has reached you — because the CM Leader could
+    not resolve it at their level — you may communicate directly with the Service
+    Customer. This is rare. When it happens, it signals to the Service Customer
+    that their concern is being held at the highest governance level within the
+    service relationship.
+
+  Approve changes to SLA class assignments
+    When SLM monitoring reveals persistent over- or under-commitment — a service
+    that consistently breaches its Class B targets, or a service that achieves
+    Class A performance while committed at Class C — you approve the SLA class
+    change. This change flows through Service Catalog Management and Change
+    Enablement. Your approval is the governance authorization for the new
+    commitment level.
+
+  Quarterly SLA review for your services
+    At minimum once per quarter, you participate in an SLA performance review
+    for your services. Not a status update — a governance review: are the
+    current commitments still the right commitments? Are there structural
+    patterns in the breach data that require your decision?
+
+
+────────────────────────────────────────────────────────────────────────────────
+7.  YOUR TOUCHPOINTS IN SERVICE CATALOG MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+The catalog entry for each of your services is the governance record of what
+has been committed. Your touchpoints in catalog governance are:
+
+  Approve new service additions to the catalog
+    When a demand is fulfilled and a new service is to be added to the catalog
+    under your ownership, you approve the committed scope: service name,
+    classification, SLA class, Technical Owner assignments, and request types.
+    Your approval confirms that the service as documented reflects what was
+    actually committed and what can actually be delivered.
+
+  Approve modifications to service scope or SLA class
+    Any change to the scope or SLA class of a service in your ownership requires
+    your approval before the Change Request is submitted to CE. This is
+    your governance gate on the catalog's accuracy for your services.
+
+  Approve service retirement proposals
+    No service in your ownership is retired without your approval. A retirement
+    proposal reaches you from the SCM Worker (with CM Leader endorsement). You
+    confirm that the retirement is justified — the service is no longer needed,
+    no longer deliverable, or superseded by a better solution — and that affected
+    Service Customers have been properly informed.
+
+    A service retirement without Service Owner approval is a governance violation.
+    It means a commitment was ended without the accountability holder authorizing
+    its termination.
+
+  Receive notification of catalog updates
+    When CE confirms a catalog change affecting your service, you are notified.
+    This is not just confirmation that the work was done — it is your opportunity
+    to verify that the catalog accurately reflects what you approved. If it does
+    not, the discrepancy must be corrected.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8.  YOUR TOUCHPOINTS IN CHANGE ENABLEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+Change Enablement is the process that executes structural changes to the service
+landscape. Your touchpoints are governance-level — you are not a change planner
+or a change implementer.
+
+  Change Board participation for complex changes affecting your services
+    For COMPLEX Normal Changes — changes with broad organizational impact,
+    irreversible consequences, or multiple Technical Owners involved — the
+    CE Leader convenes a Change Board. If the change affects one of your
+    services, you are invited. Your role at the Change Board is governance:
+    does the proposed change scope align with the service commitment? Does the
+    impact assessment accurately characterize what your Service Customers will
+    experience?
+
+    You receive the change plan with at least 24 hours notice (except in urgent
+    cases). You review it from a commitment and customer impact perspective.
+    You raise concerns before the change executes, not after.
+
+  Emergency Change notification and response
+    For Emergency Changes — changes required immediately to prevent or recover
+    from a service outage — the CE Leader may act with reduced approval processes.
+    You are notified. In cases where the Emergency Change directly affects your
+    service's committed availability, you may be consulted for a rapid governance
+    confirmation. Post-execution: you receive confirmation that the Emergency
+    Change occurred, along with its scope and impact.
+
+  Catalog update verification after change completion
+    When a change to your service is completed, CE updates the service catalog.
+    You are notified. You may verify that the catalog entry accurately reflects
+    the post-change committed state of your service.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9.  YOUR TOUCHPOINTS IN PROBLEM MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+Problem Management investigates structural service failures — recurring incidents,
+root cause analysis, and the governance decision about what gets fixed, what gets
+documented as a Known Error, and what gets accepted.
+
+Your role in Problem Management is not investigative. It is governance.
+
+  Receive escalation when a Problem investigation affects your service commitment
+    When Problem Management is investigating a recurring failure pattern in one
+    of your services, and the investigation reveals a structural issue that
+    affects the SLA commitment you approved, the PM Leader escalates to you.
+
+    The question they are bringing you is: given what we now know about the
+    structural failure, is the current SLA commitment still appropriate? Does
+    the organization need to accept a Known Error (workaround, no fix) while
+    adjusting the customer's expectations? Or does the severity of the failure
+    require a Change to maintain the commitment integrity?
+
+    Your governance decision shapes the outcome of the Problem record — which
+    in turn shapes what the SCM Worker communicates to the Service Customer
+    about the service's reliability.
+
+  Authorize change when structural fix is required
+    When Problem Management determines that a structural fix is warranted and
+    triggers a Change Request in Change Enablement, the change affects your
+    service. You are involved in the governance chain: your approval of the
+    change scope (particularly for COMPLEX changes) is the governance gate
+    that ensures the fix aligns with what was committed.
+
+  Be informed when Known Errors are created for your services
+    When Problem Management creates a Known Error record for a failure in your
+    service — meaning the root cause is documented and a workaround is provided,
+    but no structural fix is planned at this time — you are informed. You need
+    to know what the current known limitations of your service are. This
+    information feeds into how the service commitment is communicated and
+    governed going forward.
+
+  Quarterly Problem Management review for your services
+    Alongside the SLA review, your regular governance practice should include
+    awareness of the open Known Error records for your services. These
+    represent accepted structural limitations. If the accumulation of Known
+    Errors for a service suggests that its committed quality can no longer be
+    sustained, that is a governance signal that requires your decision —
+    potentially a catalog modification, an SLA class adjustment, or a
+    significant change investment.
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. YOUR RELATIONSHIP TO THE TECHNICAL OWNER
+────────────────────────────────────────────────────────────────────────────────
+
+You and the Technical Owner are both in the Owner layer. You are peers in
+governance accountability, serving complementary dimensions of the same service.
+
+  You own the service commitment. They own the technical delivery.
+    Your service commitment is what was promised to the Service Customer: the
+    SLA class, the scope, the value. The Technical Owner is accountable for the
+    Configuration Items — the technical elements that make the service delivery
+    possible. Without technical delivery, your commitment is empty. Without a
+    committed scope, their delivery has no governance anchor.
+
+  You do not direct Technical Owners operationally.
+    The Technical Owner receives work through Change Enablement and Problem
+    Management. You do not assign Technical Owners to tasks. You do not contact
+    them directly about incident resolution. When an incident affecting your
+    service escalates to a Technical Owner, that escalation is governed through
+    the Service Desk's escalation path — not through you.
+
+  You are consulted when Technical Owner changes affect your service commitment.
+    When a change in Technical Owner assignment for your service occurs — a
+    new Technical Owner taking over a CI that composes your service — you are
+    informed. The governance record must reflect the current accountability
+    structure.
+
+  In Problem Management investigations, you see the same problem from
+  complementary angles.
+    The Technical Owner provides the root cause analysis: what broke and why,
+    technically. You provide the governance framing: what it means for the
+    service commitment and what the organizational response should be. The PM
+    Leader coordinates both perspectives to reach a decision.
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. YOUR RELATIONSHIP TO CSM AND THE SCM WORKER
+────────────────────────────────────────────────────────────────────────────────
+
+The CSM function and your SCM Worker are the operational face of the commitment
+you govern. They translate your service into a customer relationship. You govern
+the structural quality of what they are committing to.
+
+  The SCM Worker represents your service to Service Customers.
+    Every communication the SCM Worker makes to a Service Customer about your
+    service carries your commitment as the backing. When the SCM Worker says
+    "this service is committed at SLA Class B," that commitment is yours. The
+    SCM Worker is not making it up. They are communicating your governance
+    position.
+
+  You rely on the SCM Worker for customer relationship intelligence.
+    The SCM Worker is your primary source of customer-side signal: what Service
+    Customers are experiencing, what demands they are considering, what
+    satisfaction or dissatisfaction they are expressing. This signal feeds your
+    governance decisions about service evolution and SLA adequacy.
+
+  You trust the CM Leader to bring escalations to you at the right level.
+    The CM Leader resolves what can be resolved at the Leader layer. When
+    something reaches you, it has already been through the CM Leader. The
+    escalations you receive are real governance decisions — not operational
+    questions that could have been answered without you.
+
+  Your availability matters.
+    A Service Owner who is consistently unreachable when the CM Leader escalates
+    is a structural failure in the governance model. The escalation chain
+    assumes that each level is responsive. When your level is unresponsive,
+    the entire chain below you is left without the governance decision it needs.
+
+
+────────────────────────────────────────────────────────────────────────────────
+12. THE ESCALATION CHAIN — WHEN IT REACHES YOU
+────────────────────────────────────────────────────────────────────────────────
+
+You are Level 3 in the CSM escalation chain:
+  Level 1: SCM Worker
+  Level 2: CM Leader
+  Level 3: Service Owner — you
+  Level 4: Governance Owner
+
+When an escalation reaches you, it has already passed through the CM Leader.
+The CM Leader's assessment is that this requires Service Owner authority.
+That assessment is almost always correct.
+
+What kinds of situations reach you:
+
+  Commitment disputes
+    A Service Customer disputes the scope, SLA class, or timeline of a
+    commitment at the CM Leader level. The CM Leader cannot resolve it. You
+    make the governance decision: adjust the commitment, hold the position, or
+    escalate further.
+
+  SLA breach escalation
+    Every SLA breach for your services reaches you by design (SLM section
+    above). High-severity breaches — Class A services, multiple concurrent
+    breaches, contractual implications — require your explicit governance
+    response.
+
+  Service retirement disputes
+    A Service Customer contests a retirement proposal. They believe the service
+    is still needed or that insufficient replacement was provided. You make
+    the governance decision: adjust the retirement plan, proceed as planned,
+    or escalate.
+
+  Structural quality questions
+    Problem Management's findings suggest that a service's structural quality
+    cannot sustain its current SLA commitment without significant intervention.
+    The PM Leader and CM Leader jointly escalate to you. You decide: accept
+    the structural limitation (Known Error), authorize a fix (Change), or
+    adjust the commitment (catalog modification).
+
+When an escalation reaches you, respond with governed decisions — not deferral.
+The system is designed so that what reaches you genuinely requires your authority.
+Using that authority promptly is not optional.
+
+
+────────────────────────────────────────────────────────────────────────────────
+13. YOUR VIEW IN THE PORTAL
+────────────────────────────────────────────────────────────────────────────────
+
+Your Experience Layer view is scoped to your service ownership. You see:
+
+  Service portfolio status
+    All services in your ownership, their current operational status, and any
+    active incidents or SLA warnings affecting them.
+
+  SLA performance overview
+    Real-time and historical performance data for your services, across all
+    Service Customers who have commitments on them. Breach events, warning
+    events, and compliance trends.
+
+  Active Problem records
+    Any open Problem Management investigations for your services, including
+    the current status of the investigation and the decision outcome when
+    reached.
+
+  Pending governance approvals
+    Demand commitments awaiting your approval. Catalog change proposals
+    requiring your authorization. Change Board items for complex changes
+    affecting your services.
+
+  Known Error register for your services
+    Active Known Error records for your services — the current documented
+    limitations and their associated workarounds.
+
+As the platform matures, your view gains predictive capabilities: service
+health trend analysis, forecast of likely demand patterns, and SLA risk
+indicators based on operational data patterns.
+
+Your portal view is an accountability dashboard — not a passive information
+feed. What you see in it creates governance obligations. An SLA warning
+visible on your dashboard is a governance signal that requires your attention.
+A breach notification is an accountability event that requires your response.
+
+
+────────────────────────────────────────────────────────────────────────────────
+14. WHAT GOOD LOOKS LIKE
+────────────────────────────────────────────────────────────────────────────────
+
+A Service Owner is performing their role well when:
+
+  Every service in your ownership has a current, accurate catalog entry.
+    SLA class, scope, Technical Owner, Service Owner — all reflecting reality.
+    Last reviewed within the last quarter.
+
+  Every SLA commitment you approved was commitments that could be kept.
+    When you approved the commitment at demand acceptance, you understood
+    the operational profile of your service. You did not approve unrealistic
+    targets or accept SLA classes that the service's technical delivery cannot
+    sustain.
+
+  Breach notifications produce governance responses, not documentation.
+    When a breach occurs, you make a decision. Additional resources, emergency
+    change, known limitation acceptance — one of these. Not silence.
+
+  The PM Leader finds Known Error decisions straightforward to reach.
+    Because your services have accurate catalog entries and SLA commitments
+    aligned with their actual operational profile, the governance framing for
+    Problem Management decisions is clear. You are not a bottleneck — you are
+    a clear governance authority.
+
+  The CM Leader escalates to you rarely.
+    Not because issues do not exist — but because the SCM Workers and CM Leader
+    have the clarity and authority to resolve most things at their level. When
+    something does reach you, it is genuinely a Service Owner decision.
+
+  Service retirements are clean.
+    Services you retire are retired with customer acknowledgement, replacement
+    guidance (where applicable), and a closed governance record. No service
+    disappears from the catalog without a governed lifecycle closure.
+
+  Your service commitments evolve with the services.
+    As services grow more or less critical in your customers' operations, you
+    initiate SLA class reviews and catalog updates. You do not wait for
+    breach patterns to force the conversation.
+
+The Owner layer is where governance is held. What you decide shapes the
+commitments that SCM Workers make, the changes that CE executes, and the
+quality that Service Users experience. That span of influence is your
+accountability. It runs in both directions: upward to the Governance Owner
+when something exceeds your authority, and downward through the entire
+delivery chain when your governance decisions land.
+
+────────────────────────────────────────────────────────────────────────────────
+  Role Guide: Service Owner  |  CereBree uSMS  |  Version 1.0  |  March 2026
+  Based on: uSMS Framework v1.1 · uSeC Framework v1.2 · DAL v5.4
+  Process references: Demand Management v1.0 · SLM v1.0 · Service Catalog
+  Management v1.0 · Change Enablement v1.1 · Problem Management v1.0
+  Organizational reference: Organizational Functions Handbook v4.0
+================================================================================

@@ -1,0 +1,471 @@
+================================================================================
+  ROLE GUIDE: CM LEADER (CUSTOMER MANAGEMENT LEADER)
+  CereBree · Universal Service Management System (uSMS)
+  Version 1.0  |  March 2026
+================================================================================
+
+  This guide is written entirely from your perspective as a CM Leader.
+  It tells you what leading the Customer Service Management function means,
+  what your operational authority covers, and where your accountability sits
+  in the governance architecture.
+
+────────────────────────────────────────────────────────────────────────────────
+
+CONTENTS
+
+  1.   Who You Are
+  2.   Your Function: Customer Service Management
+  3.   Your Accountability — What You Own
+  4.   Leading Your SCM Workers
+  5.   Your Governance Gates
+       5.1   Quote Approval: The Gate You Never Skip
+       5.2   Rejection Authorization
+       5.3   SLA Report Review Before Issuance
+  6.   SLA Governance: Your Monitoring Responsibilities
+  7.   Working With Change Enablement
+  8.   Working With Problem Management
+  9.   Working With the Service Owner
+  10.  Escalation: What Flows Through You
+  11.  Your Authorities and Your Limits
+  12.  Cogni: Your Operational Intelligence
+  13.  What Good Looks Like
+
+────────────────────────────────────────────────────────────────────────────────
+1.  WHO YOU ARE
+────────────────────────────────────────────────────────────────────────────────
+
+You are the CM Leader — Customer Management Leader.
+
+You sit in the Leader layer of the SeOS role model, within the Customer Service
+Management (CSM) organizational function. The Leader layer translates Owner
+intent into organized execution: you manage the operational flow of CSM, hold
+accountability for throughput and quality, and serve as the governance authority
+between your SCM Workers and the Service Owner above you.
+
+CSM is the strategic front-office of uSMS. It is the only entry point for
+service demand, the governance interface for SLA commitments, and the function
+that holds the institutional memory of every commitment made to every Service
+Customer. You lead this function operationally. What happens in CSM is your
+accountability — not when escalation forces it to be, but continuously.
+
+Your three process domains:
+  Demand Management — the lifecycle of service change demand
+  Service Catalog Management — the accuracy governance of the service portfolio
+  Service Level Management — the monitoring and communication of SLA commitments
+
+You do not own the process designs. That is the Process Owner. You own the
+operational quality: throughput, communication standards, assessment quality,
+and SLA reporting discipline.
+
+Your position in the SeOS governance chain:
+  CUSTOMER → DEMAND → QUOTE → SERVICE → EXECUTION → OUTCOME → EXPERIENCE
+
+You govern the CUSTOMER through QUOTE steps — and hold the escalation
+authority for service commitment disputes. The Process Owner governs process
+design. The Service Owner governs service accountability. You govern the
+day-to-day quality of the function that serves both.
+
+
+────────────────────────────────────────────────────────────────────────────────
+2.  YOUR FUNCTION: CUSTOMER SERVICE MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+CSM is an organizational function — not a single process. The distinction
+matters. An organizational function has permanent structure, its own workforce,
+and a continuous, named interface to an external actor group. CSM's actor group
+is Service Customers — exclusively.
+
+The three processes within CSM operate simultaneously, not sequentially:
+
+  Demand Management runs for every active demand.
+  Service Level Management runs continuously for every committed service.
+  Service Catalog Management runs whenever a catalog change is triggered.
+
+You oversee all three in parallel. The SCM Workers who execute them are your
+workforce. Their quality is your quality. Their gaps are your governance gaps.
+
+What CSM is not:
+  CSM is not a helpdesk for Service Customers.
+  CSM is not a project management office.
+  CSM is not a change execution body — that is Change Enablement.
+  CSM does not modify the service catalog directly — ever.
+
+These boundaries are structural. You enforce them through the governance
+discipline you model and require of your SCM Workers.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.  YOUR ACCOUNTABILITY — WHAT YOU OWN
+────────────────────────────────────────────────────────────────────────────────
+
+  Demand throughput
+    Every active demand in CSM has a current status and a recent communication
+    record. No demand stalls in UNDER_REVIEW without a documented reason. No
+    demand remains open past fulfillment. You monitor this continuously.
+
+  Assessment quality
+    SCM Workers assess demands against the service catalog before proceeding
+    to a quote. The catalog check is the primary governance function of the
+    assessment step. You ensure it is not bypassed.
+
+  Quote accuracy
+    You approve every quote before it reaches a Service Customer. A quote that
+    the IT organization cannot fulfill is a governance failure. Your approval
+    gate is what prevents this.
+
+  Customer communication standards
+    Your SCM Workers maintain communication ownership from demand submission
+    through fulfillment. You ensure this standard is held. When an SCM Worker
+    is not communicating proactively — when a Service Customer calls to ask
+    for status they should already have — that is a function quality failure.
+
+  SLM reporting discipline
+    SLA performance reports are accurate and reviewed by you before they reach
+    Service Customers. The reporting cadence is maintained. Breach communications
+    are timely, governed, and contain context.
+
+  Separation of duties
+    You may not also serve as CE Leader for the same service scope. The person
+    who assesses demand and issues quotes must not be the same person who
+    approves the resulting change. You enforce this separation at the function
+    level and model it at your own role level.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.  LEADING YOUR SCM WORKERS
+────────────────────────────────────────────────────────────────────────────────
+
+Your SCM Workers are the human face of the customer relationship. How you lead
+them determines the quality of every Service Customer interaction in the system.
+
+  Assignment and workload distribution
+    You assign demands to SCM Workers — either automatically, where a Service
+    Customer has a named SCM Worker, or manually. You monitor workload
+    distribution across your workers to prevent invisible capacity failures.
+
+  Oversight without substitution
+    You monitor assessment quality, quote accuracy, and communication discipline
+    — but you do not substitute for your SCM Workers. You do not take over a
+    demand because it is complex. You ensure the SCM Worker assigned to it has
+    what they need to handle it well.
+
+  Early signal expectation
+    You expect SCM Workers to surface problems to you before they become
+    external issues. A Service Customer who escalates to you about something
+    their SCM Worker already knew — but did not tell you — is a function
+    discipline failure. Make this expectation explicit. Reward early signals.
+
+  Communication standard enforcement
+    The rule is simple: Service Customers do not ask for status. SCM Workers
+    provide it. When you observe this standard being violated, you address it.
+    This standard is what distinguishes a governed CSM function from an
+    informal demand intake channel.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.  YOUR GOVERNANCE GATES
+────────────────────────────────────────────────────────────────────────────────
+
+5.1  Quote Approval: The Gate You Never Skip
+
+Every quote must pass through your approval before it reaches a Service
+Customer. No SCM Worker may issue a quote unilaterally. This is not a
+bureaucratic step — it is the governance gate that ensures the IT organization
+makes commitments it can keep.
+
+What you review in a quote:
+  – Scope alignment: does the quote describe what the demand actually requested?
+  – Feasibility: is the effort and timeline estimate grounded in reality?
+  – SLA class: is the proposed SLA class consistent with the service's actual
+    operational profile and the catalog's classification for this service type?
+  – Cost alignment: are the cost and resource implications accurately stated?
+  – Separation of duties: will the resulting change be approved by CE, not CSM?
+
+If the quote does not pass: return it to the SCM Worker with specific
+corrections required. Do not approve a quote that has any of these gaps, even
+under customer pressure. A quote that fails after approval destroys more trust
+than a delay in issuance.
+
+5.2  Rejection Authorization
+
+When a demand is assessed as infeasible, out of scope, or submitted by a
+non-legitimate actor, the rejection must be authorized by you. SCM Workers
+document the rejection reason. You confirm it.
+
+Contested rejections — where the Service Customer disputes the rejection
+reasoning — escalate to you. Your authority is the next governance level after
+the SCM Worker. If the dispute involves service commitment implications, you
+escalate to the Service Owner.
+
+5.3  SLA Report Review Before Issuance
+
+SLA performance reports are reviewed by you before your SCM Workers send them
+to Service Customers. Your review checks:
+  – Accuracy: are the compliance figures correct?
+  – Completeness: are all breach events included with context?
+  – Consistency: does the report match what the Service Customer has been told
+    throughout the reporting period?
+
+A performance report that surprises a Service Customer with a breach they
+were not previously informed about is a SLM discipline failure. It means the
+proactive breach communication that should have preceded the report was missed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6.  SLA GOVERNANCE: YOUR MONITORING RESPONSIBILITIES
+────────────────────────────────────────────────────────────────────────────────
+
+SLM is a continuous monitoring function, not a periodic reporting exercise.
+Your responsibilities do not activate at the monthly report cycle — they run
+continuously alongside Demand Management.
+
+  Breach escalation to Service Owner
+    When an SLA breach occurs on a Class A or B service, you escalate to the
+    Service Owner immediately — alongside the SCM Worker's communication to
+    the Service Customer. The escalation includes: entity reference, affected
+    service, SLA class, elapsed time at breach, and the current remediation
+    status.
+
+  SLA class misalignment identification
+    When SLM monitoring data reveals a persistent gap between a service's
+    committed SLA class and its actual operational performance — whether over-
+    committing or under-delivering — you trigger a Service Catalog Management
+    modification workflow. You do not wait for a breach pattern to force the
+    conversation.
+
+  Monthly SLM performance review with SCM Workers
+    A structured review of SLA performance across all Service Customers: which
+    services are within target, which have warnings or active breaches, what
+    remediations are in progress. This is not a status update — it is a
+    governance review that produces decisions.
+
+  Exception authorization
+    When a contractual SLA requirement for a specific Service Customer requires
+    a deviation from the standard monitoring model, you authorize it. Exceptions
+    are documented and reviewed periodically.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7.  WORKING WITH CHANGE ENABLEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+Your relationship with Change Enablement is governed by the Separation
+Principle: CSM triggers and oversees catalog changes; Change Enablement
+executes them. You enforce this separation in both directions.
+
+  You receive handover acknowledgements, not handover approvals.
+    When an SCM Worker submits a CM_TO_CE ProcessHandover record, the CE Worker
+    acknowledges it. You are informed. Your role is not to approve the change
+    — that is the CE Leader's domain. Your role is to ensure that the handover
+    record is complete and that communication to the Service Customer continues
+    through the SCM Worker.
+
+  You resolve scope disputes at the CM-CE boundary.
+    If the CE Worker finds that the demand handover is incomplete or unclear,
+    they raise it with the SCM Worker. If the SCM Worker and CE Worker cannot
+    resolve the scope question, it escalates to you and the CE Leader. This
+    escalation is rare when handover records are properly documented.
+
+  You receive completion confirmations and enable catalog verification.
+    When CE confirms change completion, your SCM Worker verifies the catalog
+    entry and confirms fulfillment to the Service Customer. You monitor that
+    this final step actually happens — demands are not left in FULFILLED without
+    a formal closure.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8.  WORKING WITH PROBLEM MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+You are not a Problem Management participant. You are the governance bridge
+between PM outputs and Service Customer communication.
+
+  SLA breach context from Problem Management
+    When Problem Management investigates a recurring failure and produces a
+    root cause decision, that context feeds your SLA governance communication.
+    When an SCM Worker communicates a breach to a Service Customer, they provide
+    the PM finding — not just a breach timestamp. You ensure this happens.
+
+  Proactive breach communication alignment
+    When Problem Management creates a Known Error for a service in your
+    portfolio, you and the relevant SCM Worker align on how this affects the
+    SLA communication to the Service Customer. A Known Error does not close
+    an SLA breach — it explains it and documents the managed workaround.
+
+  Signaling to SD Leader
+    When SLM monitoring data suggests a breach pattern that warrants Problem
+    Management attention before the auto-trigger fires, you communicate this
+    signal to the SD Leader. The SD Leader may then manually trigger a Problem
+    Record. This is not a process bypass — it is cross-function governance
+    intelligence.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9.  WORKING WITH THE SERVICE OWNER
+────────────────────────────────────────────────────────────────────────────────
+
+The Service Owner is your escalation target for service commitment questions
+that exceed your resolution authority. They are also your governance anchor for
+commitment quality: the SLA classes you quote must be consistent with what the
+Service Owner can stand behind.
+
+  At demand acceptance
+    When a new service or a significant commitment change is involved, the
+    Service Owner approves the service commitment. You ensure the SCM Worker
+    routes this correctly — not as a formality, but as a governance gate.
+
+  At SLA breach escalation
+    For Class A and B services, you escalate to the Service Owner at breach.
+    You provide the escalation context: entity reference, affected service,
+    SLA class and target, elapsed time, and your assessment of the remediation
+    situation. The Service Owner makes the governance response decision.
+
+  At commitment dispute resolution
+    When a Service Customer disputes a quote, rejection, or SLA commitment
+    at your level and you cannot resolve it, you escalate to the Service Owner.
+    You provide the full context: the demand record, the SCM Worker's assessment,
+    the customer's objection, and your attempted resolution.
+
+  At quarterly SLA review
+    You and the relevant Service Owners conduct a quarterly governance review
+    of SLA performance across their services. This review may produce SLA class
+    change recommendations, catalog modification triggers, or change investment
+    decisions.
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. ESCALATION: WHAT FLOWS THROUGH YOU
+────────────────────────────────────────────────────────────────────────────────
+
+You are Level 2 in the CSM escalation chain:
+  Level 1: SCM Worker
+  Level 2: CM Leader — you
+  Level 3: Service Owner
+  Level 4: Governance Owner
+
+What reaches you from below (SCM Workers):
+  – Demand disputes the SCM Worker cannot resolve
+  – Quote clarification that requires function-level authority
+  – Service Customer escalations that go beyond the SCM Worker
+  – SLA warning signals requiring proactive governance action
+  – CE interaction issues requiring CM Leader involvement
+
+What reaches the Service Owner from you:
+  – SLA breach escalations on Class A and B services (always)
+  – Commitment disputes that require Service Owner authority
+  – Catalog change approvals that affect SLA class or committed scope
+  – Quarterly SLA reviews and structural performance concerns
+
+What you escalate to the Process Owner:
+  – Process design questions and disputes
+  – KPI reporting at the defined cadence
+  – Governance decisions that require Process Owner authority
+  – Resource conflicts within CSM
+
+You are the governance node that keeps most Service Customer issues from
+reaching the Service Owner. When something reaches the Service Owner, it
+has genuinely required that level of authority. When something reaches you,
+it has genuinely required your authority. This selectivity is the function
+of the escalation chain — preserve it.
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. YOUR AUTHORITIES AND YOUR LIMITS
+────────────────────────────────────────────────────────────────────────────────
+
+You are authorized to:
+  – Approve quotes before issuance to Service Customers
+  – Authorize rejection decisions and communicate them to Service Customers
+  – Assign demands to SCM Workers and manage workload distribution
+  – Review and approve SLA performance reports before issuance
+  – Escalate SLA breaches to the Service Owner
+  – Monitor the demand pipeline in real time
+  – Trigger Service Catalog Management modification workflows when SLA class
+    misalignment is identified
+  – Authorize exception processes when contractual SLA terms require deviation
+  – Report CSM KPIs to the Process Owner
+
+You are not authorized to:
+  – Issue quotes directly to Service Customers (SCM Worker does this, with
+    your approval)
+  – Modify the service catalog directly (only CE executes catalog changes)
+  – Also serve as CE Leader for the same service scope (separation of duties)
+  – Override a Service Owner governance decision
+  – Approve changes in Change Enablement (that is the CE Leader's authority)
+  – Make commitments that bind the Service Owner without their approval
+
+
+────────────────────────────────────────────────────────────────────────────────
+12. COGNI: YOUR OPERATIONAL INTELLIGENCE
+────────────────────────────────────────────────────────────────────────────────
+
+Cogni supports you with function-level operational visibility — not individual
+demand processing.
+
+  Smart Stage
+    – Demand pipeline health: time-in-state flags for demands stalling in
+      UNDER_REVIEW or IN_CHANGE. Early warning before they become Service
+      Customer complaints.
+    – SLA performance overview: real-time aggregated SLA status across all
+      Service Customers and all services in your scope. Warning and breach
+      events surfaced before your SCM Workers report them.
+    – Breach communication draft: when an SLA breach occurs, Cogni prepares
+      the initial communication to the Service Customer for the SCM Worker
+      to review — incorporating PM root cause context where available. You
+      see this draft before it goes out.
+    – SCM Worker workload distribution: aggregate view of active demands per
+      SCM Worker, with SLA risk overlay.
+
+  Mature Stage
+    – SLA class misalignment detection: when SLM data persistently shows
+      a gap between committed class and actual performance, Cogni surfaces
+      the analysis for your catalog modification decision.
+    – Demand forecasting: patterns in historical demand data surfaced for
+      your quarterly planning conversations with Service Owners.
+
+What Cogni never does:
+  – Approve quotes on your behalf
+  – Issue communications to Service Customers without SCM Worker review
+  – Override your governance gates
+
+
+────────────────────────────────────────────────────────────────────────────────
+13. WHAT GOOD LOOKS LIKE
+────────────────────────────────────────────────────────────────────────────────
+
+A CM Leader is performing their role well when:
+
+  No demand stalls without a record.
+    Every demand in UNDER_REVIEW or IN_CHANGE has a recent communication entry
+    and a documented status. The pipeline is visible and current.
+
+  No quote is issued without your approval.
+    This gate is held without exception. When a Service Customer disputes a
+    quote scope or accuracy, the problem is not in the quote — it is in the
+    assessment that preceded it. Your approval gate catches assessment failures.
+
+  Service Customers never call to ask for status.
+    Your SCM Workers communicate ahead of the customer's need. This is not
+    about volume of messages — it is about timing. The right information at
+    the right moment, before the customer has to ask.
+
+  SLA warnings are never silent.
+    When SLAWarning events fire, your SCM Workers contact Service Customers
+    before the breach. You verify this is happening through the SLM monitoring
+    data, not through waiting for breach escalations.
+
+  Breach communications contain root cause context.
+    When a breach occurs and your SCM Worker communicates it to the Service
+    Customer, the communication includes PM context where available. Not just
+    a timestamp. A governed communication with meaning.
+
+  The Service Owner hears about problems from you, not from Service Customers.
+    When something in your function reaches the level where the Service Owner
+    needs to be involved, you have already told them. They are never surprised.
+
+────────────────────────────────────────────────────────────────────────────────
+  Role Guide: CM Leader  |  CereBree uSMS  |  Version 1.0  |  March 2026
+  Based on: uSMS Framework v1.1 · uSeC Framework v1.2 · DAL v5.4
+  Process references: Demand Management v1.0 · SLM v1.0 · SCM v1.0
+  Organizational reference: Organizational Functions Handbook v4.0
+================================================================================

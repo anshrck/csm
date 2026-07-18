@@ -1,0 +1,647 @@
+     1→================================================================================
+     2→  ROLE GUIDE: SERVICE CUSTOMER
+     3→  CereBree · Universal Service Management System (uSMS)
+     4→  Version 1.0  |  March 2026
+     5→================================================================================
+     6→
+     7→  This guide is written entirely from your perspective as a Service Customer.
+     8→  It tells you what your role means, what you can do, what you cannot do,
+     9→  who works with you, and how the system is built around your relationship
+    10→  with the IT organization.
+    11→
+    12→  Read this once. Then use it as a reference whenever something is unclear.
+    13→
+    14→────────────────────────────────────────────────────────────────────────────────
+    15→
+    16→CONTENTS
+    17→
+    18→  1.   Who You Are
+    19→  2.   Your Named Contact: The SCM Worker
+    20→  3.   What You Can Do
+    21→       3.1   Submit a Demand
+    22→       3.2   Approve or Reject a Quote
+    23→       3.3   Track Demand Status
+    24→       3.4   Hold IT Accountable for SLA Commitments
+    25→       3.5   Govern What Your Users Can Access
+    26→  4.   What You Cannot Do — and Why
+    27→  5.   Your Service Portfolio
+    28→  6.   SLA Classes: What Was Committed to You
+    29→  7.   Your View in the Portal
+    30→  8.   Cogni: Your AI Assistant
+    31→  9.   Escalation Paths
+    32→  10.  Your Relationship to the Back-Office
+    33→  11.  What Happens When Things Go Wrong
+    34→
+    35→────────────────────────────────────────────────────────────────────────────────
+    36→1.  WHO YOU ARE
+    37→────────────────────────────────────────────────────────────────────────────────
+    38→
+    39→You are a Service Customer.
+    40→
+    41→In the CereBree uSMS model, a Service Customer is not an individual — it is
+    42→an organizational unit. A business division. A department. A company entity.
+    43→An external organization receiving managed IT services. What defines you as a
+    44→Service Customer is not your personal title — it is your formal relationship
+    45→with the IT organization.
+    46→
+    47→That relationship includes:
+    48→
+    49→  A service agreement
+    50→    What has been committed to you: which services, at which service level,
+    51→    for how many users, under which conditions. This is not aspirational. It
+    52→    is a governance commitment — tracked, monitored, and reported.
+    53→
+    54→  Budget accountability
+    55→    You are accountable for the IT spend your organizational unit consumes.
+    56→    Services are not free. Demands have cost implications. SLA classes carry
+    57→    resource implications. Your role includes governing how IT resources are
+    58→    consumed by your organizational unit.
+    59→
+    60→  User governance
+    61→    You define which services your users may access. No user in your unit
+    62→    can access a service you have not authorized. This is not an
+    63→    administrative technicality — it is your governance authority over
+    64→    the services your team uses.
+    65→
+    66→  Escalation authority
+    67→    When commitments are not met, you have the right — and the structural
+    68→    backing — to hold the IT organization accountable. The SLA governance
+    69→    model makes this concrete and governed, not political.
+    70→
+    71→In practice, one or more people in your organization act in the Service
+    72→Customer role: a department lead, an IT liaison, a divisional manager. But
+    73→regardless of who speaks on behalf of the Service Customer, the role is always
+    74→at the organizational level, not the individual level.
+    75→
+    76→This distinction matters. It means your agreement with IT is formal, your
+    77→commitments are tracked, and your services are governed — not managed by
+    78→whoever happens to answer the phone this week.
+    79→
+    80→
+    81→────────────────────────────────────────────────────────────────────────────────
+    82→2.  YOUR NAMED CONTACT: THE SCM WORKER
+    83→────────────────────────────────────────────────────────────────────────────────
+    84→
+    85→You have one named contact in the IT organization: your SCM Worker.
+    86→
+    87→SCM stands for Service Customer Manager. Your SCM Worker is not a helpdesk
+    88→agent. They are not a ticket processor. They are your dedicated governance
+    89→contact — the person who translates your business needs into governed IT
+    90→decisions and who holds the IT organization accountable to your commitments.
+    91→
+    92→Your SCM Worker is your single thread of communication with the IT
+    93→organization. When something changes, they tell you. When you need something,
+    94→you tell them. When something goes wrong, they carry the governance response
+    95→back to you. You do not deal with engineers, change teams, or technical owners
+    96→directly — that is their job.
+    97→
+    98→What your SCM Worker does for you:
+    99→
+   100→  Receives and assesses your demands
+   101→    When you need a new service, a modification to an existing one, or want
+   102→    to retire a service your team no longer uses, you bring it to your SCM
+   103→    Worker. They assess the demand against the service catalog, determine
+   104→    whether it is already covered by an existing offering, and either redirect
+   105→    you to a solution that already exists — or formally process your demand
+   106→    through the IT organization.
+   107→
+   108→  Manages your service commitments
+   109→    Your SCM Worker knows exactly which services have been committed to your
+   110→    organizational unit, at which SLA class, and what the current compliance
+   111→    status is. They work from governed records, not memory or informal notes.
+   112→
+   113→  Reports on SLA performance
+   114→    You receive regular SLA performance reports. These are not marketing
+   115→    summaries — they are governance reports: what was committed, what was
+   116→    delivered, where there were breaches, and what is being done about them.
+   117→    When there is a warning before a breach occurs, your SCM Worker alerts
+   118→    you proactively. You are never the last to know.
+   119→
+   120→  Maintains your catalog view
+   121→    Your SCM Worker ensures that the service catalog — as it applies to your
+   122→    organizational unit — reflects your current agreements at all times. When
+   123→    a service changes, they manage the process. When a service is retired,
+   124→    they communicate it. Nothing appears in your catalog without governance
+   125→    backing.
+   126→
+   127→  Is your contact throughout the entire demand lifecycle
+   128→    Once you submit a demand, your SCM Worker stays with it until it is
+   129→    fulfilled. Even when execution is handed to Change Enablement — the team
+   130→    that builds and delivers the change — your SCM Worker retains
+   131→    communication ownership. You receive progress, delays, and completion
+   132→    confirmation through your SCM Worker. Never through engineers. Never
+   133→    through a system message without context.
+   134→
+   135→This is not a convenience. It is a structural design decision. Every
+   136→interaction between your organizational unit and the IT organization goes
+   137→through a governed channel — one that creates records, applies process rules,
+   138→and produces traceable outcomes.
+   139→
+   140→You do not have multiple contacts in IT. You have one: your SCM Worker.
+   141→
+   142→
+   143→────────────────────────────────────────────────────────────────────────────────
+   144→3.  WHAT YOU CAN DO
+   145→────────────────────────────────────────────────────────────────────────────────
+   146→
+   147→3.1  Submit a Demand
+   148→
+   149→A Demand is a formal request for a change to the service landscape: a new
+   150→service for your team, a modification to an existing service (scope, access,
+   151→capacity, SLA class), or the retirement of a service you no longer need.
+   152→
+   153→Demands are submitted to your SCM Worker — not to a portal form alone, not to
+   154→the Service Desk, and not to Technical Owners directly.
+   155→
+   156→The Demand lifecycle:
+   157→
+   158→  NEW
+   159→    Your demand has been received and recorded. A Demand Record exists.
+   160→
+   161→  UNDER_REVIEW
+   162→    Your SCM Worker is assessing the demand. They check whether it is already
+   163→    covered by the service catalog. They evaluate technical feasibility and
+   164→    portfolio alignment. They may ask you clarifying questions during this phase.
+   165→
+   166→  QUOTED
+   167→    The IT organization has assessed your demand as feasible and not already
+   168→    covered. Your SCM Worker presents you with a formal quote: scope, timeline,
+   169→    SLA class, and resource or cost implications. You review it and decide.
+   170→
+   171→  ACCEPTED
+   172→    You have approved the quote. Your demand transitions to Change Enablement
+   173→    for technical execution. Your SCM Worker stays with it and keeps you
+   174→    informed throughout.
+   175→
+   176→  IN_CHANGE
+   177→    The technical work is underway. The change team is building, modifying, or
+   178→    retiring the service as scoped. Your SCM Worker provides you with progress
+   179→    updates at defined milestones.
+   180→
+   181→  FULFILLED
+   182→    The service has been created, modified, or retired. The service catalog has
+   183→    been updated to reflect the new reality. Your commitment is live.
+   184→
+   185→  CLOSED
+   186→    The Demand Record is formally closed. The governance record is complete.
+   187→
+   188→If a demand is assessed as already covered by an existing offering, it is
+   189→REDIRECTED — your SCM Worker informs you and points you to the relevant
+   190→service or request type. If a demand is assessed as infeasible or outside the
+   191→agreed scope, it is REJECTED — with a documented reason, communicated to you
+   192→by your SCM Worker.
+   193→
+   194→A rejected or redirected demand is not a failure. It is the system working:
+   195→you get an honest assessment, not a promise that cannot be kept.
+   196→
+   197→
+   198→3.2  Approve or Reject a Quote
+   199→
+   200→When your SCM Worker issues a quote, you have the authority to accept or reject
+   201→it. This is a formal governance decision.
+   202→
+   203→What a quote contains:
+   204→
+   205→  – The scope of the demand as understood and assessed by the IT organization
+   206→  – Estimated effort and timeline
+   207→  – The SLA class that will govern the resulting service or modification
+   208→  – Any cost or resource implications
+   209→  – Any dependencies or constraints that affect delivery
+   210→
+   211→If the quote matches your expectations, you accept it. Formal acceptance
+   212→commits both parties: the IT organization to delivering what was quoted, you to
+   213→the associated commitments. From this point forward, SLA monitoring applies.
+   214→
+   215→If the quote does not match your expectations — the scope is wrong, the
+   216→timeline is unacceptable, the SLA class is not what you need — you reject it.
+   217→Rejection returns the demand to your SCM Worker for reassessment or formal
+   218→closure, with your documented reason. You are never required to accept a quote
+   219→that does not serve your organizational needs.
+   220→
+   221→Your CM Leader (the leader of the CSM function) approves every quote before it
+   222→reaches you. This means you are receiving a governance-validated commitment —
+   223→not an estimate produced under pressure.
+   224→
+   225→
+   226→3.3  Track Demand Status
+   227→
+   228→From the moment a demand is submitted, its status is visible to you in the
+   229→portal. You do not need to ask your SCM Worker where your demand is — the
+   230→system tells you.
+   231→
+   232→Your SCM Worker supplements this with direct communication at key transitions:
+   233→when a quote is ready, when the demand enters change execution, when milestones
+   234→are reached, and when fulfillment is confirmed.
+   235→
+   236→You are never in the dark about your demand's progress.
+   237→
+   238→
+   239→3.4  Hold IT Accountable for SLA Commitments
+   240→
+   241→This is one of your most important rights as a Service Customer — and it is
+   242→structurally enforced, not merely promised.
+   243→
+   244→Every service committed to your organizational unit carries an SLA class. That
+   245→class defines the response and resolution targets that apply when things go
+   246→wrong, and the fulfillment targets that apply when requests are made.
+   247→
+   248→The SLA monitoring system watches these targets continuously. When a target is
+   249→approaching breach — at 80% of the clock consumed — you are notified via your
+   250→SCM Worker, proactively, before the breach occurs. When a breach happens at
+   251→100%, you are notified immediately, with context: what happened, which service,
+   252→what is being done.
+   253→
+   254→You receive a regular SLA performance report for your service portfolio:
+   255→  – SLA compliance per service, per period
+   256→  – Any breaches that occurred, with root cause context where available
+   257→  – The status of any ongoing remediation
+   258→
+   259→If you identify a pattern of SLA underperformance, you have the right to
+   260→escalate. Your SCM Worker escalates to the CM Leader. The CM Leader escalates
+   261→to the Service Owner. This chain is defined, named, and fast.
+   262→
+   263→The system is built to make poor performance visible — to you and to the IT
+   264→organization simultaneously. SLA governance is not a courtesy. It is a
+   265→structural commitment.
+   266→
+   267→
+   268→3.5  Govern What Your Users Can Access
+   269→
+   270→Your organizational unit is the governance authority for the services your
+   271→users consume. No user in your unit can access a service or request type that
+   272→your Service Customer agreement does not cover.
+   273→
+   274→This entitlement model works as follows:
+   275→
+   276→  Your agreement with the IT organization defines which services are active for
+   277→  your unit and at which level. These are your entitlements.
+   278→
+   279→  Your users inherit those entitlements by virtue of belonging to your
+   280→  organizational unit. They can request and receive what your agreement covers.
+   281→  They cannot request or receive what it does not cover — and the system
+   282→  enforces this automatically.
+   283→
+   284→  More specific assignments override broader ones. If a particular user within
+   285→  your unit needs access that differs from the unit default, that can be
+   286→  assigned individually — still within the governed model, still traceable.
+   287→
+   288→When you submit a demand for a new service or a scope change, you are
+   289→exercising your governance authority over this entitlement structure. When a
+   290→user tells you they cannot access something, the answer is either in the
+   291→existing entitlement model (they are not entitled) or in a demand to expand
+   292→the scope — which you initiate as Service Customer.
+   293→
+   294→
+   295→────────────────────────────────────────────────────────────────────────────────
+   296→4.  WHAT YOU CANNOT DO — AND WHY
+   297→────────────────────────────────────────────────────────────────────────────────
+   298→
+   299→The following are structural boundaries — not policies that can be waived.
+   300→
+   301→  You cannot access the Service Desk.
+   302→    The Service Desk serves Service Users — individuals using services in their
+   303→    daily work. Its four processes (Incident Management, Request Fulfillment,
+   304→    Access Management, and Event Management) are for operational service
+   305→    interactions, not for organizational governance. If something in your unit
+   306→    is not working, the affected user reports it via the Service Desk. If you
+   307→    need a new or modified service, that comes through Customer Service
+   308→    Management and your SCM Worker.
+   309→
+   310→  You cannot contact Technical Owners directly.
+   311→    Technical Owners are reachable only through defined governance paths:
+   312→    Change Enablement and Problem Management. Direct contact bypasses the
+   313→    governance model, creates undocumented commitments, and consumes the
+   314→    Technical Owner's attention outside any governed structure. If you need
+   315→    something from a Technical Owner's domain, it flows through your SCM
+   316→    Worker and the appropriate process.
+   317→
+   318→  You cannot report incidents.
+   319→    Incidents are reported by Service Users through the Service Desk. If a
+   320→    service your unit depends on is disrupted, your users report it through
+   321→    their Service Desk access. Your SCM Worker is informed through SLA
+   322→    monitoring when those incidents approach or breach their targets.
+   323→
+   324→  You cannot approve service changes.
+   325→    Change approval authority belongs to the Change Enablement function. You
+   326→    accept or reject quotes — but the execution and technical approval of
+   327→    changes is governed by the CE Leader, not by you. The same person cannot
+   328→    both request a change and approve its execution. This separation exists
+   329→    by design to protect the governance integrity of the system.
+   330→
+   331→  You cannot view other customers' service data.
+   332→    Tenant isolation is structural. Your service portfolio, SLA performance
+   333→    data, demand history, and user entitlements are visible only to you and
+   334→    to the IT organization acting on your behalf. No other Service Customer
+   335→    can see your data. This applies equally in both internal and B2B contexts.
+   336→
+   337→  You cannot modify the service catalog directly.
+   338→    The catalog is modified through Change Enablement only. CSM triggers and
+   339→    oversees catalog changes. Change Enablement executes them. This separation
+   340→    exists because a catalog that can be edited informally is a catalog that
+   341→    cannot be trusted.
+   342→
+   343→These boundaries are not bureaucratic obstacles. They are the structural design
+   344→that makes your service relationship governable, your commitments enforceable,
+   345→and your data protected. Every boundary that applies to you also protects you.
+   346→
+   347→
+   348→────────────────────────────────────────────────────────────────────────────────
+   349→5.  YOUR SERVICE PORTFOLIO
+   350→────────────────────────────────────────────────────────────────────────────────
+   351→
+   352→Your service portfolio is the set of services that have been committed to your
+   353→organizational unit and are currently active. It is maintained in the uSeC
+   354→Service Catalog and governed through Service Catalog Management.
+   355→
+   356→The catalog describes each service through nine structured perspectives: what
+   357→it does, who it serves, what SLA level has been committed, what support levels
+   358→apply, what can be requested from it, who owns its quality, who delivers it
+   359→technically, whether it is a commodity or a custom offering, and which service
+   360→package it belongs to.
+   361→
+   362→This means you always know what you have agreed to. Nothing in your portfolio
+   363→exists without a governed description. The catalog is not a marketing brochure.
+   364→It is your governance record of what IT has committed to deliver.
+   365→
+   366→Service Packages
+   367→Your services may be organized into service packages — logical bundles of
+   368→related services designed for coherent consumption. A standard employee
+   369→onboarding package might include identity provisioning, device setup, email
+   370→configuration, and network access as a single governed bundle. Each service
+   371→within the package retains its own lifecycle, owner, and SLA — but the package
+   372→simplifies how you govern the overall relationship.
+   373→
+   374→When a service in your portfolio changes — because you submitted a demand,
+   375→because a technical change was required, or because the catalog was updated —
+   376→your SCM Worker communicates this to you before and after the change. The
+   377→catalog is always current. You are always informed.
+   378→
+   379→
+   380→────────────────────────────────────────────────────────────────────────────────
+   381→6.  SLA CLASSES: WHAT WAS COMMITTED TO YOU
+   382→────────────────────────────────────────────────────────────────────────────────
+   383→
+   384→Every service in your portfolio is assigned an SLA class. There are four:
+   385→
+   386→  Class A — Mission Critical
+   387→    For services where any outage has immediate, significant business impact
+   388→    and no acceptable alternative exists while the service is down. Highest
+   389→    availability targets. Fastest incident response and resolution commitments.
+   390→
+   391→  Class B — Business Important
+   392→    For services important to normal operations but where brief disruption can
+   393→    be managed with workarounds. Strong reliability. Defined response and
+   394→    resolution windows. Core supporting services.
+   395→
+   396→  Class C — Standard Operational
+   397→    For services with predictable, manageable impact when disrupted. Standard
+   398→    response and resolution windows. Services that support work without stopping
+   399→    it when disrupted.
+   400→
+   401→  Class D — Advisory / Best Effort
+   402→    For consulting, exploratory, or low-criticality services. No committed
+   403→    clock-based response or resolution targets at the Minimal Stage. Best-effort
+   404→    delivery model.
+   405→
+   406→The SLA class for each service in your portfolio was established when your
+   407→demand was accepted. It is documented in the catalog and enforced through the
+   408→SLA monitoring system.
+   409→
+   410→If the committed class no longer matches the actual criticality of the service
+   411→in your operations — for example, a service has grown more business-critical
+   412→than originally anticipated — that is a conversation to have with your SCM
+   413→Worker. It may lead to a catalog modification demand, processed through the
+   414→normal governance path.
+   415→
+   416→SLA classes are not marketing tiers. They carry concrete commitments that the
+   417→IT organization is monitored against continuously. A breach triggers immediate
+   418→governance response — not a post-hoc explanation.
+   419→
+   420→
+   421→────────────────────────────────────────────────────────────────────────────────
+   422→7.  YOUR VIEW IN THE PORTAL
+   423→────────────────────────────────────────────────────────────────────────────────
+   424→
+   425→The CereBree Experience Layer is your governed entry point into the system.
+   426→One URL. One login. One view of everything relevant to your role and scope.
+   427→
+   428→What you see is governed by your entitlements. You see exactly what is relevant
+   429→to your Service Customer scope — nothing more, nothing less. If data is not in
+   430→your scope, it is not present in your view. This is not a permission filter
+   431→applied on top of a shared dataset. It is entitlement-based rendering.
+   432→
+   433→What your portal view contains:
+   434→
+   435→  Your service portfolio
+   436→    All services committed to your organizational unit, their current status,
+   437→    SLA class, and relevant catalog information.
+   438→
+   439→  SLA performance dashboard
+   440→    Real-time and historical performance data for your services. Which services
+   441→    are within target. Which carry active warnings. Which have experienced
+   442→    breaches and what the current remediation status is.
+   443→
+   444→  Demand pipeline
+   445→    All active and recent demands in their current lifecycle state. What is
+   446→    under review. What has been quoted and is awaiting your decision. What is
+   447→    in change execution. What has been fulfilled.
+   448→
+   449→  Notifications and alerts
+   450→    SLA warnings, breach notifications, demand status changes, and catalog
+   451→    updates. Every notification is backed by a governance event. Nothing appears
+   452→    without cause.
+   453→
+   454→  Your recent activity
+   455→    A cross-domain aggregation of your service-related activity: demands
+   456→    submitted, quotes reviewed, services activated or retired.
+   457→
+   458→As the platform matures through the stage model, your portal view gains
+   459→additional capabilities: analytics, usage and cost transparency, demand
+   460→forecasting, and deeper SLA performance insight. At every stage, the
+   461→principle is the same: you see what is relevant, in real time, without
+   462→having to ask.
+   463→
+   464→
+   465→────────────────────────────────────────────────────────────────────────────────
+   466→8.  COGNI: YOUR AI ASSISTANT
+   467→────────────────────────────────────────────────────────────────────────────────
+   468→
+   469→Cogni is the CereBree AI Assistant. It is available to you within the portal,
+   470→within your governed scope and entitlement boundaries. Cogni does not operate
+   471→outside those boundaries. It does not access other customers' data. It does
+   472→not make commitments on behalf of the IT organization.
+   473→
+   474→What Cogni does for you as a Service Customer:
+   475→
+   476→  Smart Stage
+   477→    – SLA performance at a glance: "Your top 3 services by SLA compliance
+   478→      this month: Email (99.8%), ERP (98.2%), Data Warehouse (94.1% —
+   479→      one breach recorded this period)."
+   480→    – Demand status: "Your demand for the collaboration platform is currently
+   481→      in Change Enablement. Status: Planning. Expected completion: 12 April."
+   482→    – Breach communication drafting: when an SLA breach occurs, Cogni prepares
+   483→      the initial communication for your SCM Worker to review and send — with
+   484→      root cause context from Problem Management included where available.
+   485→
+   486→  Mature Stage
+   487→    – Demand forecasting: based on usage patterns and demand history, Cogni
+   488→      identifies capacity or service gaps before they become demands. Your SCM
+   489→      Worker is notified to discuss proactively.
+   490→    – Usage and cost transparency: a breakdown of service consumption against
+   491→      your committed baseline, by service.
+   492→    – Commitment evolution guidance: when SLA performance patterns suggest a
+   493→      service is under-committed (e.g., Class B with consistent Class A
+   494→      thresholds), Cogni surfaces this for your SCM Worker to discuss.
+   495→
+   496→What Cogni never does:
+   497→
+   498→  – Surface another customer's service data or SLA performance
+   499→  – Make or modify service commitments without SCM Worker and CM Leader approval
+   500→  – Communicate SLA breaches to you without SCM Worker review
+   501→  – Replace a governance decision with an automated output
+   502→
+   503→Cogni is an intelligence layer, not a decision layer. Accountability stays with
+   504→your SCM Worker, the CM Leader, and the Service Owner. Cogni makes them faster
+   505→and better informed — it does not replace their judgment.
+   506→
+   507→
+   508→────────────────────────────────────────────────────────────────────────────────
+   509→9.  ESCALATION PATHS
+   510→────────────────────────────────────────────────────────────────────────────────
+   511→
+   512→When something requires escalation beyond your normal SCM Worker interaction,
+   513→the escalation path is defined, named, and fast.
+   514→
+   515→  Level 1 — SCM Worker
+   516→    First contact for all governance topics: demand questions, SLA concerns,
+   517→    catalog questions, status updates, quote negotiations.
+   518→
+   519→  Level 2 — CM Leader (Customer Management Leader)
+   520→    If your SCM Worker cannot resolve an issue, or if you need to escalate
+   521→    a dispute about a quote, rejection, or SLA commitment, the CM Leader is
+   522→    the next authority. The CM Leader holds operational accountability for the
+   523→    entire CSM function.
+   524→
+   525→  Level 3 — Service Owner
+   526→    If a dispute involves the quality, scope, or SLA performance of a specific
+   527→    service, the Service Owner is the accountability holder for that service.
+   528→    The CM Leader escalates to the Service Owner when required.
+   529→
+   530→  Level 4 — Governance Owner
+   531→    In cases where service governance decisions affect organizational or
+   532→    contractual commitments at the highest level, the Governance Owner holds
+   533→    ultimate authority. This level involves decisions affecting the structural
+   534→    integrity of the service relationship.
+   535→
+   536→You do not navigate these escalation levels yourself. Your SCM Worker manages
+   537→the escalation process on your behalf. Your role is to communicate clearly
+   538→what the issue is and what resolution you need.
+   539→
+   540→In a B2B context — where you are an external organization receiving managed
+   541→IT services — these escalation paths carry contractual weight. A breach that
+   542→is an internal governance matter at Level 2 may be a contractual accountability
+   543→matter at Level 3 or 4.
+   544→
+   545→
+   546→────────────────────────────────────────────────────────────────────────────────
+   547→10. YOUR RELATIONSHIP TO THE BACK-OFFICE
+   548→────────────────────────────────────────────────────────────────────────────────
+   549→
+   550→Behind your SCM Worker and the visible processes of Customer Service
+   551→Management, the uSMS Back-Office operates continuously. You do not interact
+   552→with it directly. That is the point.
+   553→
+   554→  Problem Management
+   555→    When a service in your portfolio experiences recurring failures, Problem
+   556→    Management investigates the structural root cause. Its job is not to close
+   557→    tickets — it is to make a proportionate governance decision: fix the
+   558→    structural issue permanently (triggering a change), document it as a known
+   559→    limitation with a workaround, or accept it. When Problem Management's
+   560→    findings are relevant to your SLA commitments, your SCM Worker communicates
+   561→    them to you with the context you need to understand what is being done
+   562→    and why.
+   563→
+   564→  Change Enablement
+   565→    All structural changes to your services — new services, modifications,
+   566→    retirements — are executed by Change Enablement. CE is the only function
+   567→    authorized to write to the service catalog. When your demand transitions
+   568→    to IN_CHANGE, Change Enablement is the execution authority. You do not
+   569→    interact with CE directly. Your SCM Worker does.
+   570→
+   571→  Service Configuration Management
+   572→    Technical Owners maintain the current state of the configuration items
+   573→    that compose your services. This data makes incident investigations,
+   574→    change assessments, and root cause analyses accurate. When your SCM
+   575→    Worker reports on a service change, the configuration data is the
+   576→    technical foundation of that report.
+   577→
+   578→  Knowledge Management
+   579→    Every incident resolution, every root cause analysis, every known
+   580→    workaround is governed knowledge within the system. The Known Error
+   581→    Database means recurring issues are surfaced immediately when they recur
+   582→    — rather than being rediscovered each time. This benefits your users
+   583→    directly: faster incident resolution, more consistent service behavior.
+   584→
+   585→The Back-Office is invisible to you — and that invisibility is a feature,
+   586→not a gap. It means the IT organization handles structural complexity so that
+   587→your interaction remains clean, governed, and focused on what matters to you.
+   588→
+   589→
+   590→────────────────────────────────────────────────────────────────────────────────
+   591→11. WHAT HAPPENS WHEN THINGS GO WRONG
+   592→────────────────────────────────────────────────────────────────────────────────
+   593→
+   594→Services fail. Commitments are sometimes missed. The uSMS system does not
+   595→promise perfection — it promises governance.
+   596→
+   597→When a service your unit depends on is disrupted:
+   598→  Your users report the disruption through the Service Desk. The Service Desk
+   599→  categorizes the incident, checks for known errors, applies workarounds where
+   600→  available, and works to restore service. SLA monitoring tracks the incident
+   601→  against the committed targets for your service's SLA class.
+   602→
+   603→  If the incident approaches breach (80% of the SLA clock consumed), your SCM
+   604→  Worker is notified and alerts you proactively.
+   605→
+   606→  If a breach occurs, you are notified immediately with full context: what
+   607→  happened, which service, what is being done. The Service Owner for the
+   608→  affected service is also notified. Governance action is triggered — not just
+   609→  explained after the fact.
+   610→
+   611→When a service repeatedly fails in the same way:
+   612→  If the same service generates three or more incidents within seven days,
+   613→  Problem Management is automatically triggered to investigate the structural
+   614→  root cause. You do not need to escalate. The system detects the pattern and
+   615→  governs it.
+   616→
+   617→  Problem Management produces a decision: fix the structural issue (triggering
+   618→  a change), document it as a known limitation (with a workaround accessible
+   619→  to the Service Desk), or accept it as proportionate. You receive the outcome
+   620→  from your SCM Worker with context — including what the decision means for
+   621→  your SLA commitments going forward.
+   622→
+   623→When a committed service is not delivered on time:
+   624→  Demand fulfillment adherence is part of your SCM Worker's accountability.
+   625→  If a demand's committed timeline is not met, your SCM Worker provides you
+   626→  with an updated timeline and a documented reason. This is governed
+   627→  communication — not an informal apology.
+   628→
+   629→When SLA performance is persistently below what was committed:
+   630→  Your SCM Worker and CM Leader have the governance tools to respond. Problem
+   631→  Management investigation, change authorization, escalation to the Service
+   632→  Owner — all are available. Your role is to ensure the governance system
+   633→  knows what you are experiencing. The structural response is the IT
+   634→  organization's responsibility.
+   635→
+   636→The governance model does not make failures disappear. It makes them visible,
+   637→attributed, and actioned. That is the difference between a service relationship
+   638→and a service conversation.
+   639→
+   640→
+   641→────────────────────────────────────────────────────────────────────────────────
+   642→  Role Guide: Service Customer  |  CereBree uSMS  |  Version 1.0  |  March 2026
+   643→  Based on: uSMS Framework v1.1 · uSeC Framework v1.2 · DAL v5.4
+   644→  Process references: Demand Management v1.0 · SLM v1.0 · Service Catalog
+   645→  Management v1.0 · Organizational Functions Handbook v4.0
+   646→================================================================================
+   647→

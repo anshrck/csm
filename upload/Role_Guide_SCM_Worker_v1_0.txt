@@ -1,0 +1,744 @@
+================================================================================
+  ROLE GUIDE: SCM WORKER (SERVICE CUSTOMER MANAGER)
+  CereBree · Universal Service Management System (uSMS)
+  Version 1.0  |  March 2026
+================================================================================
+
+  This guide is written entirely from your perspective as an SCM Worker.
+  It tells you what your role means structurally, what your obligations are
+  across every process you participate in, and where your authority begins
+  and ends.
+
+  Read this once. Then use it as a reference when something is unclear.
+
+────────────────────────────────────────────────────────────────────────────────
+
+CONTENTS
+
+  1.   Who You Are
+  2.   Your Position in the Governance Architecture
+  3.   The Customers You Serve — and What That Means
+  4.   Demand Management: Your Core Work
+       4.1   Receive and Create the Demand Record
+       4.2   Assess: The Catalog Check First
+       4.3   Determine the Outcome: Redirect, Reject, or Quote
+       4.4   Issue the Quote
+       4.5   Record Acceptance Formally
+       4.6   Hand Over to Change Enablement
+       4.7   Retain Communication Ownership Through Execution
+       4.8   Confirm Fulfillment and Close
+  5.   Service Catalog Management: Keeping Reality Accurate
+  6.   Service Level Management: Governing Commitments
+  7.   Communication Ownership — The Rule You Never Break
+  8.   Your Authorities and Your Limits
+  9.   Your Relationship to the CM Leader
+  10.  Working With Change Enablement
+  11.  Working With Problem Management and SLA Breaches
+  12.  Cogni: Your Operational Intelligence
+  13.  What Good Looks Like
+
+────────────────────────────────────────────────────────────────────────────────
+1.  WHO YOU ARE
+────────────────────────────────────────────────────────────────────────────────
+
+You are an SCM Worker — Service Customer Manager.
+
+You sit in the Worker layer of the SeOS role model, within the Customer Service
+Management (CSM) organizational function. CSM is the strategic front-office of
+uSMS — the permanent, external-facing governance interface between the IT
+organization and its Service Customers. Your role is the human embodiment of
+that interface.
+
+You are the named, personal contact for one or more Service Customers. You are
+not a ticket processor. You are not a demand intake clerk. You are a governance
+actor: the person who translates between the Service Customer's business language
+and the IT organization's governance structures — and who ensures that every
+interaction between those two parties is formal, traceable, and accountable.
+
+Your primary function is governance, not relationship management as an end
+in itself. The relationship exists to serve governance, not the other way around.
+An SCM Worker who has a warm rapport with their Service Customer but delivers
+vague quotes, loses communication threads during change execution, and ignores
+SLA breach signals is not performing their role — regardless of how the
+customer feels about them personally.
+
+Your three process domains within CSM:
+
+  Demand Management
+    The end-to-end lifecycle process for service change demand. Every request
+    from a Service Customer to create, modify, or retire a service enters the
+    system through you and is governed by you until fulfillment.
+
+  Service Catalog Management
+    The ongoing accuracy governance of the service catalog as it applies to
+    your Service Customers. You identify when catalog changes are needed,
+    trigger the change process, and verify the result.
+
+  Service Level Management
+    The continuous monitoring and communication of SLA performance for your
+    Service Customers. You translate performance data into customer-relevant
+    communication and ensure that breaches are never silent.
+
+These three are not separate jobs. They are three dimensions of the same
+responsibility: ensuring that the IT organization's commitment to your Service
+Customers is established, accurate, and honored.
+
+
+────────────────────────────────────────────────────────────────────────────────
+2.  YOUR POSITION IN THE GOVERNANCE ARCHITECTURE
+────────────────────────────────────────────────────────────────────────────────
+
+The SeOS governance chain:
+  CUSTOMER → DEMAND → QUOTE → SERVICE → EXECUTION → OUTCOME → EXPERIENCE
+
+You govern the first three steps: you receive the Customer, assess the Demand,
+and produce the Quote. You then maintain communication ownership through
+Execution and confirm the Outcome.
+
+SeOS role model — your position:
+  Owner layer:    Process Owner (CM), Service Owner — governance and escalation
+  Leader layer:   CM Leader — your operational authority
+  Worker layer:   SCM Worker — you. Primary executor of all CSM processes.
+
+You are the only role in the system that maintains the complete customer
+relationship thread from demand submission through fulfillment. Every other
+role touches the demand at a specific point. You are there from the first
+conversation to the closed record.
+
+Inheritance chain:
+  HRX → SeOS → uSMS → uSeC
+
+Every decision you make as an SCM Worker must pass two compliance checks:
+
+  HRX compliance: Does this decision preserve coherence for the Service
+    Customer? Does it fragment their attention, create invisible pressure, or
+    consume their cognitive bandwidth without producing value? If yes — the
+    decision is non-compliant.
+
+  SeOS coherence: Is every responsibility in this interaction explicit? Is
+    every service interaction governed? Does structure precede execution?
+    If not — the interaction is incomplete.
+
+The Separation Principle:
+  uSeC describes what is offered. uSMS governs how it is delivered.
+  CSM triggers and oversees catalog changes. Change Enablement executes them.
+  You never modify the service catalog directly — not even when the change
+  is simple, obvious, or urgent. This boundary is structural, not procedural.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3.  THE CUSTOMERS YOU SERVE — AND WHAT THAT MEANS
+────────────────────────────────────────────────────────────────────────────────
+
+You are assigned to one or more Service Customers. Each Service Customer is an
+organizational unit — a business division, a department, or an external company
+— that has a formal service agreement with the IT organization.
+
+What your assignment means:
+
+  Named relationship, not anonymous intake
+    Your Service Customer knows who you are. When they have a demand, they
+    contact you. When something goes wrong with their services, you call them.
+    When there is a breach, you do not send an automated notification — you
+    provide governed communication with context.
+
+  Complete institutional memory
+    You carry the demand history, commitment record, and SLA performance data
+    for every Service Customer assigned to you. You know what was promised,
+    what was delivered, and where the gaps are. You are the organizational
+    memory of the customer relationship — not a tool that stores it.
+
+  Accountability without delegation of accountability
+    You may delegate tasks — preparation of a quote, drafting of a report —
+    but you do not delegate accountability. If communication with a Service
+    Customer fails, if a demand falls through the cracks, if an SLA breach is
+    not communicated promptly, the accountability sits with you and escalates
+    to your CM Leader. Not to the system. Not to another team.
+
+The Parent-Child Principle in your work:
+  Every Service User you encounter belongs to a Service Customer. Service Users
+  cannot submit demands. Service Users cannot negotiate service agreements.
+  If a Service User contacts you asking for something that belongs in Demand
+  Management, you redirect them to their Service Customer — who may then
+  contact you with a formal demand. This is not procedural bureaucracy. It
+  is the structural boundary that protects both the Service User and the IT
+  organization from unstructured demand entering through the wrong channel.
+
+In a B2B context — where your Service Customer is an external organization —
+your role takes on commercial significance. You are not just the governance
+contact. You are the primary relationship owner for a paying client. The
+governance discipline of your role — honest assessment, realistic quotes, SLA
+accountability — becomes a direct driver of client satisfaction and retention.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.  DEMAND MANAGEMENT: YOUR CORE WORK
+────────────────────────────────────────────────────────────────────────────────
+
+Demand Management is the end-to-end lifecycle governance of service change
+demand. Every request to create, modify, or retire a service enters the system
+through this process — and you are its primary executor.
+
+State machine:
+  NEW → UNDER_REVIEW → QUOTED → ACCEPTED → IN_CHANGE → FULFILLED → CLOSED
+                     → REJECTED   → CLOSED
+                     → REDIRECTED → CLOSED
+
+4.1  Receive and Create the Demand Record
+
+When a Service Customer contacts you with a demand, you create a Demand Record
+in the system. The Service Customer must be a legitimate actor within their
+organizational scope (BR-CM-001). If a Service User contacts you directly with
+what they believe is a demand, you redirect them to their Service Customer.
+
+The Demand Record is the governance artifact that makes everything else
+traceable. It is not an email thread. It is not a meeting note. It is the
+formal record from which the entire demand lifecycle runs.
+
+Status: NEW. DemandCreated domain event emitted.
+
+4.2  Assess: The Catalog Check First
+
+Before anything else: check the service catalog. Does the demand describe
+something that already exists as an active service or request type?
+
+If yes: this demand is a Redirect. The Service Customer does not need a new
+service — they need access to or guidance about an existing one. You inform
+them and close the demand as REDIRECTED. This is not a failure of their demand.
+It is the system working correctly.
+
+If no: the demand is feasible or requires evaluation. You move to full
+assessment: technical and portfolio feasibility, historical demand data for
+estimation reference, Service Owner consultation where required.
+
+Status: UNDER_REVIEW. DemandUnderReview event emitted.
+
+The catalog check is not a formality. It is the primary governance function of
+the assessment step. An SCM Worker who skips it and quotes a new service when
+an existing one would serve is creating unnecessary cost, complexity, and
+catalog bloat. The catalog check is the first act of demand governance.
+
+4.3  Determine the Outcome: Redirect, Reject, or Quote
+
+After assessment, every demand resolves to one of three outcomes:
+
+  Redirect: Already covered. Inform the customer. Close as REDIRECTED.
+
+  Reject: Not feasible, out of scope, or submitted by a non-legitimate actor.
+    Document the rejection reason (mandatory — BR-CM-004). CM Leader approves
+    the rejection. Communicate to the Service Customer. Close as REJECTED.
+    A rejection must be explained. Never close a demand as rejected without a
+    documented, customer-facing reason.
+
+  Quote: Feasible and not covered. Proceed to quote preparation.
+
+  Deferred: Cannot be assessed or committed to immediately (budget cycle
+    dependency, strategic decision pending). Remain in UNDER_REVIEW with a
+    documented reason and a scheduled review date. Not a terminal state.
+
+4.4  Issue the Quote
+
+When a demand warrants a quote, you prepare the preliminary assessment:
+  – Scope: what will be delivered, in what form
+  – Estimated effort (days) and timeline
+  – SLA class that will govern the resulting service
+  – Cost range or resource implications (if applicable)
+  – Any dependencies or constraints
+
+Critical rule: your CM Leader approves every quote before it is issued to the
+Service Customer. You do not issue quotes unilaterally. This is not a
+bureaucratic step — it is the governance gate that ensures the IT organization
+makes commitments it can actually keep. A quote that has not been approved by
+the CM Leader is not a commitment. If you issue one, you have created a promise
+without governance backing.
+
+Status: QUOTED. DemandQuoted event emitted.
+
+4.5  Record Acceptance Formally
+
+When the Service Customer approves the quote, you record their acceptance
+formally in the system (BR-CM-002). Verbal acceptance is not sufficient. The
+acceptance transitions the demand to the ACCEPTED state and commits both parties:
+the IT organization to delivering what was quoted, the Service Customer to the
+associated implications.
+
+From the ACCEPTED transition, the SLA clock of the commitment begins to apply.
+
+Status: ACCEPTED. DemandAccepted event emitted.
+
+4.6  Hand Over to Change Enablement
+
+With the demand accepted, you create a Change Request in Change Enablement
+and submit a formal ProcessHandover record (type: CM_TO_CE). This handover
+record is:
+  – Immutable and timestamped
+  – Carrying the demand reference, assessment context, and customer scope
+  – The trigger by which Change Enablement assumes execution responsibility
+
+The CE Worker acknowledges receipt of the handover (BR-HO-001). From this
+acknowledgement, Change Enablement owns execution. You do not own execution.
+You own the customer relationship — which means you own communication.
+
+Status: IN_CHANGE. DemandInChange event emitted.
+
+4.7  Retain Communication Ownership Through Execution
+
+This is the rule that distinguishes a well-run CSM function from a poorly
+run one. From the moment the demand transitions to IN_CHANGE, the Service
+Customer interacts with you — not with the CE Worker, not with the CE Leader,
+not with the Technical Owner. You.
+
+The CE Worker reports progress to you. You communicate that progress to the
+Service Customer. You track milestones. You communicate delays. You communicate
+completion. The Service Customer never has to wonder who to call when they want
+to know the status of their demand.
+
+This is BR-HO-001: the originating process retains external communication
+responsibility until the receiving process confirms completion. In practical
+terms: until the change is done and the catalog is updated, you speak for the
+IT organization to your Service Customer.
+
+An SCM Worker who considers their work done at the IN_CHANGE transition is
+failing their role. The transition marks the beginning of a delivery phase
+during which your Service Customer needs you most.
+
+4.8  Confirm Fulfillment and Close
+
+When Change Enablement confirms completion and the service catalog has been
+updated to reflect the new reality, you verify that what was delivered matches
+the committed scope. You then confirm fulfillment to the Service Customer and
+formally close the Demand Record.
+
+Status: FULFILLED → CLOSED. DemandFulfilled and DemandClosed events emitted.
+
+The demand is not FULFILLED until:
+  – The change is technically complete
+  – The service catalog reflects the new service state
+  – You have verified the catalog entry against the committed scope
+  – You have communicated completion to the Service Customer
+
+A Demand Record that remains open after delivery is complete is a governance
+debt. Close it.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.  SERVICE CATALOG MANAGEMENT: KEEPING REALITY ACCURATE
+────────────────────────────────────────────────────────────────────────────────
+
+The service catalog is the governance record of what the IT organization has
+committed to deliver. It must at all times reflect reality — not an aspirational
+state, not a historical state, but the current, accurate state of services and
+commitments.
+
+Your role in Service Catalog Management:
+
+  Monitor catalog accuracy for your Service Customers continuously
+    Does the catalog reflect what was committed to them? Are services that
+    were modified still showing the old scope? Are retired services still
+    appearing? Are SLA class assignments aligned with the current commitments?
+    You are the person most qualified to catch these discrepancies — because
+    you know what was promised.
+
+  Identify when a catalog change is needed
+    Three types of catalog changes exist: Addition (new service after a demand
+    is fulfilled), Modification (scope, SLA class, or offering changes),
+    Retirement (service no longer delivered). You identify the need. You
+    document what needs to change and why.
+
+  Create the Change Request and submit to Change Enablement
+    You do not edit the catalog directly. You create a Normal Change Request in
+    Change Enablement with the catalog change scope documented. Your CM Leader
+    approves it. You submit a CM_TO_CE ProcessHandover record.
+
+  Communicate to affected Service Customers before and after
+    For modifications and retirements: inform the Service Customer before the
+    change is executed. For retirements: obtain their explicit confirmation
+    before triggering the retirement Change Request. No service may be retired
+    without customer acknowledgement. For additions: notify the customer when
+    the new service is live.
+
+  Verify the catalog entry after Change Enablement confirms completion
+    Check that the service name, description, uSeC classification, SLA class,
+    request types, Service Owner, and Technical Owner assignments are all
+    correct. Discrepancies go back to CE for correction before you close the
+    loop.
+
+Minimum cadence: a formal catalog accuracy review for each of your Service
+Customers at least quarterly. Not a courtesy check — a structured review of
+every active catalog entry against the current committed state.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6.  SERVICE LEVEL MANAGEMENT: GOVERNING COMMITMENTS
+────────────────────────────────────────────────────────────────────────────────
+
+SLM is not a reporting function. It is a governance function. Your job is not
+to produce numbers — it is to ensure that SLA commitments are visible, that
+approaching problems are communicated before they become breaches, and that
+when breaches occur they are handled as governance events, not embarrassments.
+
+Your SLM responsibilities:
+
+  Establish and confirm the SLA profile at demand acceptance
+    When a demand is accepted, you confirm the SLA class for each affected
+    service — ensuring it is consistent with the service's catalog assignment.
+    You consult the CM Leader on the SLA class if the demand involves a new
+    service or a significant scope change. The SLA class is set once and
+    monitored continuously from that point.
+
+  Monitor SLA performance for your Service Customers
+    At the Minimal Stage: periodic SlaEvent queries and SLM dashboard review.
+    At the Smart Stage: real-time performance data through the Experience Layer.
+    You are the first human in the chain to see when performance is degrading.
+    Do not wait for a breach to act.
+
+  Communicate SLA warnings proactively
+    When the SLA monitoring system emits an SLAWarning event (at 80% of the
+    clock consumed), you contact your Service Customer proactively. Not after
+    the breach. Before it. The warning exists precisely so that intervention
+    is still possible. An SCM Worker who receives a warning and waits to see
+    whether a breach actually occurs has failed the governance obligation of
+    their role.
+
+  Communicate breaches with context
+    When a breach occurs, your Service Customer receives governed communication:
+    what happened, which service, what the current status is, and what
+    remediation is planned. Not just a breach notification. A communication
+    that respects their right to understand what they are experiencing.
+
+    The Service Owner is also notified at breach. Your CM Leader confirms the
+    breach and escalates. You communicate to the Service Customer throughout.
+
+  Produce periodic SLA performance reports
+    Regular reports per Service Customer, per service: compliance rates, breach
+    history, remediation status. These reports must be accurate and complete
+    before they reach the customer. Your CM Leader reviews them before issuance.
+
+  Identify SLA class misalignments
+    When monitoring data reveals that a service is consistently performing
+    outside the range of its assigned SLA class — either over-committing (Class
+    A behavior from a Class C service) or under-delivering (Class C behavior
+    from a Class B commitment) — you flag this for catalog modification.
+
+A breach is a governance moment. Not a failure to hide. Every breach that is
+communicated clearly, with context and a credible remediation plan, builds more
+trust than a service that never breaks but is governed opaquely.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7.  COMMUNICATION OWNERSHIP — THE RULE YOU NEVER BREAK
+────────────────────────────────────────────────────────────────────────────────
+
+This section exists because communication ownership is the single most
+frequently violated principle in customer governance roles — and the one whose
+violation has the most immediate, visible impact on customer trust.
+
+The rule: from the moment a demand is submitted to the moment it is closed, you
+maintain external communication responsibility toward the Service Customer.
+This responsibility does not transfer when the demand enters Change Enablement.
+It does not pause when technical complexity increases. It does not end when
+the topic becomes uncomfortable.
+
+What this looks like in practice:
+
+  At every transition, you communicate.
+    NEW → UNDER_REVIEW: "I have received your demand and am beginning
+    assessment. I will come back to you with an outcome within [timeframe]."
+    QUOTED: "I have a quote ready for your review." Not an automated email.
+    You.
+
+  During execution, you communicate status at meaningful milestones.
+    Not every day. Not a system notification. A human communication when
+    something material has happened or when the timeline needs to be updated.
+
+  When there are delays, you communicate first.
+    The Service Customer should never contact you to ask why they have not
+    heard anything. You tell them before they ask.
+
+  When something changes in the scope or timeline, you communicate it as a
+  governed update — with a reason, a revised expectation, and your name
+  on it.
+
+  When SLA performance is degrading, you communicate it before it breaches.
+    Not when the breach notification is automatically generated. Before.
+
+The Service Customer's trust in the IT organization is built or destroyed
+through you. Every communication you make or fail to make is a data point
+in their assessment of whether the governance relationship is real or
+cosmetic. Make it real.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8.  YOUR AUTHORITIES AND YOUR LIMITS
+────────────────────────────────────────────────────────────────────────────────
+
+What you are authorized to do:
+
+  – Create Demand Records on behalf of Service Customers
+  – Conduct demand assessment and determine outcome type (Redirect, Reject,
+    Quote) — subject to CM Leader approval on quotes and rejections
+  – Prepare quotes for CM Leader review and approval
+  – Record formal customer acceptance of quotes
+  – Submit ProcessHandover records to Change Enablement
+  – Maintain communication with Service Customers throughout demand lifecycle
+  – Identify catalog change needs and create Change Requests (with CM Leader
+    approval) for submission to CE
+  – Monitor SLA performance data for your Service Customers
+  – Issue governed SLA communications to your Service Customers
+  – Produce SLA performance reports (subject to CM Leader review before
+    issuance)
+
+What you are not authorized to do:
+
+  You cannot issue quotes without CM Leader approval.
+    Every quote is a commitment from the IT organization. You do not have
+    unilateral authority to make organizational commitments. The CM Leader
+    approval gate is structural — not a bureaucratic delay.
+
+  You cannot modify the service catalog directly.
+    Only Change Enablement may write to the catalog. This is the Separation
+    Principle (BR-CE-004). No matter how simple or obvious the catalog change
+    appears, it goes through CE.
+
+  You cannot communicate with Technical Owners directly about delivery.
+    Technical communication about change execution flows through Change
+    Enablement. You communicate with the CE Worker about progress. Not with
+    Technical Owners. Not with engineers.
+
+  You cannot make commitments on behalf of the CM Leader or Service Owner.
+    Your authority is to prepare, assess, and communicate. Governance decisions
+    at the commitment level require the approval of the people authorized to
+    make them.
+
+  You cannot serve Service Users in the CSM channel.
+    Service Users belong in the Service Desk. If a Service User contacts you,
+    redirect them appropriately. They are not your actor group.
+
+  You cannot also be the CE Leader for the same service scope.
+    Separation of duties: the person who assesses a demand and issues a quote
+    must not be the same person who approves the resulting change (DAL-16,
+    Section 7). This is structural — not a staffing preference.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9.  YOUR RELATIONSHIP TO THE CM LEADER
+────────────────────────────────────────────────────────────────────────────────
+
+Your CM Leader is the operational authority for the entire CSM function. They
+hold accountability for throughput, assessment quality, and communication
+standards across all SCM Workers. They are not a supervisor in the traditional
+sense — they are the governance authority above you in the CSM function.
+
+What the CM Leader does for you:
+
+  Approves quotes before issuance
+    You prepare. They validate. No quote leaves CSM without their approval.
+
+  Approves rejection decisions where rejection is contested
+    If a Service Customer disputes a rejection, the CM Leader's authority is
+    the next governance level. You document; they authorize.
+
+  Escalates to the Service Owner when required
+    Commitment disputes, significant SLA breaches, and governance escalations
+    that go beyond the SCM Worker level move through the CM Leader to the
+    Service Owner.
+
+  Reviews SLA performance reports before they are issued
+    Your reports are accurate before the CM Leader sees them. Their review
+    ensures completeness and consistency before the Service Customer receives them.
+
+  Monitors the demand pipeline across all SCM Workers
+    The CM Leader has visibility into every active demand, its status, and its
+    communication health. If your demand is stalling — in UNDER_REVIEW too
+    long, IN_CHANGE without communication updates — the CM Leader will ask.
+
+What you do for the CM Leader:
+
+  You are the quality of CSM, made visible.
+    The CM Leader's accountability is yours in practice. Your assessment quality,
+    your communication discipline, your quote accuracy — these are what the
+    CM Leader is held accountable for. Poor discipline in your work is poor
+    discipline in the function they lead.
+
+  You surface problems early.
+    When a demand is going badly — when a change is delayed, when a Service
+    Customer is dissatisfied, when an SLA breach is likely — you tell the CM
+    Leader before it becomes a crisis. The CM Leader needs to know what is
+    happening before escalation lands on their desk from an external source.
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. WORKING WITH CHANGE ENABLEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+Change Enablement (CE) is your execution partner. You trigger changes. They
+execute them. You do not execute. They do not communicate with your Service
+Customers. This division of responsibilities is structural and mutual.
+
+Your obligations toward CE:
+
+  Submit complete, accurate ProcessHandover records
+    The CE Worker picks up your handover and begins assessment from what you
+    provide. A handover that is incomplete, ambiguous, or missing customer
+    context forces CE to start their work with a gap you created. The demand
+    record, the accepted quote scope, and the customer context must be in the
+    handover before you submit it.
+
+  Be available for CE queries during assessment and planning
+    CE may need to clarify scope or customer expectations before they can plan
+    the change. You are the channel to the Service Customer. Respond promptly.
+
+  Track CE progress and communicate to your Service Customer
+    CE reports milestones to you. You communicate them to the Service Customer.
+    If CE is delayed, you communicate that. If CE encounters unexpected
+    complexity, you communicate that. The Service Customer does not hear about
+    change execution from CE directly.
+
+  Verify the catalog upon CE completion
+    When CE confirms the change is complete, you verify the catalog entry
+    reflects the committed scope before closing the demand.
+
+CE's obligations toward you:
+
+  Acknowledge the ProcessHandover record (BR-HO-001)
+    CE assumes execution responsibility from this acknowledgement.
+
+  Report progress at defined milestones
+    CE communicates status to you — not to your Service Customer — at key
+    points in the change lifecycle.
+
+  Confirm completion
+    CE confirms to you when the change is complete and the catalog is updated.
+    This is your trigger to verify and confirm fulfillment to the Service
+    Customer.
+
+If CE and CSM disagree about scope or delivery, the resolution path is:
+SCM Worker ↔ CE Worker → CM Leader ↔ CE Leader → Service Owner (if required).
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. WORKING WITH PROBLEM MANAGEMENT AND SLA BREACHES
+────────────────────────────────────────────────────────────────────────────────
+
+You are not a participant in Problem Management. You are a recipient of its
+outputs — specifically when Problem Management's findings affect SLA commitments
+for your Service Customers.
+
+What Problem Management produces that is relevant to you:
+
+  Root cause findings for SLA breach patterns
+    When Problem Management completes its investigation into a recurring
+    failure, the findings — root cause, decision (fix / Known Error / accept),
+    and remediation path — feed into your SLA governance communication. When
+    you communicate an SLA breach to your Service Customer, you provide this
+    context. Not just "there was a breach," but "here is what was investigated,
+    here is the decision, and here is what it means for the service going forward."
+
+  Change triggers that affect your catalog
+    When Problem Management decides a structural fix is warranted, it triggers
+    a change in Change Enablement. That change may affect catalog entries in
+    your customers' portfolios. You communicate this — before the change
+    executes if possible, certainly after.
+
+  Known Error resolutions
+    When a Known Error is resolved (the underlying problem is fixed via a
+    change), the Known Error record is closed. If the Known Error was associated
+    with a service in your customer's portfolio, you communicate the resolution:
+    the issue is structurally fixed, not just worked around.
+
+Your role in breach communication is irreplaceable:
+  Problem Management produces the root cause and decision.
+  Service Level Management produces the performance data.
+  You translate both into a customer communication that is honest, timely,
+  and governed. A breach that reaches your Service Customer through an
+  automated system notification, without context or human communication from
+  you, is a governance failure in the customer relationship. Not a process
+  step. A relationship failure.
+
+
+────────────────────────────────────────────────────────────────────────────────
+12. COGNI: YOUR OPERATIONAL INTELLIGENCE
+────────────────────────────────────────────────────────────────────────────────
+
+Cogni is available to you as an operational intelligence layer within the
+Experience Layer. It is governed by the same entitlement boundaries as
+everything else — your view is scoped to your Service Customer assignments.
+
+What Cogni does for you as an SCM Worker:
+
+  Smart Stage
+    – Demand estimation assistance: based on historical demand data for similar
+      requests, Cogni surfaces estimated effort ranges for your assessment.
+      This is advisory — your judgment governs the quote. Cogni reduces
+      the lookup burden, not the governance responsibility.
+    – SLA performance at a glance: a dashboard of SLA status across your
+      Service Customers, surfacing warnings and breach risks before you would
+      otherwise notice them.
+    – Communication drafting: after an SLA breach event, Cogni drafts a
+      structured customer communication incorporating Problem Management root
+      cause data — for you to review, adjust, and send. You do not send
+      AI-generated communications without review. Accountability is yours.
+    – Demand pipeline visibility: status of all active Demand Records assigned
+      to you, with time-in-state flags for records that may be stalling.
+
+  Mature Stage
+    – Demand forecasting: based on your Service Customers' usage patterns and
+      demand history, Cogni identifies likely upcoming demands — allowing you
+      to be proactive rather than reactive.
+    – SLA class recommendation: when monitoring data suggests a service's
+      actual criticality has shifted, Cogni surfaces the analysis for your
+      discussion with the customer and the CM Leader.
+
+What Cogni never does:
+  – Issue quotes or make commitments on your behalf
+  – Communicate with Service Customers without your review
+  – Surface another customer's data within your view
+  – Replace the CM Leader approval step for quotes
+
+
+────────────────────────────────────────────────────────────────────────────────
+13. WHAT GOOD LOOKS LIKE
+────────────────────────────────────────────────────────────────────────────────
+
+An SCM Worker is performing their role well when:
+
+  Every active demand has a documented, current status.
+    No demand sits in UNDER_REVIEW or IN_CHANGE without a recent communication
+    record. No demand is open past fulfillment.
+
+  Quotes are accurate.
+    The IT organization delivers what it quoted. When scope must change, the
+    Service Customer is told before the change happens, not after.
+
+  Communication is ahead of the Service Customer.
+    Your customers do not contact you to ask for status. You have already told
+    them. This is not a matter of sending more messages — it is a matter of
+    timing communication at the right moments, with the right content.
+
+  SLA warnings are never silent.
+    Every SLAWarning event for your customers results in a proactive
+    communication from you. Before the breach.
+
+  Breach communications contain context.
+    When a breach occurs, your Service Customer understands what happened, what
+    is being done, and what it means for their services. Not just a timestamp.
+
+  Your catalog entries reflect current reality.
+    When you verify a catalog entry after a change, you actually verify it.
+    Discrepancies are returned to CE for correction before you close the loop.
+
+  You surface problems to your CM Leader before they become external issues.
+    The CM Leader never hears about a demand problem from the Service Customer
+    before hearing it from you.
+
+The standard is not perfection. The standard is governed accountability.
+Problems happen. What distinguishes a well-run CSM function is not the absence
+of problems — it is the presence of governance when problems occur.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  Role Guide: SCM Worker  |  CereBree uSMS  |  Version 1.0  |  March 2026
+  Based on: uSMS Framework v1.1 · uSeC Framework v1.2 · DAL v5.4
+  Process references: Demand Management v1.0 · SLM v1.0 · Service Catalog
+  Management v1.0 · Organizational Functions Handbook v4.0
+================================================================================

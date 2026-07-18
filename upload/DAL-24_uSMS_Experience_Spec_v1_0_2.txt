@@ -1,0 +1,1830 @@
+════════════════════════════════════════════════════════════════════════════════
+ uSMS EXPERIENCE SPECIFICATION
+ Functional Space Definition & Screen Inventory
+ DAL Part 12 / DAL-24
+ Version 1.0  |  March 2026
+ Hilmar Stock
+════════════════════════════════════════════════════════════════════════════════
+
+Document Type:    Experience Architecture Specification (DAL Part 12 / DAL-24)
+Target Audience:  UX Architects, Frontend Engineers, Product Owners,
+                  Solution Architects
+DAL Version:      5.5
+Status:           Final — Binding Implementation Reference
+
+Note: This document was previously mis-numbered as DAL-22. DAL-22 is the
+CRM Data Model & Technical Specification. This document is correctly
+identified as DAL-24, DAL Part 12, effective DAL version 5.5.
+
+Part of the HRX / SeOS / uSeC / uSMS framework.
+Prerequisites: uSMS Framework v1.1, uSMS Datamodel v1.1 (DAL-21),
+               uSeC Datamodel v1.1 (DAL-19), DAL-20 (Experience Layer Architecture)
+
+
+────────────────────────────────────────────────────────────────────────────────
+1. Purpose and Scope
+────────────────────────────────────────────────────────────────────────────────
+
+1.1 Purpose
+
+This document specifies the Experience Layer of uSMS at two levels:
+
+  Level 1 — Functional Space Definition
+    Per workspace: which entities are visible, which actions are available,
+    which status views exist, which notifications are surfaced.
+    Answers: "What belongs in this workspace?"
+
+  Level 2 — Screen Inventory & Interaction Model
+    Per screen within each workspace: trigger conditions, data sources
+    (from usms_ops and usms_catalog), available actions (state transitions),
+    and role/entitlement constraints.
+    Answers: "What happens on each screen?"
+
+This document does not specify visual design, component libraries, or
+CSS implementation. It specifies functional behavior and data contracts.
+Visual design follows in a subsequent Component Model (DAL-23).
+
+1.2 Scope — Six Workspaces
+
+  WS-01  CSM Portal             Service Customer
+  WS-02  CSM Workspace          SCM Worker, CM Leader
+  WS-03  Service Desk Portal    Service User
+  WS-04  SD Workspace           SD Agent, SD Leader
+  WS-05  PM Workspace           PM Worker, PM Leader
+  WS-06  CE & Config Workspace  CE Worker, CE Leader, Technical Owner
+
+1.3 Governing Principles (inherited from DAL-20)
+
+  Consume Never Own
+    No workspace stores or owns domain data. All data is consumed from
+    uSMS domain APIs (/ops/*) and uSeC catalog APIs (/catalog/*).
+
+  Assist or Redirect
+    Business operations (state transitions, approvals, closures) are
+    executed by domain services — not by the Experience Layer.
+    The workspace surfaces the action; the API enforces the rule.
+
+  Real-Time by Default
+    All workspace state is event-driven. Lists, counters, and status
+    indicators update via Event Bus subscription — no polling.
+
+  Entitlement-Governed Rendering
+    Every screen, panel, and action button is rendered based on the
+    caller's resolved entitlement and role. No UI configuration bypasses
+    this. If the API would deny the action, the button does not appear.
+
+  Reduced to the Max (HRX)
+    No workspace surface adds cognitive load without governance value.
+    Every element must justify its presence by enabling a decision,
+    surfacing a status, or triggering a legitimate action.
+
+1.4 Notation
+
+  Screen ID:    WS-{workspace}-{sequence}  (e.g. WS-01-003)
+  Data:         [Entity] from schema        (e.g. [Demand] from usms_ops)
+  Actions:      → STATE                    (e.g. → QUOTED)
+  Constraints:  role, scope, status gate   (e.g. SERVICE_CUSTOMER only)
+
+
+────────────────────────────────────────────────────────────────────────────────
+2. WS-01 — CSM Portal  (Service Customer)
+────────────────────────────────────────────────────────────────────────────────
+
+2.1 Functional Space Definition
+
+  Purpose
+    The CSM Portal is the Service Customer's strategic interface with the
+    service organization. It surfaces the customer's demand portfolio,
+    active service commitments, SLA performance, and the Service Catalog
+    available to their organizational scope.
+
+  Role
+    SERVICE_CUSTOMER — scoped to their OrgNode and children.
+
+  Visible Entities
+    [Demand]             Own demands only (serviceCustomerId = caller)
+    [Service]            Services in usms_catalog entitled to their OrgNode
+    [ServiceOffering]    Entitled offerings within their scope
+    [SLAProfile]         Profiles attached to their active services
+    [SlaEvent]           SLA performance events for their services
+    [Entitlement]        Their OrgNode's entitlement records (read-only)
+
+  Available Actions
+    Submit new demand
+    Accept or decline a quote
+    Close a fulfilled or redirected demand
+    View SLA performance per service
+
+  Status Views
+    Demand pipeline: NEW / UNDER_REVIEW / QUOTED / ACCEPTED / IN_CHANGE / FULFILLED
+    SLA health: per active service (green / warning / breached)
+    Service Catalog: available offerings within entitlement scope
+
+  Notifications
+    DemandQuoted          — quote ready for review
+    DemandFulfilled       — demand completed
+    DemandRejected        — demand not feasible (with reason)
+    SlaWarning            — SLA at 70% threshold for an entitled service
+    SlaBreached           — SLA breached for an entitled service
+    ServiceCatalogUpdated — new service available within scope
+
+  Excluded
+    Incident records (those belong to SD Portal)
+    Problem records (internal process — not customer-facing)
+    Change records (internal — customer sees effect via Demand status)
+    Other customers' data (strict OrgNode scope)
+
+────────────────────────────────────────────────────────────────────────────────
+
+2.2 Screen Inventory — WS-01
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen after authentication for SERVICE_CUSTOMER role.
+
+  Purpose
+    Single-glance view of demand pipeline, SLA health, and pending actions.
+
+  Data
+    [Demand]    Count by DemandStatus — own demands
+    [SlaEvent]  Active SLA warnings and breaches for entitled services
+    [Demand]    Demands awaiting customer action (status = QUOTED)
+
+  Panels
+    My Demand Pipeline
+      Visual status lane: NEW → UNDER_REVIEW → QUOTED → IN_CHANGE → FULFILLED
+      Click-through to WS-01-003 (Demand Detail)
+      Count per lane. Real-time via event subscription.
+
+    Pending My Action
+      List of Demands in status = QUOTED requiring customer acceptance.
+      Each row: Demand title, SCM Worker, quote date, estimated effort/cost.
+      Action button: Review Quote → WS-01-004
+
+    SLA Health
+      Per active service: service name, SLA Class, current health indicator.
+      Green (within target) / Amber (warning) / Red (breached).
+      Click-through to WS-01-006 (SLA Detail)
+
+    Recent Activity
+      Last 10 domain events relevant to customer scope.
+      DemandQuoted, DemandFulfilled, SlaWarning, ServiceCatalogUpdated.
+
+  Actions
+    [New Demand] button → WS-01-002
+    [Review Quote] per quoted demand → WS-01-004
+
+  Constraints
+    All data scoped to caller's OrgNode (and children).
+    No data from other customers rendered.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-002  Submit Demand
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    [New Demand] action from WS-01-001 or WS-01-003.
+
+  Purpose
+    Structured demand submission form. Creates Demand record in status NEW.
+
+  Data
+    [Service]          Service Catalog browse — entitled services as reference
+    [ServiceOffering]  Available offerings to pre-populate context
+
+  Form Fields
+    Title              (required, free text)
+    Description        (required, rich text — what is needed and why)
+    Related Services   (optional multi-select from entitled catalog)
+    Desired Timeline   (optional — informational for SCM Worker)
+    Business Justification (optional — supports SCM Worker assessment)
+
+  Actions
+    [Submit Demand]
+      POST /ops/demands
+      Creates Demand (status → NEW)
+      Emits DemandCreated
+      Returns to WS-01-001 with confirmation
+
+    [Cancel] — discard and return to Dashboard
+
+  Constraints
+    SERVICE_CUSTOMER role required (BR-CM-001).
+    Cannot submit demand on behalf of another OrgNode.
+    Title and Description are mandatory — form blocks submission if empty.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-003  Demand List
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from WS-01-001 pipeline panel or top navigation.
+
+  Purpose
+    Full list of own demands with filtering and status overview.
+
+  Data
+    [Demand]  All demands where serviceCustomerId = caller
+
+  Columns
+    Title / Status / Submitted date / SCM Worker / Last update
+
+  Filters
+    Status (multi-select) / Date range / Free text search on title
+
+  Actions
+    [View] per row → WS-01-004 (Demand Detail)
+    [New Demand] → WS-01-002
+
+  Constraints
+    Own demands only. No pagination beyond tenant scope.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-004  Demand Detail
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-01-003, or notification deep-link (DemandQuoted).
+
+  Purpose
+    Full demand record view. Primary action surface for quote acceptance.
+
+  Data
+    [Demand]           Full record including all fields
+    [Change]           Linked change (if IN_CHANGE — status only, no detail)
+    [User]             SCM Worker name and contact
+
+  Sections
+    Demand Summary     Title, description, submitted date, business justification
+    Status Timeline    Visual state machine progress: which states are past / current / pending
+    SCM Assessment     Estimated effort, cost range, quote notes (visible when QUOTED+)
+    Commitment Terms   commitmentNotes (visible when ACCEPTED+)
+    Related Services   serviceIds list with catalog links
+    Activity Log       All DemandStatus events with timestamp and actor
+
+  Actions
+    [Accept Quote]     → POST /ops/demands/:id/accept   (status → ACCEPTED)
+                         Only visible when status = QUOTED
+                         Requires SERVICE_CUSTOMER role
+                         Confirmation dialog before submit
+
+    [Decline Quote]    → POST /ops/demands/:id/close
+                         Only visible when status = QUOTED
+                         Requires reason text in confirmation dialog
+
+  Constraints
+    Accept Quote only available in status = QUOTED.
+    Caller must be the serviceCustomerId on the record (not just any SERVICE_CUSTOMER).
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-005  Service Catalog (Customer View)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Purpose
+    Browse all services and offerings available within entitlement scope.
+    Service Customer uses this to understand what already exists before
+    submitting demand.
+
+  Data
+    [Service]          Entitled services (domain-filtered by default)
+    [ServiceOffering]  Offerings per service
+    [SLAProfile]       Profile per offering
+
+  Filters
+    ServiceDomain (INTERACTION / SUPPORT / DELIVERY / MANAGEMENT)
+    SLA Class (A / B / C / D)
+    Free text search on service name
+
+  Columns / Cards
+    Service name / Domain / Chapter / Layer / SLA Class / Available offerings
+
+  Actions
+    [View Service] → Service detail panel (read-only)
+      Shows: description, customerValue, commodityType, supportLevels,
+             available offerings and their Request Types
+    [Submit Demand for This Service] → WS-01-002 (pre-populated with serviceId)
+
+  Constraints
+    Read-only catalog view. No write operations from this screen.
+    Entitlement-governed: only ACTIVE services with valid entitlement rendered.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-01-006  SLA Performance
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    SLA Health panel click from WS-01-001, or top navigation.
+
+  Purpose
+    Per-service SLA performance overview for the Service Customer.
+    Primary SLM (Service Level Management) view for the customer side.
+
+  Data
+    [SlaEvent]         All SLA events for entitled services
+    [SLAProfile]       Active profiles per service
+    [Incident]         Linked incidents (count and resolution time — anonymized)
+
+  Sections
+    SLA Summary Table
+      Per service: SLA Class / availability target / current period
+      compliance % / P1 response avg / P1 resolution avg
+
+    SLA Event Timeline
+      Chronological list of SlaWarning, SlaBreached, SlaClosedInTime events
+      Filterable by service and date range
+
+    Trend Panel
+      Month-over-month compliance trend per service (simple chart)
+
+  Actions
+    [Export Report] — generates SLA report for selected period (PDF or CSV)
+    [Contact SCM Worker] — opens communication thread (if messaging enabled)
+
+  Constraints
+    Read-only for Service Customer.
+    Incident details are not exposed — only aggregate SLA metrics.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3. WS-02 — CSM Workspace  (SCM Worker, CM Leader)
+────────────────────────────────────────────────────────────────────────────────
+
+3.1 Functional Space Definition
+
+  Purpose
+    The CSM Workspace is the operational environment for SCM Workers and
+    CM Leaders. It manages the full demand lifecycle, supports SLM governance,
+    and provides the interface for catalog-related customer communications.
+
+  Roles
+    SCM_WORKER   — primary operator
+    CM_LEADER    — oversight, throughput monitoring, escalation
+
+  Visible Entities
+    [Demand]           All demands within tenant scope
+    [Service]          Full Service Catalog (usms_catalog)
+    [ServiceOffering]  All offerings
+    [SLAProfile]       All profiles
+    [SlaEvent]         All SLA events
+    [Change]           Linked changes (status view only)
+    [ProcessHandover]  CM_TO_CE handovers created by this workspace
+
+  Available Actions
+    Assign demand to SCM Worker
+    Assess demand (catalog check, feasibility)
+    Redirect or reject demand
+    Create quote (effort, cost, timeline)
+    Create Change Request and hand to CE
+    Mark demand fulfilled / closed
+    Manage SLA profiles and customer SLM reporting
+
+  Status Views
+    Demand queue by status
+    Unassigned demands
+    Demands awaiting customer action (QUOTED)
+    SLA compliance per Service Customer
+
+  Notifications
+    DemandCreated         — new demand requires assignment
+    DemandAccepted        — customer accepted quote → trigger Change Request
+    SlaBreached           — breach requires SCM Worker customer communication
+    ChangeClosed          — linked change complete → demand can be FULFILLED
+
+────────────────────────────────────────────────────────────────────────────────
+
+3.2 Screen Inventory — WS-02
+
+────────────────────────────────────────────────────────────────────────────────
+WS-02-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen for SCM_WORKER and CM_LEADER after authentication.
+
+  Panels
+    My Queue (SCM_WORKER view)
+      Demands assigned to me, sorted by urgency.
+      Status lanes: UNDER_REVIEW / QUOTED / IN_CHANGE.
+
+    Unassigned Demands (CM_LEADER view prominent, SCM_WORKER secondary)
+      Demands in NEW status with no assignedScmWorkerId.
+      [Assign to Me] or [Assign to…] action per row.
+
+    Awaiting Customer Action
+      Demands in QUOTED status. Days since quote sent.
+      Flag: overdue (configurable threshold, default 5 business days).
+
+    SLA Health Overview
+      Per Service Customer: active service count / SLA breaches / open demands.
+
+    Change Status Feed
+      IN_CHANGE demands with linked Change status.
+      CE Worker name / Change status / last update.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-02-002  Demand Queue
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from dashboard or top menu.
+
+  Data
+    [Demand]  All demands in tenant, filterable
+
+  Columns
+    Title / Service Customer / Status / Assigned Worker / Created / Last updated
+
+  Filters
+    Status (multi) / Assigned Worker / Service Customer / Date range / Unassigned only
+
+  Actions
+    [View/Edit] → WS-02-003
+    [Assign] (CM_LEADER) — assign unassigned demands
+    [New Demand on behalf] — SCM Worker creates demand for walk-in customer
+
+────────────────────────────────────────────────────────────────────────────────
+WS-02-003  Demand Detail & Work Surface
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-02-002, or notification deep-link.
+
+  Purpose
+    Full demand work surface for SCM Worker. All lifecycle actions available
+    based on current status.
+
+  Data
+    [Demand]   Full record
+    [Service]  Catalog lookup panel (side panel for assessment)
+    [Change]   Linked change record (if exists)
+    [User]     Service Customer contact info
+
+  Sections
+    Demand Header      Title, customer, submitted date, assigned worker
+    Status Timeline    Visual state machine — current position highlighted
+    Customer Input     Description and business justification (read-only)
+    Catalog Check Panel
+      Side panel: search Service Catalog while in UNDER_REVIEW.
+      Confirms: "Is this demand already covered?"
+      [Mark as Covered → Redirect] or [Proceed to Quote]
+    Assessment Fields  Editable when status = UNDER_REVIEW:
+      estimatedEffortDays / estimatedCost / quoteNotes
+    Commitment Section Visible when status = ACCEPTED+:
+      commitmentNotes / changeRequestId link
+    Activity Log       Full event history with actor and timestamp
+
+  Actions (visible by status)
+
+    Status = NEW
+      [Assign to Me]        PATCH /ops/demands/:id  (set assignedScmWorkerId)
+      [Start Review]        POST /ops/demands/:id/review  → UNDER_REVIEW
+
+    Status = UNDER_REVIEW
+      [Redirect Demand]     POST /ops/demands/:id/redirect
+                            Requires: redirectedToOfferingId selected in catalog panel
+      [Reject Demand]       POST /ops/demands/:id/reject
+                            Requires: rejectionReason text (dialog)
+      [Submit Quote]        POST /ops/demands/:id/quote  → QUOTED
+                            Requires: estimatedEffortDays, quoteNotes
+
+    Status = ACCEPTED (customer accepted quote)
+      [Create Change Request]
+                            POST /ops/changes  (originType = DEMAND, originDemandId)
+                            Then: POST /ops/demands/:id/hand-to-ce  → IN_CHANGE
+                            Creates ProcessHandover (CM_TO_CE)
+
+    Status = IN_CHANGE (change closed by CE)
+      [Mark Fulfilled]      POST /ops/demands/:id/close  → FULFILLED → CLOSED
+                            Only available when linked Change.status = CLOSED
+
+  Constraints
+    SCM_WORKER may only action demands assigned to them (or unassigned).
+    CM_LEADER may action any demand in tenant.
+    Quote submission validates estimatedEffortDays IS NOT NULL (BR-CM-002).
+
+────────────────────────────────────────────────────────────────────────────────
+WS-02-004  Service Catalog (Full View)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu or from Demand Detail catalog panel.
+
+  Purpose
+    Full catalog view for SCM Worker assessment. Shows all services,
+    their structure, owners, and SLA profiles — not entitlement-filtered.
+
+  Data
+    [Service]           Full catalog
+    [ServiceOffering]   All offerings
+    [SLAProfile]        All profiles
+    [ServiceDependency] Dependency tree per service
+
+  Filters
+    Domain / Chapter / Layer / Status / SLA Class / Technical Owner / Free text
+
+  Actions
+    [View Service]         Read-only detail panel with full 9-field model
+    [View Dependencies]    Dependency tree visualization (impact map)
+    [Request Catalog Change] → Opens demand pre-filled as catalog change request
+
+  Constraints
+    Read-only for SCM_WORKER and CM_LEADER.
+    Catalog writes only via Change Management (BR-CE-004).
+
+────────────────────────────────────────────────────────────────────────────────
+WS-02-005  SLM Dashboard (Service Level Management)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Purpose
+    SCM Worker's SLM governance view. Monitors SLA compliance across all
+    Service Customers and services. Drives SLM customer conversations.
+
+  Data
+    [SlaEvent]      All SLA events in tenant (current period)
+    [SLAProfile]    Active profiles
+    [Incident]      Aggregate resolution metrics per service
+    [Demand]        Fulfilled demands by service (delivery timeline compliance)
+
+  Sections
+    SLA Compliance Summary
+      Table: Service Customer × Service × SLA Class × compliance %
+      Current period (configurable: month / quarter)
+
+    Active Breaches
+      All records with open SlaBreached events.
+      Entity type / service / customer / breach duration / assigned worker.
+      [Communicate to Customer] action → message draft
+
+    SLA Trend
+      Month-over-month per service: compliance trend graph
+
+    SLM Report Generator
+      Select: Service Customer / Period / Services
+      Output: structured SLA report (for WS-01-006 customer view and export)
+
+  Constraints
+    CM_LEADER sees all customers.
+    SCM_WORKER sees only their assigned customer scope.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4. WS-03 — Service Desk Portal  (Service User)
+────────────────────────────────────────────────────────────────────────────────
+
+4.1 Functional Space Definition
+
+  Purpose
+    The Service Desk Portal is the Service User's operational interface.
+    It is the only channel through which Service Users interact with the
+    service organization. It surfaces the user's active tickets, the
+    available service catalog, and self-service options.
+
+  Role
+    SERVICE_USER — scoped to their OrgNode's entitlement set.
+
+  Visible Entities
+    [Incident]         Own incidents only (reportedById = caller)
+    [ServiceRequest]   Own requests only
+    [ServiceOffering]  Entitled offerings (from entitlement resolution)
+    [KnownError]       Active Known Errors for entitled services (read-only)
+    [SlaEvent]         SLA events on own open incidents (status only)
+
+  Available Actions
+    Report an incident
+    Submit a service request
+    Request access
+    View and update own tickets
+    Search Known Error database (self-service resolution)
+    Confirm incident resolution
+
+  Status Views
+    My open incidents
+    My open requests
+    My resolved items (last 30 days)
+
+  Notifications
+    IncidentAssigned       — your incident has been picked up
+    IncidentResolved       — your incident is resolved, confirmation requested
+    ServiceRequestFulfilled — your request has been fulfilled
+    ServiceRequestRejected — request rejected with reason
+    KnownErrorMatchFound   — a Known Error was found matching your incident
+
+  Excluded
+    Other users' tickets
+    Demand records (submit demand → contact Service Customer / your manager)
+    Problem and Change records (internal)
+    SLA metrics beyond own ticket status
+
+────────────────────────────────────────────────────────────────────────────────
+
+4.2 Screen Inventory — WS-03
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen for SERVICE_USER after authentication.
+
+  Panels
+    My Open Tickets
+      Combined list: open Incidents + open ServiceRequests.
+      Status indicator per ticket. Last update timestamp.
+      [View] → WS-03-003 or WS-03-005
+
+    Pending My Confirmation
+      Incidents in status = RESOLVED awaiting user confirmation.
+      [Confirm Resolution] / [Reopen] actions.
+
+    Quick Actions
+      [Report an Issue] → WS-03-002
+      [Request a Service] → WS-03-004
+      [Request Access] → WS-03-004 (pre-filtered to Access offerings)
+      [Search Knowledge / Known Errors] → WS-03-006
+
+    Recently Resolved (last 7 days)
+      Closed incidents and fulfilled requests. Summary view.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-002  Report Incident
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    [Report an Issue] from WS-03-001.
+
+  Purpose
+    Structured incident submission. Before form is shown, Known Error
+    database is checked — if a match exists, it is surfaced first.
+
+  Flow
+    Step 1: Service Selection
+      "Which service is affected?"
+      Dropdown of entitled services (from entitlement resolution).
+      On selection: background Known Error check fires.
+
+    Step 2: Known Error Check (conditional)
+      If active KnownError found for selected service:
+        Display: Known Error title, workaroundDescription.
+        [This resolves my issue] → no incident created, session ends.
+        [The workaround doesn't help] → continue to Step 3.
+
+    Step 3: Incident Form
+      Title         (required)
+      Description   (required — "what happened, when, what is the impact?")
+      Priority hint (informational — user suggests, SD Agent confirms)
+      Attachments   (optional)
+
+    Step 4: Submission
+      POST /ops/incidents
+      Incident created (status → NEW)
+      Emits IncidentCreated
+      Confirmation screen with incident ID and reference number.
+
+  Constraints
+    serviceId required (BR-SD-001).
+    Service must be in ACTIVE status and entitled to caller's OrgNode.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-003  Incident Detail (User View)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-03-001, or notification deep-link.
+
+  Purpose
+    Service User view of their incident. Limited to user-relevant fields.
+
+  Data
+    [Incident]  Own record — subset of fields
+
+  Visible Fields
+    Title / Status / Priority / Submitted date / Last update
+    Assigned Agent (name only — no internal notes)
+    Resolution description (when RESOLVED)
+    SLA indicator: response received / within target (yes/no)
+
+  Actions
+    [Confirm Resolution]   POST /ops/incidents/:id/close  → CLOSED
+                           Only visible when status = RESOLVED
+    [Reopen / Add Comment] POST /ops/incidents/:id/progress (with note)
+                           Only visible when status = RESOLVED
+                           Reopens to IN_PROGRESS with user comment appended
+
+  Hidden from User
+    assignedGroupId / escalationHistory / slaBreachedAt / knownErrorId
+    Internal agent notes / problem linkage
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-004  Request a Service / Access
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    [Request a Service] or [Request Access] from WS-03-001.
+
+  Purpose
+    Entitlement-filtered service request submission. User browses only
+    what they are entitled to request.
+
+  Flow
+    Step 1: Browse Catalog (entitled offerings only)
+      Cards per ServiceOffering: name, description, requestType, fulfillmentDays.
+      Filter by: category (all / software / access / hardware / other).
+      [Request This] per offering.
+
+    Step 2: Request Form
+      Title         (auto-populated from offering name, editable)
+      Description   (optional — additional context)
+      Confirm entitlement shown: "You are entitled to this service."
+
+    Step 3: Submission
+      POST /ops/requests
+      ServiceRequest created (status → NEW)
+      Emits ServiceRequestCreated
+      Confirmation with reference number and expected fulfillment time.
+
+  Constraints
+    Entitlement gate (BR-SD-007): offering must be ACTIVE and entitled.
+    If not entitled: offering is not shown (entitlement-governed rendering).
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-005  My Requests
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation or from WS-03-001 open tickets list.
+
+  Data
+    [ServiceRequest]  Own requests
+
+  Columns
+    Service name / Status / Submitted / Fulfillment target / Last update
+
+  Actions
+    [View Detail]  Read-only detail panel:
+      Status / Assigned Agent (name) / Rejection reason (if REJECTED)
+      Fulfillment notes (if FULFILLED)
+
+────────────────────────────────────────────────────────────────────────────────
+WS-03-006  Known Error Search (Self-Service)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    [Search Knowledge] from WS-03-001, or triggered during WS-03-002 flow.
+
+  Purpose
+    Self-service resolution surface. User searches the Known Error Database
+    before submitting an incident.
+
+  Data
+    [KnownError]  Active records where serviceId matches entitled services
+                  (isActive = TRUE)
+
+  Search
+    Full-text search on title and description (GIN index — idx_knownerror_title_search).
+    Filter by service (dropdown of entitled services).
+
+  Result Display
+    Per KnownError: title / affected service / workaroundDescription.
+    [This resolves my issue] — session ends, no ticket created.
+    [This doesn't help] → WS-03-002 (incident form, service pre-selected).
+
+  Constraints
+    Only KnownErrors for entitled services are shown.
+    Internal fields (problemId, reviewDueAt) not exposed to Service User.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5. WS-04 — SD Workspace  (SD Agent, SD Leader)
+────────────────────────────────────────────────────────────────────────────────
+
+5.1 Functional Space Definition
+
+  Purpose
+    The SD Workspace is the operational environment for SD Agents and
+    SD Leaders. It manages all active incidents, service requests, access
+    operations, and event triage. It is the highest-throughput workspace
+    in uSMS — designed for speed and decision clarity.
+
+  Roles
+    SD_AGENT   — primary operator (handles assigned tickets)
+    SD_LEADER  — oversight (all tickets), SLA management, escalation authority
+
+  Visible Entities
+    [Incident]       All incidents in tenant
+    [ServiceRequest] All service requests in tenant
+    [KnownError]     All active Known Errors (KEDB)
+    [Problem]        Read-only linkage (incident → problem)
+    [SlaEvent]       All SLA events
+    [Service]        Catalog lookup for CI identification
+    [Entitlement]    For entitlement verification on requests
+
+  Available Actions
+    Assign incident or request to self or another agent
+    Progress incident through state machine
+    Escalate to Technical Owner or specialized group
+    Apply Known Error workaround
+    Verify entitlement and fulfill service request
+    Reject service request
+    Trigger Problem Record (manual, beyond auto-trigger)
+    Flag Known Error workaround as invalid (BR-KE-002)
+
+  Status Views
+    Incoming queue (NEW, unassigned)
+    My queue (assigned to me)
+    Escalated (awaiting Technical Owner input)
+    SLA at risk (warning / breached)
+    Event triage queue
+
+  Notifications
+    IncidentCreated          — new incident in queue
+    IncidentEscalated        — escalation returned with response
+    SlaWarning / SlaBreached — time-critical action required
+    ServiceRequestCreated    — new request for fulfillment
+    KnownErrorWorkaroundInvalidated — KEDB update needed
+
+────────────────────────────────────────────────────────────────────────────────
+
+5.2 Screen Inventory — WS-04
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen for SD_AGENT and SD_LEADER.
+
+  Panels
+    SLA Status Bar (top of screen)
+      Live counters: P1 open / P1 at risk / P2 open / active breaches.
+      Color-coded. Real-time via event subscription.
+
+    My Queue (SD_AGENT)
+      Incidents and requests assigned to me. Sorted by priority then age.
+      SLA countdown per P1/P2 incident.
+
+    Incoming Queue
+      NEW unassigned incidents. Sort: priority DESC, createdAt ASC.
+      [Take] action per row → assigns to me + → ASSIGNED.
+
+    Event Triage (if Event Management enabled)
+      Monitoring events requiring classification.
+      [Promote to Incident] / [Close as Informational].
+
+    SLA Breaches (SD_LEADER prominent)
+      All active breached incidents with owner and elapsed time.
+
+    Team Overview (SD_LEADER)
+      Per agent: assigned count / open P1s / SLA at-risk count.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-002  Incident Queue
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu or dashboard.
+
+  Data
+    [Incident]  All incidents in tenant
+
+  Columns
+    ID / Title / Priority / Status / Service / Assigned Agent /
+    SLA indicator / Created / Last update
+
+  Filters
+    Status (multi) / Priority / Service / Assigned Agent /
+    SLA state (at risk / breached) / Monitoring-generated / Date range
+
+  Actions
+    [View/Work] → WS-04-003
+    [Take] (if unassigned) → assign to self + status ASSIGNED
+    [Bulk Assign] (SD_LEADER) — select multiple + assign
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-003  Incident Work Surface
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-04-002, notification deep-link, or [Take] action.
+
+  Purpose
+    Full incident work surface. KEDB lookup, resolution, escalation.
+
+  Data
+    [Incident]    Full record
+    [KnownError]  KEDB panel — auto-query on serviceId at screen open
+    [Service]     Catalog panel — service detail and CI context
+    [Problem]     Linked problem (if problemId set) — read-only status
+
+  Sections
+    Incident Header
+      Title / Priority / Status / Service / Reported by / Created
+      SLA countdown timer (live) — response and resolution targets
+
+    KEDB Panel (collapsible, auto-open)
+      "Known solutions for [Service Name]"
+      Lists active KnownErrors for the incident's serviceId.
+      [Apply Workaround] → sets workaroundApplied = TRUE + adds to resolution notes
+      [This doesn't apply] → collapse panel
+
+    Service & CI Context
+      Service detail from usms_catalog: layer, chapter, Technical Owner.
+      Relevant for escalation targeting.
+
+    Work Notes
+      Internal notes field (not shown to Service User).
+      Running log of investigation steps.
+
+    Resolution Field
+      resolutionDescription — required before RESOLVED transition.
+
+    Activity Log
+      All IncidentStatus events with actor and timestamp.
+
+  Actions (visible by status)
+
+    Status = NEW
+      [Take / Assign to Me]   PATCH + POST /ops/incidents/:id/assign → ASSIGNED
+
+    Status = ASSIGNED
+      [Start Work]            POST /ops/incidents/:id/progress → IN_PROGRESS
+
+    Status = IN_PROGRESS
+      [Escalate]              POST /ops/incidents/:id/escalate → ESCALATED
+                              Requires: assignedGroupId or Technical Owner selection
+                              Opens Technical Owner picker (by ServiceChapter)
+
+      [Set Pending]           POST /ops/incidents/:id/pend → PENDING
+                              Requires: pending reason (appended to work notes)
+
+      [Resolve]               POST /ops/incidents/:id/resolve → RESOLVED
+                              Requires: resolutionDescription filled (BR-SD-002)
+
+    Status = ESCALATED
+      [Return to Progress]    POST /ops/incidents/:id/progress → IN_PROGRESS
+                              (used when escalation response received)
+
+    Status = PENDING
+      [Resume]                POST /ops/incidents/:id/resume → IN_PROGRESS
+
+    Status = RESOLVED
+      [Force Close]           POST /ops/incidents/:id/close  (SD_LEADER only)
+      Auto-close countdown shown (autoCloseEligibleAt)
+
+    Any status (SD_LEADER only)
+      [Create Problem Record] POST /ops/problems (manual trigger, beyond auto)
+      [Flag KEDB Invalid]     PATCH /ops/known-errors/:id (workaroundEffective = FALSE)
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-004  Request Queue
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Data
+    [ServiceRequest]  All requests in tenant
+
+  Columns
+    Title / Offering / Status / Requester / Assigned Agent / SLA / Created
+
+  Filters
+    Status / Offering / Assigned Agent / Date range
+
+  Actions
+    [View/Work] → WS-04-005
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-005  Request Work Surface
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-04-004.
+
+  Data
+    [ServiceRequest]   Full record
+    [ServiceOffering]  Offering detail (request type, fulfillment days)
+    [Entitlement]      Resolved entitlement for requester's OrgNode
+
+  Sections
+    Request Header     Title / Offering / Requester / Status / SLA countdown
+    Entitlement Panel
+      Resolved entitlement check result (from BR-ENT-002 algorithm).
+      Shows: OrgNode / scope (DIRECT or INHERITED) / granted by / valid until.
+      [Entitlement Valid ✓] or [Entitlement Not Found ✗]
+    Fulfillment Notes  Internal field for SD Agent
+    Activity Log
+
+  Actions
+
+    Status = NEW
+      [Take / Assign]     → ASSIGNED
+      Entitlement check runs automatically on assign.
+
+    Status = ASSIGNED (entitlement valid)
+      [Begin Fulfillment] POST /ops/requests/:id/progress → FULFILLING
+      [Reject]            POST /ops/requests/:id/reject
+                          Requires: rejectionReason (BR-SD-008)
+
+    Status = ASSIGNED (entitlement not found)
+      [Reject — Not Entitled]  POST /ops/requests/:id/reject
+                               rejectionReason auto-populated: "Entitlement not found"
+
+    Status = FULFILLING
+      [Trigger Standard Change] POST /ops/changes (type = STANDARD)
+                                Sets standardChangeId on request.
+                                Only if provisioning requires CI change.
+      [Mark Fulfilled]          POST /ops/requests/:id/fulfil → FULFILLED
+
+────────────────────────────────────────────────────────────────────────────────
+WS-04-006  Known Error Database (SD View)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu or KEDB panel in WS-04-003.
+
+  Data
+    [KnownError]  All active and inactive records in tenant
+
+  Columns
+    Title / Service / Active / Workaround effective / Created / Last reviewed
+
+  Filters
+    Service / Active (yes/no) / Workaround effective (yes/no) / Free text search
+
+  Actions
+    [View Detail]        Full Known Error detail panel
+    [Flag Workaround Invalid]  PATCH workaroundEffective = FALSE (BR-KE-002)
+                               Requires: reason text
+                               Emits: KnownErrorWorkaroundInvalidated → PM_LEADER notified
+    [Review Complete]    PATCH reviewedAt = NOW(), reviewedById = caller
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. WS-05 — PM Workspace  (PM Worker, PM Leader)
+────────────────────────────────────────────────────────────────────────────────
+
+6.1 Functional Space Definition
+
+  Purpose
+    The PM Workspace is the analytical and decision environment for Problem
+    Management. It surfaces incoming problems, supports root cause investigation,
+    enforces the Decision Gate, and governs the Known Error Database.
+
+  Roles
+    PM_WORKER   — investigation and analysis
+    PM_LEADER   — decision authority (Known Error creation, Change Required approval)
+
+  Visible Entities
+    [Problem]      All problems in tenant
+    [KnownError]   All Known Errors
+    [Incident]     Related incidents (read-only, linked from Problem)
+    [Change]       Linked changes (status view)
+    [Service]      Catalog context for affected services
+    [ProcessHandover]  PM_TO_CE and PM_TO_SD_KE handovers
+
+  Available Actions
+    Assign problem to PM Worker
+    Begin investigation
+    Document root cause
+    Reach Decision Gate (PM_LEADER only)
+    Create Known Error record
+    Create Change Request and hand to CE
+    Manage Known Error Database (review, invalidate, retire)
+
+  Status Views
+    Problem queue by status
+    Decisions pending PM Leader review
+    Known Error Database health
+    Open Change Requests originating from PM
+
+  Notifications
+    ProblemCreated              — new problem requires assignment (auto or manual)
+    RootCauseIdentified         — problem ready for PM Leader decision
+    ChangeRequestCreatedFromProblem — CE acknowledges handover
+    KnownErrorWorkaroundInvalidated — SD flagged workaround invalid → review needed
+
+────────────────────────────────────────────────────────────────────────────────
+
+6.2 Screen Inventory — WS-05
+
+────────────────────────────────────────────────────────────────────────────────
+WS-05-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen for PM_WORKER and PM_LEADER.
+
+  Panels
+    Active Problem Queue
+      Problems in NEW / UNDER_INVESTIGATION / ROOT_CAUSE_IDENTIFIED.
+      Sorted by age (oldest first — time pressure on investigation).
+
+    Awaiting PM Leader Decision (PM_LEADER prominent)
+      Problems in status = DECISION.
+      For each: assigned PM Worker / root cause summary / age.
+      [Review & Decide] → WS-05-003
+
+    Known Error Database Health
+      Count: active KEs / workarounds flagged invalid / reviews overdue.
+      [Review KEDB] → WS-05-005
+
+    Open Changes from PM
+      Changes where originType = PROBLEM and status ≠ CLOSED.
+      CE Worker / Change status / last update.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-05-002  Problem Queue
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Data
+    [Problem]  All problems in tenant
+
+  Columns
+    Title / Service / Status / Decision / Assigned Worker / Related incidents / Created
+
+  Filters
+    Status (multi) / Decision / Service / Assigned Worker / Date range
+
+  Actions
+    [View/Work] → WS-05-003
+    [Assign to Me] (unassigned problems)
+
+────────────────────────────────────────────────────────────────────────────────
+WS-05-003  Problem Work Surface & Decision Gate
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-05-002, or [Review & Decide] from dashboard.
+
+  Purpose
+    Full problem investigation and decision surface. The Decision Gate
+    is the central governance action on this screen.
+
+  Data
+    [Problem]    Full record
+    [Incident]   Linked incidents (relatedIncidentIds) — summary cards
+    [Service]    Catalog detail for serviceId — composition tree
+    [Change]     Linked change if LINKED_TO_CHANGE (status only)
+
+  Sections
+    Problem Header
+      Title / Service / Status / Decision (if reached) / Assigned Worker
+
+    Linked Incidents Panel
+      Cards for each incident in relatedIncidentIds.
+      Per card: title / priority / resolved date / resolution description.
+      Pattern summary: "3 incidents in 7 days — same service, similar description."
+
+    Service Composition Panel
+      Service detail from usms_catalog: layer, chapter, Technical Owner.
+      Dependency tree — to identify structural impact scope.
+      [Consult Technical Owner] → notification/message to Technical Owner.
+
+    Investigation Fields (editable by PM_WORKER)
+      affectedCiDescription    — which CIs are involved
+      rootCauseDescription     — required before Decision Gate
+      impactAssessment         — required if Change Required decision
+
+    Decision Gate (PM_LEADER only — section locked for PM_WORKER)
+      "Decision Gate: record the outcome of this investigation."
+      ProblemDecision selector:
+        ○ Known Error — workaround sufficient, fix not justified
+        ○ Change Required — fix is justified
+        ○ Further Analysis — root cause unclear, return to investigation
+
+      decisionRationale field  — required for all decisions (BR-PM-002)
+
+      Conditional fields by decision:
+        Known Error selected:
+          workaroundDescription field (required — BR-PM-003)
+          [Create Known Error & Notify SD] action
+        Change Required selected:
+          impactAssessment field highlighted (required — BR-PM-004)
+          [Create Change Request & Hand to CE] action
+
+    Activity Log
+
+  Actions (by status and role)
+
+    Status = NEW  (PM_WORKER or PM_LEADER)
+      [Assign to Me]         PATCH assignedPmWorkerId
+      [Begin Investigation]  POST /ops/problems/:id/investigate → UNDER_INVESTIGATION
+
+    Status = UNDER_INVESTIGATION  (PM_WORKER)
+      [Identify Root Cause]  POST /ops/problems/:id/identify-rc → ROOT_CAUSE_IDENTIFIED
+                             Requires: rootCauseDescription filled
+
+    Status = ROOT_CAUSE_IDENTIFIED  (PM_LEADER)
+      [Open Decision Gate]   POST /ops/problems/:id/decide → DECISION
+                             Requires: decision + decisionRationale (BR-PM-002)
+
+    Status = DECISION  (PM_LEADER — decision was KNOWN_ERROR)
+      [Create Known Error]
+        POST /ops/known-errors  (creates KnownError record)
+        PATCH Problem.knownErrorId = new KE id
+        Emits: KnownErrorCreated + ServiceDeskNotifiedOfKnownError
+        ProcessHandover PM_TO_SD_KE created
+        Problem status → KNOWN_ERROR
+
+    Status = DECISION  (PM_LEADER — decision was CHANGE_REQUIRED)
+      [Create Change Request]
+        POST /ops/changes  (type = NORMAL, originType = PROBLEM)
+        ProcessHandover PM_TO_CE created
+        Problem status → LINKED_TO_CHANGE
+
+    Status = KNOWN_ERROR or LINKED_TO_CHANGE
+      [Close Problem]  POST /ops/problems/:id/close → CLOSED
+                       BR-PM-005 gate enforced:
+                       KNOWN_ERROR: requires knownErrorId set
+                       LINKED_TO_CHANGE: requires linked Change.status = CLOSED
+
+────────────────────────────────────────────────────────────────────────────────
+WS-05-004  Known Error Database (PM View)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu or KEDB Health panel.
+
+  Purpose
+    Full KEDB governance view for PM. More control than SD view.
+
+  Data
+    [KnownError]  All records
+
+  Columns
+    Title / Service / Active / Workaround effective / Review due / Problem link
+
+  Actions
+    [View / Edit Detail]
+      Full record: all fields editable by PM_LEADER.
+      [Mark Workaround Effective Again] (after SD flag — PM_LEADER review)
+      [Set Review Due Date]
+      [Retire Known Error] → isActive = FALSE (when structural fix deployed)
+
+    [Create Known Error] (PM_LEADER)
+      Direct creation without going through problem work surface.
+      Requires: problemId reference (no orphan Known Errors — governance rule).
+
+────────────────────────────────────────────────────────────────────────────────
+WS-05-005  PM Analytics
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Purpose
+    Pattern analysis to support proactive Problem Management.
+    Surfaces recurring incident patterns before they trigger auto-creation.
+
+  Data
+    [Incident]  Aggregate by serviceId / priority / resolution time
+    [Problem]   Decision outcomes over time
+    [KnownError] Age and effectiveness
+
+  Panels
+    Incident Heatmap
+      Service × week grid: incident count per service per week.
+      Highlights emerging patterns not yet threshold-triggered.
+
+    Mean Time to Resolve (MTTR) per Service
+      Resolution time trend. Degrading MTTR = structural issue signal.
+
+    Decision Outcome History
+      Known Error vs Change Required decisions over time.
+      Ratio insight: is PM deciding proportionately?
+
+    KEDB Age Report
+      Known Errors by age. Old KEs without review = governance debt.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. WS-06 — CE & Config Workspace  (CE Worker, CE Leader, Technical Owner)
+────────────────────────────────────────────────────────────────────────────────
+
+7.1 Functional Space Definition
+
+  Purpose
+    The CE & Config Workspace is the technical execution environment for
+    Change Management and Service Configuration Management. It has the
+    deepest visibility into the service landscape of any workspace in uSMS —
+    including full access to the uSeC service composition model.
+
+  Roles
+    CE_WORKER         — change coordination, CI analysis, task management
+    CE_LEADER         — approval authority, Change Board facilitation,
+                        emergency authority
+    TECHNICAL_OWNER   — task execution on own CIs, CI state maintenance
+
+  Visible Entities
+    [Change]           All changes in tenant
+    [Service]          Full catalog including composition trees (usms_catalog)
+    [ServiceDependency] Full dependency graph
+    [ServiceOffering]  All offerings
+    [ProcessHandover]  All handovers targeting CE (CM_TO_CE, SD_TO_CE_STD, PM_TO_CE)
+    [Problem]          Originating problems (read-only status)
+    [Demand]           Originating demands (read-only status)
+    [KnownError]       Read-only (to understand context of CE-originated fixes)
+
+  Available Actions (CE_WORKER)
+    Assess change (analyze composition, identify Technical Owners)
+    Classify complexity
+    Build implementation plan and assign tasks to Technical Owners
+    Coordinate implementation
+    Verify completion and update Service Catalog
+    Close change and notify originators
+
+  Available Actions (CE_LEADER)
+    Approve Simple and Medium changes
+    Convene and chair Change Board for Complex changes
+    Declare Emergency Change
+    Approve Emergency Change (expedited)
+    Initiate post-implementation review
+
+  Available Actions (TECHNICAL_OWNER)
+    View tasks assigned to me across all changes
+    Update CI state data
+    Confirm task completion
+
+  Status Views
+    Change pipeline by status and type
+    Emergency changes (priority surface)
+    Pending approvals (CE_LEADER)
+    My assigned tasks (TECHNICAL_OWNER)
+    Post-review outstanding (Emergency Changes)
+
+  Notifications
+    ChangeRequested           — new change requires assignment and assessment
+    ChangeApproved            — approved, implementation may begin
+    ChangeRejected            — originator must be informed
+    EmergencyChangeActivated  — expedited path — CE_LEADER immediate attention
+    TaskAssigned              — Technical Owner receives task notification
+    ChangeClosed              — downstream: Demand/Problem updated, catalog written
+
+────────────────────────────────────────────────────────────────────────────────
+
+7.2 Screen Inventory — WS-06
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-001  Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Landing screen. Role-adaptive panels.
+
+  Panels
+    Emergency Changes (always top, color-coded RED if active)
+      Any EMERGENCY changes in REQUESTED / APPROVED / IMPLEMENTATION.
+      [Take Control] → WS-06-003 (CE_LEADER immediate action)
+
+    Change Pipeline (CE_WORKER / CE_LEADER)
+      Status lanes: REQUESTED → ASSESSMENT → PLANNING → APPROVED → IMPLEMENTATION → VERIFICATION
+      Count per lane. Click-through to WS-06-002.
+
+    Pending My Approval (CE_LEADER)
+      Changes in PLANNING requiring approval.
+      Per row: title / type / complexity / CE Worker / originator.
+      [Review & Approve/Reject] → WS-06-003
+
+    My Assigned Tasks (TECHNICAL_OWNER)
+      Tasks from technicalOwnerTasksJson across all IMPLEMENTATION changes.
+      Per task: change title / service / CI / task description / due date.
+      [Mark Complete] action.
+
+    Post-Review Outstanding (CE_LEADER)
+      Emergency changes with isEmergencyPostReviewDue = TRUE.
+      [Complete Review] → WS-06-003
+
+    Incoming Handovers (CE_WORKER)
+      Unacknowledged ProcessHandover records (acknowledgedAt IS NULL).
+      Type / Source / Created. [Acknowledge & Open Change] action.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-002  Change Queue
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Data
+    [Change]  All changes in tenant
+
+  Columns
+    ID / Title / Type / Complexity / Status / Origin / CE Worker /
+    Affected services / Created / Last update
+
+  Filters
+    Status (multi) / Type / Complexity / CE Worker / Origin type /
+    Post-review due / Date range
+
+  Actions
+    [View/Work] → WS-06-003
+    [Take] (unassigned) → assign to self
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-003  Change Work Surface
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Row click from WS-06-002, dashboard action, or notification deep-link.
+
+  Purpose
+    The most complex work surface in uSMS. Full change lifecycle management,
+    service composition analysis, task coordination, and approval.
+
+  Data
+    [Change]            Full record
+    [Service]           Affected services — full catalog detail + composition tree
+    [ServiceDependency] Dependency graph for impact analysis
+    [Demand]            Origin demand (if originType = DEMAND) — status + customer context
+    [Problem]           Origin problem (if originType = PROBLEM) — root cause + assessment
+    [ProcessHandover]   Handover records referencing this change
+
+  Sections
+
+    Change Header
+      Title / Type / Complexity / Status / Origin / CE Worker / CE Leader
+
+    Origin Context Panel
+      If DEMAND: customer name / demand title / commitment notes / quote
+      If PROBLEM: root cause description / impact assessment / PM decision
+      If STANDARD: originating Service Request detail
+
+    Service Composition Panel  ← CE Worker's primary analysis tool
+      "Affected Services & Composition"
+      For each serviceId in affectedServiceIds:
+        Service name / Layer / Chapter / Technical Owner
+        Dependency tree (what does this service depend on?)
+        Layer indicator: BUSINESS / APPLICATION / PLATFORM / INFRASTRUCTURE
+      [Add Affected Service] → catalog search + add to affectedServiceIds
+      [Remove Affected Service]
+      Layer direction validation: warning if dependency rule would be violated.
+
+    Technical Owner Task Panel  (editable in PLANNING status)
+      "Task Assignment"
+      Per Technical Owner identified from composition analysis:
+        Owner name / ServiceChapter / CI scope / Assigned task description
+      technicalOwnerTasksJson built here.
+      [Notify All Technical Owners] → task notifications sent
+
+    Implementation Plan Field
+      implementationPlan — rich text, editable in PLANNING status.
+      Template hints: rollback plan, test criteria, verification steps.
+
+    Approval Section (CE_LEADER — visible in PLANNING status)
+      Complexity selector (if not yet set): SIMPLE / MEDIUM / COMPLEX
+      [Approve] / [Reject] actions (see below)
+      For COMPLEX: Change Board session notes (approvalNotes)
+
+    Verification Section (CE_WORKER — visible in IMPLEMENTATION status)
+      Task completion status from Technical Owners (per technicalOwnerTasksJson)
+      verificationNotes field — "service functional, catalog updated"
+      [Confirm Catalog Update] — sets catalogUpdatedAt (required for BR-CE-004)
+
+    Post-Implementation Review (EMERGENCY changes — visible after CLOSED)
+      postImplementationReview field
+      [Complete Post-Review] → sets isEmergencyPostReviewDue = FALSE
+
+    Activity Log
+
+  Actions (by status and role)
+
+    Status = REQUESTED  (CE_WORKER)
+      [Assign to Me]      PATCH assignedCeWorkerId
+      [Assess]            POST /ops/changes/:id/assess → ASSESSMENT
+                          BR-CE-001: affectedServiceIds must be set first
+
+    Status = ASSESSMENT  (CE_WORKER)
+      [Set Complexity]    PATCH complexity (for NORMAL changes — BR-CE-002)
+      [Build Plan]        → move to PLANNING when implementationPlan set
+      POST /ops/changes/:id/plan → PLANNING
+      Requires: implementationPlan, technicalOwnerTasksJson, complexity (NORMAL)
+
+    Status = PLANNING  (CE_LEADER)
+      [Approve]     POST /ops/changes/:id/approve → APPROVED
+                    SIMPLE: CE_LEADER alone
+                    MEDIUM: CE_LEADER + approvalNotes referencing PO
+                    COMPLEX: Change Board session required (BR-CE-003)
+      [Reject]      POST /ops/changes/:id/reject → REJECTED
+                    Requires: rejectionReason
+
+    Status = APPROVED  (CE_WORKER)
+      [Start Implementation]  POST /ops/changes/:id/implement → IMPLEMENTATION
+                              Notifies all Technical Owners
+
+    Status = IMPLEMENTATION  (CE_WORKER)
+      [Complete Verification] POST /ops/changes/:id/verify → VERIFICATION
+                              Requires: all Technical Owner tasks marked complete
+                              verificationNotes set
+
+    Status = VERIFICATION  (CE_WORKER)
+      [Close Change]    POST /ops/changes/:id/close → CLOSED
+                        Requires: catalogUpdatedAt set (BR-CE-004)
+                        Triggers: ServiceCatalogUpdated event
+                        Triggers: Demand → FULFILLED (if originDemandId)
+                        Triggers: Problem → CLOSED (if originProblemId)
+                        Sets: isEmergencyPostReviewDue = TRUE (if EMERGENCY)
+
+    TECHNICAL_OWNER actions (any IMPLEMENTATION change with tasks assigned to them)
+      [Mark Task Complete]  PATCH technicalOwnerTasksJson (task.status = DONE)
+                            Emits task completion event to CE Worker
+
+    CE_LEADER — Emergency path (any status)
+      [Declare Emergency]   Create new EMERGENCY change directly
+                            POST /ops/changes (type = EMERGENCY)
+                            Emits EmergencyChangeActivated
+      [Expedited Approve]   Skip ASSESSMENT and PLANNING
+                            POST /ops/changes/:id/approve directly from REQUESTED
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-004  Service Configuration Management
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu.
+
+  Purpose
+    CI state management and Technical Ownership governance.
+    This screen bridges Change Management and the uSeC catalog —
+    it reflects the technical truth of the service landscape.
+
+  Roles
+    CE_WORKER / CE_LEADER     — full view, oversight
+    TECHNICAL_OWNER           — own CIs only (scoped by ServiceChapter)
+
+  Data
+    [Service]           All services in usms_catalog
+    [ServiceDependency] Full dependency graph
+    [Change]            Recent changes affecting each service (last 5)
+
+  Sections
+
+    CI Registry
+      Table: Service name / Layer / Chapter / Technical Owner /
+             Last change date / CI status (current state description)
+      Filter by: Chapter / Layer / Technical Owner / Status keyword
+      [View CI Detail] → side panel (see below)
+
+    CI Detail Panel
+      Service full record from usms_catalog (read-only — catalog source of truth)
+      Current state fields maintained by Technical Owner:
+        ciStateDescription — "what is the current runtime state of this CI?"
+        lastVerifiedAt — when Technical Owner last confirmed state
+        versionOrBuildRef — current version/build reference
+        notes — any operational notes
+      Recent changes: last 5 Change records affecting this service
+      Dependency tree (upstream and downstream)
+
+    Technical Ownership Map
+      Per ServiceChapter: Technical Owner name / assigned CI count / last activity
+      [Reassign Technical Owner] (CE_LEADER only) → triggers TechnicalOwnerAssigned event
+
+  Actions
+
+    TECHNICAL_OWNER (own CIs — scoped by ServiceChapter role)
+      [Update CI State]   PATCH CI state fields (ciStateDescription, lastVerifiedAt, etc.)
+                          Emits: CiUpdated
+      [Flag CI Issue]     Opens incident pre-filled with CI context → WS-03-002 equivalent
+
+    CE_WORKER / CE_LEADER
+      [Register New CI]   Creates new CI entry post-Change close (BR-CE-004 flow)
+                          Emits: CiRegistered
+      [Retire CI]         Sets CI status to retired post-Change close
+                          Emits: CiRetired
+      [Update Dependency] Adds or removes ServiceDependency records
+                          Layer direction validation enforced (BR-DEP-001)
+                          Emits: CiDependencyUpdated
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-005  Change Board View  (CE_LEADER, Complex Changes)
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from CE_LEADER dashboard, or from Change Work Surface
+    when complexity = COMPLEX.
+
+  Purpose
+    Structured Change Board session view. Aggregates all COMPLEX changes
+    requiring board approval. Supports facilitated review.
+
+  Data
+    [Change]   All changes with complexity = COMPLEX and status = PLANNING
+
+  Per Change Card
+    Change title / Originator / CE Worker / Affected services (count and list)
+    Implementation plan summary / Risk level / Technical Owners involved
+    [Open Full Detail] → WS-06-003
+    [Approve] / [Request Revision] / [Reject]
+
+  Board Session Notes
+    Free-text field: approvalNotes — shared across board participants.
+    Saved to Change record on board approval.
+
+────────────────────────────────────────────────────────────────────────────────
+WS-06-006  CE Analytics
+────────────────────────────────────────────────────────────────────────────────
+
+  Trigger
+    Navigation from top menu (CE_LEADER primary audience).
+
+  Purpose
+    Change throughput, quality, and governance health monitoring.
+
+  Panels
+    Change Throughput
+      Changes opened / closed per period.
+      Average lead time by type (STANDARD / NORMAL / EMERGENCY).
+
+    Complexity Distribution
+      SIMPLE / MEDIUM / COMPLEX ratio over time.
+      Trend: is complexity growing? (governance signal)
+
+    Change Origin Analysis
+      Breakdown: DEMAND-origin vs PROBLEM-origin vs STANDARD.
+      High PROBLEM-origin ratio → structural instability signal.
+
+    Emergency Change Rate
+      Emergency changes as % of total. Industry reference: <5%.
+      Post-review completion rate.
+
+    Technical Owner Activity
+      Per Technical Owner: tasks assigned / completed / average completion time.
+      Identifies overloaded or unresponsive Technical Owners.
+
+    Failed Changes
+      REJECTED changes with reason analysis.
+      "Why are changes being rejected?" → governance quality signal.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8. Cross-Workspace Elements
+────────────────────────────────────────────────────────────────────────────────
+
+8.1 Global Navigation
+
+  All authenticated users see:
+    Logo / product name
+    Workspace switcher (only workspaces for which they have a role)
+    Notification bell (real-time, role-scoped)
+    User profile / settings
+    AI Assistant entry point (when Stage ≥ AI Assistant)
+
+  Workspace switcher renders only entitled workspaces:
+    SERVICE_CUSTOMER     → WS-01
+    SCM_WORKER, CM_LEADER → WS-02
+    SERVICE_USER         → WS-03
+    SD_AGENT, SD_LEADER  → WS-04
+    PM_WORKER, PM_LEADER → WS-05
+    CE_WORKER, CE_LEADER, TECHNICAL_OWNER → WS-06
+    Users with multiple roles see multiple workspaces.
+
+8.2 Notification System
+
+  Notifications are emitted by the Event Bus and delivered to the
+  Experience Layer in real-time. Each notification is:
+    – role-scoped (only sent to relevant role)
+    – entity-linked (deep-link to the relevant screen)
+    – actionable (where possible: action button in notification itself)
+
+  Notification types by workspace:
+    WS-01: DemandQuoted, DemandFulfilled, SlaWarning, SlaBreached
+    WS-02: DemandCreated, DemandAccepted, SlaBreached, ChangeClosed
+    WS-03: IncidentAssigned, IncidentResolved, ServiceRequestFulfilled/Rejected
+    WS-04: IncidentCreated, SlaWarning, SlaBreached, KnownErrorWorkaroundInvalidated
+    WS-05: ProblemCreated, RootCauseIdentified, KnownErrorWorkaroundInvalidated
+    WS-06: ChangeRequested, ChangeApproved, EmergencyChangeActivated, TaskAssigned
+
+8.3 Search
+
+  Global search is scoped by role:
+    SERVICE_CUSTOMER  → own demands + entitled catalog
+    SERVICE_USER      → own incidents + requests + entitled catalog + KEDB
+    SD_AGENT          → incidents + requests + KEDB (full tenant)
+    PM_WORKER/LEADER  → problems + KEDB + incidents (read)
+    CE_WORKER/LEADER  → changes + services + CI registry (full tenant)
+
+  Search result types are labeled by entity type.
+  Deep-link to the relevant screen on click.
+
+8.4 AI Assistant (Stage: AI Assistant)
+
+  When the AI Assistant stage is active, a natural language interface
+  is available in the top navigation across all workspaces.
+
+  The AI Assistant:
+    – Translates intent into structured API calls
+    – Assists or redirects (never decides autonomously)
+    – Is role-scoped (can only surface and act on what the user is entitled to)
+
+  Example interactions by workspace:
+    WS-01: "What's the status of my demand for the new ERP module?"
+           → GET /ops/demands?title=ERP — summary response
+    WS-03: "My laptop won't connect to VPN since this morning."
+           → KEDB check → if no match: pre-fills WS-03-002 form
+    WS-04: "Show me all P1 incidents on IDENTITY_ACCESS services."
+           → GET /ops/incidents?priority=P1&chapter=IDENTITY_ACCESS
+    WS-06: "Which Technical Owners need to be involved if we change the SSO service?"
+           → GET /catalog/services?name=SSO + dependency tree analysis → list Technical Owners
+
+
+────────────────────────────────────────────────────────────────────────────────
+9. API Consumption Summary per Workspace
+────────────────────────────────────────────────────────────────────────────────
+
+  Workspace   Primary APIs Consumed
+  ─────────── ─────────────────────────────────────────────────────────────────
+  WS-01       GET  /ops/demands           (own scope)
+              GET  /catalog/services       (entitled)
+              GET  /catalog/offerings      (entitled)
+              GET  /ops/sla-events         (own scope)
+              POST /ops/demands            (submit demand)
+              POST /ops/demands/:id/accept
+              POST /ops/demands/:id/close
+
+  WS-02       GET/PATCH /ops/demands      (all tenant)
+              POST /ops/demands/:id/*      (all lifecycle)
+              POST /ops/changes            (create CR from demand)
+              GET  /catalog/services       (full catalog)
+              GET  /ops/sla-events         (all tenant)
+              GET  /ops/handovers          (CM_TO_CE type)
+
+  WS-03       GET  /ops/incidents         (own scope)
+              GET  /ops/requests          (own scope)
+              GET  /catalog/offerings     (entitled)
+              GET  /ops/known-errors      (entitled services)
+              POST /ops/incidents          (report incident)
+              POST /ops/requests           (submit request)
+              POST /ops/incidents/:id/close (confirm resolution)
+
+  WS-04       GET/PATCH /ops/incidents    (all tenant)
+              POST /ops/incidents/:id/*   (all lifecycle)
+              GET/PATCH /ops/requests     (all tenant)
+              POST /ops/requests/:id/*    (all lifecycle)
+              GET  /ops/known-errors      (all tenant)
+              PATCH /ops/known-errors/:id (flag workaround)
+              POST /ops/problems           (manual trigger)
+              GET  /catalog/services       (lookup)
+              GET  /catalog/entitlements   (verify)
+
+  WS-05       GET/PATCH /ops/problems     (all tenant)
+              POST /ops/problems/:id/*    (all lifecycle)
+              POST /ops/known-errors       (create KE)
+              PATCH /ops/known-errors/:id (manage KEDB)
+              POST /ops/changes            (create CR from PM)
+              GET  /ops/incidents         (read — linked incidents)
+              GET  /catalog/services      (composition context)
+              GET  /ops/handovers         (PM_TO_CE, PM_TO_SD_KE)
+
+  WS-06       GET/PATCH /ops/changes      (all tenant)
+              POST /ops/changes/:id/*     (all lifecycle)
+              GET  /catalog/services      (full catalog + dependencies)
+              GET  /catalog/dependencies  (composition tree)
+              PATCH /catalog/services/:id (update on Change close — BR-CE-004)
+              GET  /ops/demands           (origin context — read)
+              GET  /ops/problems          (origin context — read)
+              GET  /ops/handovers         (incoming to CE)
+              POST /ops/handovers/:id/acknowledge
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. Document References
+────────────────────────────────────────────────────────────────────────────────
+
+  Document                                     Role                          Version
+  ──────────────────────────────────────────── ──────────────────────────── ──────
+  uSMS Framework v1.1                          Process structure, functions,
+                                               roles, coupling model         1.1
+  uSMS Datamodel v1.0 (DAL-21)                 All entities, business rules,
+                                               API endpoints                 1.0
+  uSeC Datamodel v1.1 (DAL-19)                 Catalog entities, entitlement
+                                               resolution, SLA profiles      1.1
+  DAL-16 – ITSM Role Model                     Role definitions and RACI     1.0
+  DAL-20 – Experience Layer Architecture       Governing architecture
+                                               principles for all workspaces —
+  DAL-07 – Domain Events Architecture          Event inventory and Bus spec   —
+
+
+════════════════════════════════════════════════════════════════════════════════
+DAL-24 is complete.
+
+Six workspaces. Twenty-eight screens. Full functional space definitions
+and interaction models — from the Service Customer's demand portal to
+the CE Worker's service composition analysis surface.
+
+Every screen is backed by a named API endpoint.
+Every action is governed by a business rule.
+Every notification is driven by a domain event.
+
+uSMS Experience Specification (DAL-24)  ·  v1.0  ·  March 2026  ·  Hilmar Stock
+════════════════════════════════════════════════════════════════════════════════

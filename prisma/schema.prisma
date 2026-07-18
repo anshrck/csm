@@ -1,0 +1,272 @@
+// CereBree uSMS — Universal Service Management System
+// Prisma schema (SQLite)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   // SERVICE_CUSTOMER | SCM_WORKER | CM_LEADER | SERVICE_OWNER
+  orgNodeId    String?
+  avatarColor  String   @default("#0d9488")
+  title        String?  // job title for display
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orgNode            OrgNode?          @relation(fields: [orgNodeId], references: [id])
+  assignedDemands    Demand[]          @relation("ScmWorkerDemands")
+  submittedDemands   Demand[]          @relation("DemandSubmitter")
+  ceWorkerChanges    Change[]          @relation("CeWorkerChanges")
+  events             DemandEvent[]     @relation("DemandEventActor")
+  notifications      Notification[]
+
+  @@index([role])
+}
+
+model OrgNode {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // CUSTOMER_ORG | INTERNAL
+  parentId  String?
+  createdAt DateTime @default(now())
+
+  parent    OrgNode?  @relation("OrgNodeTree", fields: [parentId], references: [id])
+  children  OrgNode[] @relation("OrgNodeTree")
+  users     User[]
+  demands   Demand[]  @relation("DemandCustomer")
+}
+
+model Service {
+  id              String   @id @default(cuid())
+  name            String
+  description     String
+  domain          String   // INTERACTION | SUPPORT | DELIVERY | MANAGEMENT
+  chapter         String   // e.g. IDENTITY_ACCESS, COLLABORATION, END_USER_COMPUTE
+  layer           String   // BUSINESS | APPLICATION | PLATFORM | INFRASTRUCTURE
+  slaClass        String   // A | B | C | D
+  status          String   // ACTIVE | RETIRED | PLANNED
+  customerValue   String?
+  commodityType   String?  // UTILITY | DIFFERENTIATED | STRATEGIC
+  supportLevels   String?  // free text
+  serviceOwnerId  String
+  technicalOwnerId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  offerings    ServiceOffering[]
+  slaProfiles  SlaProfile[]
+  slaEvents    SlaEvent[]
+  problems     Problem[]
+
+  @@index([domain])
+  @@index([slaClass])
+  @@index([status])
+}
+
+model ServiceOffering {
+  id              String   @id @default(cuid())
+  serviceId       String
+  name            String
+  description     String
+  requestType     String   // ACCESS | INCIDENT | SERVICE_REQUEST | DEMAND
+  fulfillmentDays Int      @default(5)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  service      Service      @relation(fields: [serviceId], references: [id])
+  entitlements Entitlement[]
+
+  @@index([serviceId])
+}
+
+model SlaProfile {
+  id               String   @id @default(cuid())
+  serviceId        String
+  slaClass         String   // A | B | C | D
+  availabilityTarget Float  // e.g. 99.9
+  p1ResponseMins   Int
+  p1ResolutionMins Int
+  p2ResponseMins   Int
+  p2ResolutionMins Int
+  createdAt        DateTime @default(now())
+
+  service Service @relation(fields: [serviceId], references: [id])
+
+  @@index([serviceId])
+}
+
+model Entitlement {
+  id                String    @id @default(cuid())
+  orgNodeId         String
+  serviceOfferingId String
+  scope             String    // DIRECT | INHERITED
+  validUntil        DateTime?
+  createdAt         DateTime  @default(now())
+
+  offering ServiceOffering @relation(fields: [serviceOfferingId], references: [id])
+
+  @@index([orgNodeId])
+}
+
+model Demand {
+  id                    String    @id @default(cuid())
+  title                 String
+  description           String
+  businessJustification String?
+  desiredTimeline       String?
+  relatedServiceIds     String    // JSON array of service ids
+  serviceCustomerId     String    // OrgNode id of the customer
+  submittedById         String
+  assignedScmWorkerId   String?
+  status                String    // NEW | UNDER_REVIEW | QUOTED | ACCEPTED | IN_CHANGE | FULFILLED | CLOSED | REJECTED | REDIRECTED
+  estimatedEffortDays   Float?
+  estimatedCost         Float?
+  quoteNotes            String?
+  quoteApprovedByCmLeader Boolean @default(false)
+  quoteApprovedAt       DateTime?
+  commitmentNotes       String?
+  rejectionReason       String?
+  redirectedToOfferingId String?
+  changeRequestId       String?
+  quotedAt              DateTime?
+  acceptedAt            DateTime?
+  handedToCeAt          DateTime?
+  fulfilledAt           DateTime?
+  closedAt              DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  customer     OrgNode       @relation("DemandCustomer", fields: [serviceCustomerId], references: [id])
+  submitter    User          @relation("DemandSubmitter", fields: [submittedById], references: [id])
+  scmWorker    User?         @relation("ScmWorkerDemands", fields: [assignedScmWorkerId], references: [id])
+  events       DemandEvent[]
+  change       Change?       @relation("ChangeOriginDemand")
+  handovers    ProcessHandover[] @relation("HandoverDemand")
+
+  @@index([status])
+  @@index([serviceCustomerId])
+  @@index([assignedScmWorkerId])
+}
+
+model DemandEvent {
+  id        String   @id @default(cuid())
+  demandId  String
+  eventType String   // CREATED | REVIEW_STARTED | QUOTED | QUOTE_APPROVED | ACCEPTED | REJECTED | REDIRECTED | HANDED_TO_CE | FULFILLED | CLOSED | COMMENT
+  actorId   String?
+  actorName String
+  notes     String?
+  createdAt DateTime @default(now())
+
+  demand Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  actor  User?  @relation("DemandEventActor", fields: [actorId], references: [id])
+
+  @@index([demandId])
+}
+
+model SlaEvent {
+  id                String    @id @default(cuid())
+  serviceId         String
+  serviceCustomerId String?
+  eventType         String    // WARNING | BREACHED | CLOSED_IN_TIME
+  message           String
+  createdAt         DateTime  @default(now())
+  resolvedAt        DateTime?
+
+  service Service @relation(fields: [serviceId], references: [id])
+
+  @@index([serviceId])
+  @@index([eventType])
+}
+
+model Change {
+  id                       String    @id @default(cuid())
+  title                    String
+  type                     String    // STANDARD | NORMAL | EMERGENCY
+  status                   String    // REQUESTED | ASSESSMENT | PLANNING | APPROVED | IMPLEMENTATION | VERIFICATION | CLOSED | REJECTED
+  complexity               String?   // SIMPLE | MEDIUM | COMPLEX
+  originType               String    // DEMAND | PROBLEM | STANDARD
+  originDemandId           String?   @unique
+  originProblemId          String?
+  affectedServiceIds       String    // JSON array
+  implementationPlan       String?
+  technicalOwnerTasksJson  String    // JSON array of tasks
+  assignedCeWorkerId       String?
+  assignedCeLeaderId       String?
+  rejectionReason          String?
+  verificationNotes        String?
+  catalogUpdatedAt         DateTime?
+  isEmergencyPostReviewDue Boolean   @default(false)
+  postImplementationReview String?
+  approvalNotes            String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+  closedAt                 DateTime?
+
+  ceWorker      User?  @relation("CeWorkerChanges", fields: [assignedCeWorkerId], references: [id])
+  originDemand  Demand? @relation("ChangeOriginDemand", fields: [originDemandId], references: [id])
+  handovers     ProcessHandover[] @relation("HandoverChange")
+
+  @@index([status])
+  @@index([originDemandId])
+}
+
+model ProcessHandover {
+  id                String    @id @default(cuid())
+  type              String    // CM_TO_CE | PM_TO_CE | PM_TO_SD_KE | SD_TO_CE_STD
+  sourceDemandId    String?
+  sourceProblemId   String?
+  targetChangeId    String?
+  acknowledgedById  String?
+  acknowledgedAt    DateTime?
+  createdAt         DateTime  @default(now())
+
+  demand   Demand? @relation("HandoverDemand", fields: [sourceDemandId], references: [id])
+  change   Change? @relation("HandoverChange", fields: [targetChangeId], references: [id])
+
+  @@index([type])
+}
+
+model Problem {
+  id                    String    @id @default(cuid())
+  title                 String
+  serviceId             String
+  status                String    // NEW | UNDER_INVESTIGATION | ROOT_CAUSE_IDENTIFIED | DECISION | KNOWN_ERROR | LINKED_TO_CHANGE | CLOSED
+  decision              String?   // KNOWN_ERROR | CHANGE_REQUIRED | FURTHER_ANALYSIS
+  rootCauseDescription  String?
+  impactAssessment      String?
+  decisionRationale     String?
+  workaroundDescription String?
+  knownErrorId          String?
+  assignedPmWorkerId    String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  service Service @relation(fields: [serviceId], references: [id])
+
+  @@index([status])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // DemandQuoted | DemandFulfilled | DemandRejected | SlaWarning | SlaBreached | DemandAccepted | ChangeClosed | DemandCreated
+  title     String
+  message   String
+  entityRef String?  // e.g. demand:<id>
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+}
