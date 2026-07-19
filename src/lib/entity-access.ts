@@ -3,7 +3,7 @@
 // conversations, comments, attachments, surveys, audit views, or search results.
 
 import { db } from './db';
-import type { SessionUser } from './types';
+import type { ActorContext, SessionUser, Role } from './types';
 import { hasPermission } from './permissions';
 
 export type EntityType =
@@ -28,30 +28,29 @@ export type AccessAction = 'read' | 'write' | 'create';
  * Returns true if access is granted, false otherwise.
  */
 export async function canAccessEntity(
-  session: SessionUser,
+  sessionOrContext: (SessionUser & { actorContext?: ActorContext }) | ActorContext,
   entityType: EntityType,
   entityId: string,
   action: AccessAction = 'read',
 ): Promise<boolean> {
-  if (!session) return false;
+  if (!sessionOrContext) return false;
+  const actor = 'actorContext' in sessionOrContext && sessionOrContext.actorContext
+    ? sessionOrContext.actorContext
+    : sessionOrContext as ActorContext;
 
   // CM_LEADER: Scoped access based on managed scope or tenant permission
-  if (session.role === 'CM_LEADER') {
+  if (actor.roles && actor.roles.includes('CM_LEADER' as Role)) {
     if (entityType === 'DEMAND') {
-      const hasTenant = await hasPermission(session, 'demand.read.tenant');
+      const hasTenant = await hasPermission(actor, 'demand.read.tenant');
       if (hasTenant) return true;
     } else if (entityType === 'TICKET') {
-      const hasTenant = await hasPermission(session, 'ticket.read.tenant');
+      const hasTenant = await hasPermission(actor, 'ticket.read.tenant');
       if (hasTenant) return true;
-    } else {
-      return true;
     }
 
     // Check if there is a managed scope record for the leader
-    const hasAnyScope = await db.leaderManagedScope.count({
-      where: { leaderId: session.id },
-    }) > 0;
-    if (!hasAnyScope) return true; // unrestricted default
+    const hasAnyScope = actor.managedScopes && actor.managedScopes.length > 0;
+    if (!hasAnyScope) return false; // Default-deny on leaders without scope!
 
     // Fetch the customer org id of the entity (if any) and check if it's in scope
     let orgNodeId: string | null = null;
@@ -62,7 +61,7 @@ export async function canAccessEntity(
       const d = await db.demand.findUnique({ where: { id: entityId }, select: { serviceCustomerId: true } });
       orgNodeId = d?.serviceCustomerId ?? null;
     } else if (entityType === 'SLA_REPORT') {
-      const managedOrgIds = await getLeaderManagedOrgIds(session.id);
+      const managedOrgIds = await getLeaderManagedOrgIds(actor);
       const reportCustCount = await db.slaReportCustomer.count({
         where: {
           slaReportId: entityId,
@@ -73,13 +72,18 @@ export async function canAccessEntity(
     }
 
     if (orgNodeId) {
-      const count = await db.leaderManagedScope.count({
-        where: { leaderId: session.id, orgNodeId },
-      });
-      return count > 0;
+      return actor.managedScopes.some((ms) => ms.orgNodeId === orgNodeId);
     }
-    return true;
+    return false; // Default-deny on unmapped scope
   }
+
+  const roles = actor.roles || [];
+  const isCustomer = roles.includes('SERVICE_CUSTOMER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SERVICE_CUSTOMER');
+  const isWorker = roles.includes('SCM_WORKER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SCM_WORKER');
+  const isOwner = roles.includes('SERVICE_OWNER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SERVICE_OWNER');
+
+  const userId = actor.user ? actor.user.id : (sessionOrContext as SessionUser).id;
+  const orgNodeId = actor.user ? actor.user.orgNodeId : (sessionOrContext as SessionUser).orgNodeId;
 
   switch (entityType) {
     case 'TICKET': {
@@ -88,15 +92,15 @@ export async function canAccessEntity(
         select: { serviceCustomerId: true, assignedUserId: true, requesterId: true, serviceId: true },
       });
       if (!ticket) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
-        return ticket.serviceCustomerId === session.orgNodeId;
+      if (isCustomer) {
+        return ticket.serviceCustomerId === orgNodeId;
       }
-      if (session.role === 'SCM_WORKER') {
-        if (ticket.assignedUserId === session.id) return true;
-        return await isAssignedCustomer(session.id, ticket.serviceCustomerId);
+      if (isWorker) {
+        if (ticket.assignedUserId === userId) return true;
+        return await isAssignedCustomer(actor, ticket.serviceCustomerId);
       }
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, ticket.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, ticket.serviceId);
       }
       return false;
     }
@@ -107,19 +111,19 @@ export async function canAccessEntity(
         select: { serviceCustomerId: true, assignedScmWorkerId: true, submittedById: true, relatedServiceIds: true },
       });
       if (!demand) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
-        return demand.serviceCustomerId === session.orgNodeId;
+      if (isCustomer) {
+        return demand.serviceCustomerId === orgNodeId;
       }
-      if (session.role === 'SCM_WORKER') {
-        if (demand.assignedScmWorkerId === session.id) return true;
-        return await isAssignedCustomer(session.id, demand.serviceCustomerId);
+      if (isWorker) {
+        if (demand.assignedScmWorkerId === userId) return true;
+        return await isAssignedCustomer(actor, demand.serviceCustomerId);
       }
-      if (session.role === 'SERVICE_OWNER') {
+      if (isOwner) {
         // Owner can see demands that touch their services
         let svcIds: string[] = [];
         try { svcIds = JSON.parse(demand.relatedServiceIds || '[]'); } catch { /* empty */ }
         for (const sid of svcIds) {
-          if (await isOwnedService(session.id, sid)) return true;
+          if (await isOwnedService(actor, sid)) return true;
         }
         return false;
       }
@@ -132,35 +136,35 @@ export async function canAccessEntity(
         select: { affectedServiceIds: true, assignedCeWorkerId: true, originDemandId: true },
       });
       if (!change) return false;
-      if (session.role === 'SCM_WORKER') {
-        if (change.assignedCeWorkerId === session.id) return true;
+      if (isWorker) {
+        if (change.assignedCeWorkerId === userId) return true;
         // SCM can see changes originating from demands they handle
         if (change.originDemandId) {
           const demand = await db.demand.findUnique({
             where: { id: change.originDemandId },
             select: { assignedScmWorkerId: true, serviceCustomerId: true },
           });
-          if (demand?.assignedScmWorkerId === session.id) return true;
-          if (demand && await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+          if (demand?.assignedScmWorkerId === userId) return true;
+          if (demand && await isAssignedCustomer(actor, demand.serviceCustomerId)) return true;
         }
         return false;
       }
-      if (session.role === 'SERVICE_OWNER') {
+      if (isOwner) {
         let svcIds: string[] = [];
         try { svcIds = JSON.parse(change.affectedServiceIds || '[]'); } catch { /* empty */ }
         for (const sid of svcIds) {
-          if (await isOwnedService(session.id, sid)) return true;
+          if (await isOwnedService(actor, sid)) return true;
         }
         return false;
       }
-      if (session.role === 'SERVICE_CUSTOMER') {
+      if (isCustomer) {
         // Customers see changes via their demands
         if (change.originDemandId) {
           const demand = await db.demand.findUnique({
             where: { id: change.originDemandId },
             select: { serviceCustomerId: true },
           });
-          return demand?.serviceCustomerId === session.orgNodeId;
+          return demand?.serviceCustomerId === orgNodeId;
         }
         return false;
       }
@@ -173,16 +177,24 @@ export async function canAccessEntity(
         select: { serviceId: true },
       });
       if (!problem) return false;
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, problem.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, problem.serviceId);
       }
-      if (session.role === 'SCM_WORKER') {
+      if (isWorker) {
         const hasLinkedTicket = await db.ticket.count({
-          where: { assignedUserId: session.id, serviceId: problem.serviceId },
+          where: { assignedUserId: userId, serviceId: problem.serviceId },
         }) > 0;
         if (hasLinkedTicket) return true;
 
-        const customerOrgIds = await getAssignedCustomerOrgIds(session.id);
+        const hasLinkedDemand = await db.demand.count({
+          where: {
+            assignedScmWorkerId: userId,
+            relatedServiceIds: { contains: problem.serviceId },
+          },
+        }) > 0;
+        if (hasLinkedDemand) return true;
+
+        const customerOrgIds = await getAssignedCustomerOrgIds(actor);
         const hasEntitledCustomer = await db.entitlement.count({
           where: {
             orgNodeId: { in: customerOrgIds },
@@ -191,17 +203,9 @@ export async function canAccessEntity(
         }) > 0;
         if (hasEntitledCustomer) return true;
 
-        const hasLinkedDemand = await db.demand.count({
-          where: {
-            assignedScmWorkerId: session.id,
-            relatedServiceIds: { contains: problem.serviceId },
-          },
-        }) > 0;
-        if (hasLinkedDemand) return true;
-
         return false;
       }
-      if (session.role === 'SERVICE_CUSTOMER') return false; // problems are internal
+      if (isCustomer) return false; // problems are internal
       return false;
     }
 
@@ -211,22 +215,22 @@ export async function canAccessEntity(
         select: { serviceId: true, serviceCustomerId: true },
       });
       if (!evt) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
-        return evt.serviceCustomerId === session.orgNodeId;
+      if (isCustomer) {
+        return evt.serviceCustomerId === orgNodeId;
       }
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, evt.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, evt.serviceId);
       }
-      if (session.role === 'SCM_WORKER') {
-        if (evt.serviceCustomerId && await isAssignedCustomer(session.id, evt.serviceCustomerId)) return true;
+      if (isWorker) {
+        if (evt.serviceCustomerId && await isAssignedCustomer(actor, evt.serviceCustomerId)) return true;
         const hasTicket = await db.ticket.count({
-          where: { assignedUserId: session.id, serviceId: evt.serviceId },
+          where: { assignedUserId: userId, serviceId: evt.serviceId },
         }) > 0;
         if (hasTicket) return true;
 
         const hasDemand = await db.demand.count({
           where: {
-            assignedScmWorkerId: session.id,
+            assignedScmWorkerId: userId,
             relatedServiceIds: { contains: evt.serviceId },
           },
         }) > 0;
@@ -243,13 +247,13 @@ export async function canAccessEntity(
         select: { status: true, serviceId: true, authorId: true },
       });
       if (!article) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
+      if (isCustomer) {
         return article.status === 'PUBLISHED';
       }
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, article.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, article.serviceId);
       }
-      return true; // SCM, CM, Owner can see all article statuses
+      return true; // SCM, CM can see all article statuses
     }
 
     case 'SLA_REPORT': {
@@ -258,18 +262,17 @@ export async function canAccessEntity(
         select: { status: true, preparedById: true },
       });
       if (!report) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
+      if (isCustomer) {
         return report.status === 'ISSUED';
       }
-      if (session.role === 'SCM_WORKER') {
-        return report.preparedById === session.id;
+      if (isWorker) {
+        return report.preparedById === userId;
       }
-      if (session.role === 'SERVICE_OWNER') {
-        // Report touches owned services
+      if (isOwner) {
         const reportSvcCount = await db.slaReportService.count({
           where: {
             slaReportId: entityId,
-            service: { serviceOwnerId: session.id },
+            service: { serviceOwnerId: userId },
           },
         });
         return reportSvcCount > 0;
@@ -283,21 +286,21 @@ export async function canAccessEntity(
         select: { serviceId: true, demandId: true },
       });
       if (!decision) return false;
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, decision.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, decision.serviceId);
       }
-      if (session.role === 'SCM_WORKER') {
+      if (isWorker) {
         if (decision.demandId) {
           const demand = await db.demand.findUnique({
             where: { id: decision.demandId },
             select: { assignedScmWorkerId: true, serviceCustomerId: true },
           });
           if (demand) {
-            if (demand.assignedScmWorkerId === session.id) return true;
-            if (await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+            if (demand.assignedScmWorkerId === userId) return true;
+            if (await isAssignedCustomer(actor, demand.serviceCustomerId)) return true;
           }
         }
-        const customerOrgIds = await getAssignedCustomerOrgIds(session.id);
+        const customerOrgIds = await getAssignedCustomerOrgIds(actor);
         const hasEntitledCustomer = await db.entitlement.count({
           where: {
             orgNodeId: { in: customerOrgIds },
@@ -308,8 +311,7 @@ export async function canAccessEntity(
 
         return false;
       }
-      if (session.role === 'SERVICE_CUSTOMER') {
-        // Customers don't see internal governance decisions directly
+      if (isCustomer) {
         return false;
       }
       return false;
@@ -321,28 +323,27 @@ export async function canAccessEntity(
         select: { serviceCustomerId: true, demandId: true, authorId: true, direction: true, serviceId: true },
       });
       if (!comm) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
-        // External customer cannot see internal notes
+      if (isCustomer) {
         if (comm.direction === 'INTERNAL_NOTE') return false;
-        return comm.serviceCustomerId === session.orgNodeId;
+        return comm.serviceCustomerId === orgNodeId;
       }
-      if (session.role === 'SCM_WORKER') {
-        if (comm.authorId === session.id) return true;
-        if (comm.serviceCustomerId && await isAssignedCustomer(session.id, comm.serviceCustomerId)) return true;
+      if (isWorker) {
+        if (comm.authorId === userId) return true;
+        if (comm.serviceCustomerId && await isAssignedCustomer(actor, comm.serviceCustomerId)) return true;
         if (comm.demandId) {
           const demand = await db.demand.findUnique({
             where: { id: comm.demandId },
             select: { assignedScmWorkerId: true, serviceCustomerId: true },
           });
           if (demand) {
-            if (demand.assignedScmWorkerId === session.id) return true;
-            if (await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+            if (demand.assignedScmWorkerId === userId) return true;
+            if (await isAssignedCustomer(actor, demand.serviceCustomerId)) return true;
           }
         }
         return false;
       }
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, comm.serviceId);
+      if (isOwner) {
+        return await isOwnedService(actor, comm.serviceId);
       }
       return true;
     }
@@ -352,13 +353,13 @@ export async function canAccessEntity(
         where: { id: entityId },
       });
       if (!service) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
+      if (isCustomer) {
         return service.status === 'ACTIVE' || service.status === 'PLANNED';
       }
-      if (session.role === 'SERVICE_OWNER') {
-        return await isOwnedService(session.id, entityId);
+      if (isOwner) {
+        return await isOwnedService(actor, entityId);
       }
-      return true; // SCM_WORKER, CM_LEADER can read all services
+      return true; // SCM_WORKER can read all services
     }
 
     case 'SERVICE_OFFERING': {
@@ -367,7 +368,7 @@ export async function canAccessEntity(
         select: { serviceId: true },
       });
       if (!offering) return false;
-      return await canAccessEntity(session, 'SERVICE', offering.serviceId, action);
+      return await canAccessEntity(actor, 'SERVICE', offering.serviceId, action);
     }
 
     case 'AUDIT_LOG': {
@@ -375,10 +376,9 @@ export async function canAccessEntity(
         where: { id: entityId },
       });
       if (!log) return false;
-      // Audit records are visible if the user can access the underlying entity
       const underlyingType = log.entityType.toUpperCase() as EntityType;
       try {
-        return await canAccessEntity(session, underlyingType, log.entityId, 'read');
+        return await canAccessEntity(actor, underlyingType, log.entityId, 'read');
       } catch {
         return false;
       }
@@ -389,11 +389,11 @@ export async function canAccessEntity(
         where: { id: entityId },
       });
       if (!assignment) return false;
-      if (session.role === 'SERVICE_CUSTOMER') {
-        return assignment.orgNodeId === session.orgNodeId;
+      if (isCustomer) {
+        return assignment.orgNodeId === orgNodeId;
       }
-      if (session.role === 'SCM_WORKER') {
-        return assignment.userId === session.id;
+      if (isWorker) {
+        return assignment.userId === userId;
       }
       return true; // CM_LEADER, SERVICE_OWNER
     }
@@ -404,8 +404,28 @@ export async function canAccessEntity(
 }
 
 /** Helper: check if a user is assigned to a customer org (SCM scoping). */
-export async function isAssignedCustomer(userId: string, orgNodeId: string | null): Promise<boolean> {
+export async function isAssignedCustomer(
+  sessionOrContextOrId: (SessionUser & { actorContext?: ActorContext }) | ActorContext | string,
+  orgNodeId: string | null
+): Promise<boolean> {
   if (!orgNodeId) return false;
+
+  if (typeof sessionOrContextOrId === 'string') {
+    const count = await db.customerAssignment.count({
+      where: { userId: sessionOrContextOrId, orgNodeId, active: true },
+    });
+    return count > 0;
+  }
+
+  const actor = 'actorContext' in sessionOrContextOrId && sessionOrContextOrId.actorContext
+    ? sessionOrContextOrId.actorContext
+    : sessionOrContextOrId as ActorContext;
+
+  if (actor.customerAssignments) {
+    return actor.customerAssignments.some((ca) => ca.orgNodeId === orgNodeId && ca.active);
+  }
+
+  const userId = actor.user ? actor.user.id : (sessionOrContextOrId as SessionUser).id;
   const count = await db.customerAssignment.count({
     where: { userId, orgNodeId, active: true },
   });
@@ -413,8 +433,40 @@ export async function isAssignedCustomer(userId: string, orgNodeId: string | nul
 }
 
 /** Helper: check if a user owns a service. */
-export async function isOwnedService(userId: string, serviceId: string | null): Promise<boolean> {
+export async function isOwnedService(
+  sessionOrContextOrId: (SessionUser & { actorContext?: ActorContext }) | ActorContext | string,
+  serviceId: string | null
+): Promise<boolean> {
   if (!serviceId) return false;
+
+  if (typeof sessionOrContextOrId === 'string') {
+    const service = await db.service.findUnique({
+      where: { id: serviceId },
+      select: { serviceOwnerId: true },
+    });
+    if (service?.serviceOwnerId === sessionOrContextOrId) return true;
+
+    const now = new Date();
+    const count = await db.serviceOwnershipAssignment.count({
+      where: {
+        serviceId,
+        userId: sessionOrContextOrId,
+        status: 'ACCEPTED',
+        validFrom: { lte: now },
+        OR: [
+          { validUntil: null },
+          { validUntil: { gte: now } },
+        ],
+      },
+    });
+    return count > 0;
+  }
+
+  const actor = 'actorContext' in sessionOrContextOrId && sessionOrContextOrId.actorContext
+    ? sessionOrContextOrId.actorContext
+    : sessionOrContextOrId as ActorContext;
+
+  const userId = actor.user ? actor.user.id : (sessionOrContextOrId as SessionUser).id;
 
   // 1. Direct Service Owner Check
   const service = await db.service.findUnique({
@@ -424,26 +476,47 @@ export async function isOwnedService(userId: string, serviceId: string | null): 
   if (service?.serviceOwnerId === userId) return true;
 
   // 2. Active ServiceOwnershipAssignment check (PRIMARY | DELEGATE | BACKUP)
+  if (actor.serviceOwnerships) {
+    return actor.serviceOwnerships.some((oa) => oa.serviceId === serviceId && oa.status === 'ACCEPTED');
+  }
+
   const now = new Date();
-  const assignments = await db.serviceOwnershipAssignment.findMany({
+  const count = await db.serviceOwnershipAssignment.count({
     where: {
       serviceId,
       userId,
       status: 'ACCEPTED',
+      validFrom: { lte: now },
+      OR: [
+        { validUntil: null },
+        { validUntil: { gte: now } },
+      ],
     },
   });
-
-  const active = assignments.find((a) => {
-    const fromOk = a.validFrom <= now;
-    const untilOk = a.validUntil === null || a.validUntil >= now;
-    return fromOk && untilOk;
-  });
-
-  return !!active;
+  return count > 0;
 }
 
 /** Get the list of customer org IDs assigned to an SCM worker. */
-export async function getAssignedCustomerOrgIds(userId: string): Promise<string[]> {
+export async function getAssignedCustomerOrgIds(
+  sessionOrContextOrId: (SessionUser & { actorContext?: ActorContext }) | ActorContext | string
+): Promise<string[]> {
+  if (typeof sessionOrContextOrId === 'string') {
+    const assignments = await db.customerAssignment.findMany({
+      where: { userId: sessionOrContextOrId, active: true },
+      select: { orgNodeId: true },
+    });
+    return assignments.map((a) => a.orgNodeId);
+  }
+
+  const actor = 'actorContext' in sessionOrContextOrId && sessionOrContextOrId.actorContext
+    ? sessionOrContextOrId.actorContext
+    : sessionOrContextOrId as ActorContext;
+
+  if (actor.customerAssignments) {
+    return actor.customerAssignments.map((a) => a.orgNodeId);
+  }
+
+  const userId = actor.user ? actor.user.id : (sessionOrContextOrId as SessionUser).id;
   const assignments = await db.customerAssignment.findMany({
     where: { userId, active: true },
     select: { orgNodeId: true },
@@ -452,7 +525,26 @@ export async function getAssignedCustomerOrgIds(userId: string): Promise<string[
 }
 
 /** Get the list of customer org IDs managed by a CM leader. */
-export async function getLeaderManagedOrgIds(leaderId: string): Promise<string[]> {
+export async function getLeaderManagedOrgIds(
+  sessionOrContextOrId: (SessionUser & { actorContext?: ActorContext }) | ActorContext | string
+): Promise<string[]> {
+  if (typeof sessionOrContextOrId === 'string') {
+    const scopes = await db.leaderManagedScope.findMany({
+      where: { leaderId: sessionOrContextOrId },
+      select: { orgNodeId: true },
+    });
+    return scopes.map((s) => s.orgNodeId).filter((id): id is string => id !== null);
+  }
+
+  const actor = 'actorContext' in sessionOrContextOrId && sessionOrContextOrId.actorContext
+    ? sessionOrContextOrId.actorContext
+    : sessionOrContextOrId as ActorContext;
+
+  if (actor.managedScopes) {
+    return actor.managedScopes.map((s) => s.orgNodeId).filter((id): id is string => id !== null);
+  }
+
+  const leaderId = actor.user ? actor.user.id : (sessionOrContextOrId as SessionUser).id;
   const scopes = await db.leaderManagedScope.findMany({
     where: { leaderId },
     select: { orgNodeId: true },
@@ -462,11 +554,11 @@ export async function getLeaderManagedOrgIds(leaderId: string): Promise<string[]
 
 /** Require entity access — throws FORBIDDEN if denied. */
 export async function requireEntityAccess(
-  session: SessionUser,
+  sessionOrContext: (SessionUser & { actorContext?: ActorContext }) | ActorContext,
   entityType: EntityType,
   entityId: string,
   action: AccessAction = 'read',
 ): Promise<void> {
-  const ok = await canAccessEntity(session, entityType, entityId, action);
+  const ok = await canAccessEntity(sessionOrContext, entityType, entityId, action);
   if (!ok) throw new Error('FORBIDDEN');
 }

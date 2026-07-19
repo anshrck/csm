@@ -1,7 +1,6 @@
 // Centralized permission + audit helpers for CereBree uSMS
 import { db } from './db';
-import { getSession } from './auth';
-import type { Role, SessionUser } from './types';
+import type { Role, SessionUser, ActorContext, AuthDecision } from './types';
 import { canAccessEntity } from './entity-access';
 
 export type Resource =
@@ -46,77 +45,19 @@ export type Scope =
   | 'OWNED_SERVICES'
   | 'TENANT';
 
-// Permission cache (in-memory, per server instance)
-let permissionCache: Record<string, Set<string>> | null = null;
-
-async function loadPermissions(): Promise<Record<string, Set<string>>> {
-  if (permissionCache) return permissionCache;
-  const rows = await db.rolePermission.findMany({ include: { permission: true } });
-  const map: Record<string, Set<string>> = {};
-  for (const rp of rows) {
-    if (!map[rp.role]) map[rp.role] = new Set();
-    map[rp.role].add(rp.permission.key);
-  }
-  permissionCache = map;
-  return map;
-}
-
-/** Invalidate the permission cache (call after permission changes). */
-export function invalidatePermissionCache() {
-  permissionCache = null;
-}
-
-/** Ensure the caller has the given permission key. Returns the session or throws UNAUTHORIZED/FORBIDDEN. */
-export async function requirePermission(key: string): Promise<SessionUser> {
-  const session = await getSession();
-  if (!session) throw new Error('UNAUTHORIZED');
-  const has = await hasPermission(session, key);
-  if (!has) {
-    throw new Error('FORBIDDEN');
-  }
-  return session;
-}
-
-/** Ensure the caller has ANY of the given permission keys. */
-export async function requireAnyPermission(...keys: string[]): Promise<SessionUser> {
-  const session = await getSession();
-  if (!session) throw new Error('UNAUTHORIZED');
-  for (const key of keys) {
-    if (await hasPermission(session, key)) return session;
-  }
-  throw new Error('FORBIDDEN');
-}
-
 /** Check (non-throwing) whether the caller has a permission. */
-export async function hasPermission(session: SessionUser | null, key: string): Promise<boolean> {
-  if (!session) return false;
+export async function hasPermission(actor: ActorContext | null, key: string): Promise<boolean> {
+  if (!actor) return false;
 
-  // 1. Evaluate custom AccessGrants (DENY > ALLOW > baseline)
-  const now = new Date();
-  const grants = await db.accessGrant.findMany({
-    where: {
-      userId: session.id,
-      permission: { key },
-    },
-    include: { permission: true },
-  });
+  // 1. Evaluate custom AccessGrants pre-resolved in actor context (DENY > ALLOW)
+  const denyGrant = actor.grants.find((g) => g.permissionKey === key && g.effect === 'DENY');
+  if (denyGrant) return false;
 
-  const activeGrants = grants.filter((g) => {
-    const fromOk = g.validFrom <= now;
-    const untilOk = g.validUntil === null || g.validUntil >= now;
-    return fromOk && untilOk;
-  });
+  const allowGrant = actor.grants.find((g) => g.permissionKey === key && g.effect === 'ALLOW');
+  if (allowGrant) return true;
 
-  const denyGrant = activeGrants.find((g) => g.effect === 'DENY');
-  if (denyGrant) return false; // DENY wins
-
-  const allowGrant = activeGrants.find((g) => g.effect === 'ALLOW');
-  if (allowGrant) return true; // ALLOW wins
-
-  // 2. Fall back to role-based baseline
-  const perms = await loadPermissions();
-  const rolePerms = perms[session.role];
-  return !!rolePerms && rolePerms.has(key);
+  // 2. Fall back to baseline pre-resolved permissions
+  return actor.permissions.has(key);
 }
 
 /**
@@ -154,9 +95,6 @@ export function getRequiredPermission(resource: Resource, action: Action, role: 
     if (resource === 'communication') {
       if (action === 'read') return 'communication.read.customer_visible';
       if (action === 'create') return 'communication.create.customer';
-    }
-    if (resource === 'audit') {
-      if (action === 'read') return 'attachment.read.customer_visible';
     }
   }
 
@@ -265,7 +203,7 @@ export function getRequiredPermission(resource: Resource, action: Action, role: 
  *   5. Protected fields not modified
  */
 export async function authorize(
-  session: SessionUser | null,
+  sessionOrContext: (SessionUser & { actorContext: ActorContext }) | ActorContext | null,
   params: {
     resource: Resource;
     action: Action;
@@ -274,18 +212,67 @@ export async function authorize(
     workflowState?: string;
     reason?: string;
   }
-): Promise<boolean> {
+): Promise<AuthDecision> {
   // 1. Authenticated check
-  if (!session) return false;
+  if (!sessionOrContext) {
+    return { allowed: false, denialReason: 'User is not authenticated' };
+  }
 
-  // 2. Permission granted check
-  const permKey = getRequiredPermission(params.resource, params.action, session.role);
-  if (!permKey) return false; // Default result is DENY
+  const actor = 'actorContext' in sessionOrContext ? sessionOrContext.actorContext : sessionOrContext;
 
-  const hasPerm = await hasPermission(session, permKey);
+  if (actor.roles.length === 0) {
+    return { allowed: false, denialReason: 'User has no active valid role assignments' };
+  }
+
+  // 2. Permission granted check — support multi-role evaluation
+  let permKey: string | null = null;
+  let activeRole: Role | null = null;
+  for (const role of actor.roles) {
+    const k = getRequiredPermission(params.resource, params.action, role);
+    if (k) {
+      permKey = k;
+      activeRole = role;
+      break;
+    }
+  }
+
+  if (!permKey) {
+    return {
+      allowed: false,
+      denialReason: `No permission mapping found for action ${params.action} on ${params.resource}`,
+    };
+  }
+
+  // Fix tenant-read privilege escalation: *.read.tenant must authorize ONLY read actions
+  if (permKey.endsWith('.read.tenant') && params.action !== 'read') {
+    return {
+      allowed: false,
+      permission: permKey,
+      denialReason: `Tenant-read permission ${permKey} cannot authorize non-read action ${params.action}`,
+    };
+  }
+
+  const isExplicitDenied = actor.grants.some((g) => g.permissionKey === permKey && g.effect === 'DENY');
+  if (isExplicitDenied) {
+    return {
+      allowed: false,
+      permission: permKey,
+      denialReason: 'Explicit DENY grant overrides baseline',
+    };
+  }
+
+  const hasPerm = await hasPermission(actor, permKey);
   // Support tenant-wide override permissions for CM_LEADER and SERVICE_OWNER
-  const hasTenantPerm = await hasPermission(session, `${params.resource}.read.tenant`);
-  if (!hasPerm && !hasTenantPerm) return false;
+  const tenantKey = `${params.resource}.read.tenant`;
+  const hasTenantPerm = (params.action === 'read') && await hasPermission(actor, tenantKey);
+
+  if (!hasPerm && !hasTenantPerm) {
+    return {
+      allowed: false,
+      permission: permKey,
+      denialReason: `Missing required permission key ${permKey}`,
+    };
+  }
 
   // 3. Record in scope check (delegated to canAccessEntity)
   if (params.recordId) {
@@ -318,8 +305,15 @@ export async function authorize(
              params.action === 'reject')
           ? 'write'
           : 'read';
-      const ok = await canAccessEntity(session, entityType, params.recordId, accessAction);
-      if (!ok) return false;
+      const ok = await canAccessEntity(actor, entityType, params.recordId, accessAction);
+      if (!ok) {
+        return {
+          allowed: false,
+          permission: permKey,
+          scopeSource: 'RECORD_SCOPE',
+          denialReason: `Record ${params.recordId} is out of permitted scope for this action`,
+        };
+      }
     }
   }
 
@@ -327,23 +321,20 @@ export async function authorize(
   if (params.recordId) {
     if (params.resource === 'demand' && params.action === 'approve') {
       const demand = await db.demand.findUnique({ where: { id: params.recordId } });
-      if (demand && demand.assignedScmWorkerId === session.id) {
-        // Quote creator cannot approve the same quote
-        return false;
+      if (demand && demand.assignedScmWorkerId === actor.user.id) {
+        return { allowed: false, permission: permKey, denialReason: 'Quote creator cannot approve the same quote' };
       }
     }
     if (params.resource === 'sla_report' && params.action === 'approve') {
       const report = await db.slaReport.findUnique({ where: { id: params.recordId } });
-      if (report && report.preparedById === session.id) {
-        // SLA report preparer cannot approve the same report
-        return false;
+      if (report && report.preparedById === actor.user.id) {
+        return { allowed: false, permission: permKey, denialReason: 'SLA report preparer cannot approve the same report' };
       }
     }
     if (params.resource === 'change' && params.action === 'approve') {
       const change = await db.change.findUnique({ where: { id: params.recordId } });
-      if (change && change.assignedCeWorkerId === session.id) {
-        // Change requester/planner cannot be sole approver
-        return false;
+      if (change && change.assignedCeWorkerId === actor.user.id) {
+        return { allowed: false, permission: permKey, denialReason: 'Change requester/planner cannot be sole approver' };
       }
     }
   }
@@ -354,41 +345,47 @@ export async function authorize(
     if (params.resource === 'demand') {
       const targetStatus = params.requestedChanges?.status;
       if (targetStatus && targetStatus !== state) {
-        // Enforce state transition checks
-        if (session.role === 'SERVICE_CUSTOMER') {
-          // Customer transitions
+        if (activeRole === 'SERVICE_CUSTOMER') {
           const allowed =
             (state === 'NEW' && targetStatus === 'CLOSED') ||
             (state === 'QUOTED' && (targetStatus === 'ACCEPTED' || targetStatus === 'REJECTED')) ||
-            (state === 'FULFILLED' && (targetStatus === 'CLOSED' || targetStatus === 'UNDER_REVIEW')); // reopening
-          if (!allowed) return false;
-        } else if (session.role === 'SCM_WORKER') {
-          // SCM Worker transitions
+            (state === 'FULFILLED' && (targetStatus === 'CLOSED' || targetStatus === 'UNDER_REVIEW'));
+          if (!allowed) {
+            return { allowed: false, permission: permKey, denialReason: `Invalid state transition from ${state} to ${targetStatus}` };
+          }
+        } else if (activeRole === 'SCM_WORKER') {
           const allowed =
             (state === 'NEW' && targetStatus === 'UNDER_REVIEW') ||
             (state === 'UNDER_REVIEW' && targetStatus === 'QUOTED') ||
             (state === 'ACCEPTED' && targetStatus === 'IN_CHANGE') ||
             (state === 'IN_CHANGE' && targetStatus === 'FULFILLED');
-          if (!allowed) return false;
-        } else if (session.role === 'CM_LEADER') {
-          // CM Leader can override with a reason
-          if (!params.reason) return false;
+          if (!allowed) {
+            return { allowed: false, permission: permKey, denialReason: `Invalid state transition from ${state} to ${targetStatus}` };
+          }
+        } else if (activeRole === 'CM_LEADER') {
+          if (!params.reason) {
+            return { allowed: false, permission: permKey, denialReason: 'CM Leader override transitions require a mandatory reason' };
+          }
         }
       }
     } else if (params.resource === 'ticket') {
       const targetStatus = params.requestedChanges?.status;
       if (targetStatus && targetStatus !== state) {
-        if (session.role === 'SERVICE_CUSTOMER') {
+        if (activeRole === 'SERVICE_CUSTOMER') {
           const allowed =
             (state === 'RESOLVED' && targetStatus === 'CLOSED') ||
             ((state === 'RESOLVED' || state === 'CLOSED') && targetStatus === 'IN_PROGRESS');
-          if (!allowed) return false;
-        } else if (session.role === 'SCM_WORKER') {
+          if (!allowed) {
+            return { allowed: false, permission: permKey, denialReason: `Invalid state transition from ${state} to ${targetStatus}` };
+          }
+        } else if (activeRole === 'SCM_WORKER') {
           const allowed =
             (state === 'NEW' && targetStatus === 'TRIAGED') ||
             ((state === 'TRIAGED' || state === 'ASSIGNED' || state === 'WAITING_CUSTOMER') && targetStatus === 'IN_PROGRESS') ||
             (state === 'IN_PROGRESS' && (targetStatus === 'WAITING_CUSTOMER' || targetStatus === 'RESOLVED'));
-          if (!allowed) return false;
+          if (!allowed) {
+            return { allowed: false, permission: permKey, denialReason: `Invalid state transition from ${state} to ${targetStatus}` };
+          }
         }
       }
     } else if (params.resource === 'change') {
@@ -402,7 +399,9 @@ export async function authorize(
           (state === 'IMPLEMENTATION' && targetStatus === 'VERIFICATION') ||
           (state === 'VERIFICATION' && targetStatus === 'CLOSED') ||
           (targetStatus === 'REJECTED');
-        if (!allowed) return false;
+        if (!allowed) {
+          return { allowed: false, permission: permKey, denialReason: `Invalid state transition from ${state} to ${targetStatus}` };
+        }
       }
     }
   }
@@ -410,7 +409,7 @@ export async function authorize(
   // 5. Protected fields check
   if (params.requestedChanges) {
     const changes = Object.keys(params.requestedChanges);
-    if (session.role === 'SERVICE_CUSTOMER') {
+    if (activeRole === 'SERVICE_CUSTOMER') {
       const forbidden = [
         'assignedScmWorkerId',
         'assignedUserId',
@@ -428,26 +427,34 @@ export async function authorize(
         'auditMetadata',
         'resolutionTimestamps',
       ];
-      if (changes.some((c) => forbidden.includes(c))) return false;
+      if (changes.some((c) => forbidden.includes(c))) {
+        return { allowed: false, permission: permKey, denialReason: 'Customer is not allowed to modify protected fields' };
+      }
     }
-    if (session.role === 'SCM_WORKER') {
+    if (activeRole === 'SCM_WORKER') {
       const forbidden = [
         'serviceOwnerId',
         'technicalOwnerId',
         'lifecycleStage',
-        'status', // of service
+        'status',
       ];
-      if (changes.some((c) => forbidden.includes(c))) return false;
+      if (changes.some((c) => forbidden.includes(c))) {
+        return { allowed: false, permission: permKey, denialReason: 'SCM Worker is not allowed to modify protected fields' };
+      }
     }
   }
 
-  return true;
+  return {
+    allowed: true,
+    permission: permKey,
+  };
 }
 
 /**
  * Shared API helper to authorize an action or throw.
  */
 export async function requireAuthorizedAction(
+  sessionOrContext: (SessionUser & { actorContext: ActorContext }) | ActorContext | null,
   params: {
     resource: Resource;
     action: Action;
@@ -456,14 +463,16 @@ export async function requireAuthorizedAction(
     workflowState?: string;
     reason?: string;
   }
-): Promise<SessionUser> {
-  const session = await getSession();
-  if (!session) throw new Error('UNAUTHORIZED');
+): Promise<ActorContext> {
+  if (!sessionOrContext) throw new Error('UNAUTHORIZED');
+  const actor = 'actorContext' in sessionOrContext ? sessionOrContext.actorContext : sessionOrContext;
 
-  const ok = await authorize(session, params);
-  if (!ok) throw new Error('FORBIDDEN');
+  const decision = await authorize(actor, params);
+  if (!decision.allowed) {
+    throw new Error(`FORBIDDEN: ${decision.denialReason ?? 'Access denied'}`);
+  }
 
-  return session;
+  return actor;
 }
 
 /** Default permission set per role (used by seed to populate the Permission/RolePermission tables). */

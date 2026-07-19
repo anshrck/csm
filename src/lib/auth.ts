@@ -1,7 +1,7 @@
 import { createHmac, scryptSync, randomBytes, timingSafeEqual } from 'crypto';
 import { cookies } from 'next/headers';
 import { db } from './db';
-import type { Role, SessionUser } from './types';
+import type { Role, SessionUser, ActorContext } from './types';
 
 // ---- Session secret ----
 //
@@ -135,7 +135,123 @@ export async function destroySession(): Promise<void> {
   store.delete(COOKIE_NAME);
 }
 
-export async function getSession(): Promise<SessionUser | null> {
+export async function resolveActorContext(userId: string): Promise<ActorContext | null> {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    include: {
+      orgNode: true,
+      roleAssignments: true,
+      accessGrants: { include: { permission: true } },
+      teamMemberships: true,
+      queueMemberships: true,
+      customerAssignments: true,
+      ownershipAssignments: true,
+    },
+  });
+  if (!user) return null;
+
+  const now = new Date();
+
+  // 1. Enforce active role assignments validity
+  const activeRoleAssignments = user.roleAssignments.filter((ra) => {
+    const isActive = ra.status === 'ACTIVE';
+    const isValidFrom = ra.validFrom <= now;
+    const isValidUntil = ra.validUntil === null || ra.validUntil >= now;
+    return isActive && isValidFrom && isValidUntil;
+  });
+
+  const roles = Array.from(new Set(activeRoleAssignments.map((ra) => ra.roleId as Role)));
+
+  // Load baseline permissions
+  const perms = await db.rolePermission.findMany({
+    where: { role: { in: roles } },
+    include: { permission: true },
+  });
+  const permissionsSet = new Set(perms.map((p) => p.permission.key));
+
+  // 2. Enforce active AccessGrants validity
+  const activeGrants = user.accessGrants.filter((ag) => {
+    const isValidFrom = ag.validFrom <= now;
+    const isValidUntil = ag.validUntil === null || ag.validUntil >= now;
+    return isValidFrom && isValidUntil;
+  }).map((ag) => ({
+    permissionId: ag.permissionId,
+    permissionKey: ag.permission.key,
+    scopeType: ag.scopeType,
+    scopeId: ag.scopeId,
+    effect: ag.effect,
+    validFrom: ag.validFrom,
+    validUntil: ag.validUntil,
+  }));
+
+  // 3. Enforce active LeaderManagedScopes
+  const managedScopes = await db.leaderManagedScope.findMany({
+    where: { leaderId: userId },
+  });
+
+  // 4. Enforce active CustomerAssignments validity
+  const activeCustomerAssignments = user.customerAssignments.filter((ca) => {
+    return ca.active;
+  }).map((ca) => ({
+    orgNodeId: ca.orgNodeId,
+    role: ca.role,
+    active: ca.active,
+  }));
+
+  // 5. Enforce active ServiceOwnershipAssignments validity
+  const activeOwnershipAssignments = user.ownershipAssignments.filter((oa) => {
+    const isAccepted = oa.status === 'ACCEPTED';
+    const isValidFrom = oa.validFrom <= now;
+    const isValidUntil = oa.validUntil === null || oa.validUntil >= now;
+    return isAccepted && isValidFrom && isValidUntil;
+  }).map((oa) => ({
+    serviceId: oa.serviceId,
+    assignmentType: oa.assignmentType,
+    status: oa.status,
+    validFrom: oa.validFrom,
+    validUntil: oa.validUntil,
+  }));
+
+  const teamMemberships = user.teamMemberships.map((tm) => ({
+    teamId: tm.teamId,
+    role: tm.role,
+  }));
+
+  const queueMemberships = user.queueMemberships.map((qm) => ({
+    queueId: qm.queueId,
+  }));
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      orgNodeId: user.orgNodeId,
+      orgNodeName: user.orgNode?.name ?? null,
+      avatarColor: user.avatarColor,
+      title: user.title ?? null,
+    },
+    tenantId: 'default-tenant',
+    roles,
+    roleAssignments: activeRoleAssignments.map((ra) => ({
+      roleId: ra.roleId,
+      scopeType: ra.scopeType,
+      scopeId: ra.scopeId,
+      status: ra.status,
+      validFrom: ra.validFrom,
+      validUntil: ra.validUntil,
+    })),
+    permissions: permissionsSet,
+    grants: activeGrants,
+    managedScopes,
+    customerAssignments: activeCustomerAssignments,
+    teamMemberships,
+    queueMemberships,
+    serviceOwnerships: activeOwnershipAssignments,
+  };
+}
+
+export async function getSession(): Promise<(SessionUser & { actorContext: ActorContext }) | null> {
   const store = await cookies();
   const token = store.get(COOKIE_NAME)?.value;
   if (!token) return null;
@@ -145,35 +261,25 @@ export async function getSession(): Promise<SessionUser | null> {
   try {
     const payload = JSON.parse(Buffer.from(b64, 'base64url').toString()) as { uid?: string; ts?: number };
     if (!payload || typeof payload.uid !== 'string') return null;
-    // Session expiry: even if the cookie is still present (maxAge hasn't
-    // elapsed), the server-side timestamp gates how long the session is valid.
-    // This protects against stolen cookies that the browser keeps around.
     if (typeof payload.ts !== 'number') return null;
     if (Date.now() - payload.ts > SESSION_MAX_AGE_MS) return null;
-    const user = await db.user.findUnique({
-      where: { id: payload.uid },
-      include: { orgNode: true, roleAssignments: true },
-    });
-    if (!user) return null;
 
-    const roleAssignments = user.roleAssignments.map((ra) => ({
-      roleId: ra.roleId,
-      scopeType: ra.scopeType,
-      scopeId: ra.scopeId,
-    }));
-    const roles = Array.from(new Set(user.roleAssignments.map((ra) => ra.roleId as Role)));
+    const actorContext = await resolveActorContext(payload.uid);
+    if (!actorContext) return null;
+
+    const roles = actorContext.roles;
 
     return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: (roles.includes(user.role as Role) ? user.role : (roles[0] ?? user.role)) as Role,
-      orgNodeId: user.orgNodeId,
-      orgNodeName: user.orgNode?.name ?? null,
-      avatarColor: user.avatarColor,
-      title: user.title ?? null,
+      id: actorContext.user.id,
+      email: actorContext.user.email,
+      name: actorContext.user.name,
+      role: (roles[0] ?? 'SERVICE_CUSTOMER') as Role,
+      orgNodeId: actorContext.user.orgNodeId,
+      orgNodeName: actorContext.user.orgNodeName,
+      avatarColor: actorContext.user.avatarColor,
+      title: actorContext.user.title,
       roles,
-      roleAssignments,
+      actorContext,
     };
   } catch {
     return null;

@@ -119,6 +119,67 @@ export interface SessionUser {
   }[];
 }
 
+export interface ActorContext {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    orgNodeId: string | null;
+    orgNodeName: string | null;
+    avatarColor: string;
+    title: string | null;
+  };
+  tenantId: string;
+  roles: Role[];
+  roleAssignments: {
+    roleId: string;
+    scopeType: string;
+    scopeId: string | null;
+    status: string;
+    validFrom: Date;
+    validUntil: Date | null;
+  }[];
+  permissions: Set<string>;
+  grants: {
+    permissionId: string;
+    permissionKey: string;
+    scopeType: string;
+    scopeId: string | null;
+    effect: string;
+    validFrom: Date;
+    validUntil: Date | null;
+  }[];
+  managedScopes: {
+    orgNodeId: string | null;
+  }[];
+  customerAssignments: {
+    orgNodeId: string;
+    role: string;
+    active: boolean;
+  }[];
+  teamMemberships: {
+    teamId: string;
+    role: string;
+  }[];
+  queueMemberships: {
+    queueId: string;
+  }[];
+  serviceOwnerships: {
+    serviceId: string;
+    assignmentType: string;
+    status: string;
+    validFrom: Date;
+    validUntil: Date | null;
+  }[];
+}
+
+export interface AuthDecision {
+  allowed: boolean;
+  permission?: string;
+  scopeSource?: string;
+  denialReason?: string;
+}
+
 export interface OrgNode {
   id: string;
   name: string;
