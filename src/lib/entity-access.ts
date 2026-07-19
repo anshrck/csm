@@ -37,7 +37,7 @@ export async function canAccessEntity(
 
   // CM_LEADER: Scoped access based on managed scope or tenant permission
   if (session.role === 'CM_LEADER') {
-    const hasTenant = await hasPermission(`${entityType.toLowerCase()}.read.tenant` as any);
+    const hasTenant = await hasPermission(session, `${entityType.toLowerCase()}.read.tenant` as any);
     if (hasTenant) return true;
 
     // Check if there is a managed scope record for the leader

@@ -840,3 +840,142 @@ model LeaderManagedScope {
 
   @@unique([leaderId, orgNodeId])
 }
+
+model UserRoleAssignment {
+  id         String   @id @default(cuid())
+  userId     String
+  roleId     String   // e.g. SERVICE_CUSTOMER | SCM_WORKER | CM_LEADER | SERVICE_OWNER
+  scopeType  String   // e.g. PORTFOLIO | CUSTOMER | GROUP | TENANT
+  scopeId    String?  // e.g. orgNodeId, serviceId, etc.
+  validFrom  DateTime @default(now())
+  validUntil DateTime?
+  status     String   @default("ACTIVE") // ACTIVE | INACTIVE | EXPIRED
+  grantedBy  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, roleId, scopeType, scopeId])
+}
+
+model AccessGrant {
+  id           String    @id @default(cuid())
+  userId       String
+  permissionId String
+  scopeType    String    // e.g. TENANT | CUSTOMER | SERVICE
+  scopeId      String?
+  effect       String    @default("ALLOW") // ALLOW | DENY
+  validFrom    DateTime  @default(now())
+  validUntil   DateTime?
+  grantedBy    String?
+  createdAt    DateTime  @default(now())
+
+  @@unique([userId, permissionId, scopeType, scopeId])
+}
+
+model ServiceOwnershipAssignment {
+  id             String    @id @default(cuid())
+  serviceId      String
+  userId         String
+  assignmentType String    // PRIMARY | DELEGATE | BACKUP
+  status         String    @default("PENDING") // PENDING | ACCEPTED | EXPIRED | REVOKED
+  validFrom      DateTime  @default(now())
+  validUntil     DateTime?
+  grantedBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([serviceId, userId, assignmentType])
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  region    String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TeamMembership {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  role      String   @default("MEMBER") // LEAD | MEMBER
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+}
+
+model Queue {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // TICKET | DEMAND
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model QueueMembership {
+  id        String   @id @default(cuid())
+  queueId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@unique([queueId, userId])
+}
+
+model WorkflowDefinition {
+  id          String   @id @default(cuid())
+  name        String
+  resource    String   // demand | ticket | change
+  version     Int      @default(1)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model WorkflowState {
+  id          String   @id @default(cuid())
+  workflowId  String
+  name        String   // e.g. NEW, UNDER_REVIEW, etc.
+  isInitial   Boolean  @default(false)
+  isTerminal  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model WorkflowTransition {
+  id          String   @id @default(cuid())
+  workflowId  String
+  fromState   String
+  toState     String
+  action      String   // e.g. triage, approve, close
+  permission  String?  // required permission key
+  createdAt   DateTime @default(now())
+}
+
+model Approval {
+  id             String    @id @default(cuid())
+  resourceType   String    // demand | ticket | change | service
+  resourceId     String
+  approvalType   String    // QUOTE | SLA_EXCEPTION | OWN_TRANSFER | IMPACT
+  status         String    @default("PENDING") // PENDING | APPROVED | REJECTED | DELEGATED
+  requesterId    String
+  approverId     String?
+  reason         String?
+  decisionNotes  String?
+  dueAt          DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model Escalation {
+  id           String    @id @default(cuid())
+  ticketId     String?
+  demandId     String?
+  level        String    // L1 | L2 | L3 | L4
+  trigger      String    // SLA_BREACH | CUSTOMER_CRITICAL | MANUAL
+  status       String    @default("ACTIVE") // ACTIVE | RECOVERED | CLOSED
+  responsibleId String?
+  recoveryPlan String?
+  dueAt        DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}

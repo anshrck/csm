@@ -70,9 +70,8 @@ export function invalidatePermissionCache() {
 export async function requirePermission(key: string): Promise<SessionUser> {
   const session = await getSession();
   if (!session) throw new Error('UNAUTHORIZED');
-  const perms = await loadPermissions();
-  const rolePerms = perms[session.role];
-  if (!rolePerms || !rolePerms.has(key)) {
+  const has = await hasPermission(session, key);
+  if (!has) {
     throw new Error('FORBIDDEN');
   }
   return session;
@@ -82,17 +81,14 @@ export async function requirePermission(key: string): Promise<SessionUser> {
 export async function requireAnyPermission(...keys: string[]): Promise<SessionUser> {
   const session = await getSession();
   if (!session) throw new Error('UNAUTHORIZED');
-  const perms = await loadPermissions();
-  const rolePerms = perms[session.role] ?? new Set<string>();
-  if (!keys.some((k) => rolePerms.has(k))) {
-    throw new Error('FORBIDDEN');
+  for (const key of keys) {
+    if (await hasPermission(session, key)) return session;
   }
-  return session;
+  throw new Error('FORBIDDEN');
 }
 
 /** Check (non-throwing) whether the caller has a permission. */
-export async function hasPermission(key: string): Promise<boolean> {
-  const session = await getSession();
+export async function hasPermission(session: SessionUser | null, key: string): Promise<boolean> {
   if (!session) return false;
   const perms = await loadPermissions();
   const rolePerms = perms[session.role];
@@ -262,9 +258,9 @@ export async function authorize(
   const permKey = getRequiredPermission(params.resource, params.action, session.role);
   if (!permKey) return false; // Default result is DENY
 
-  const hasPerm = await hasPermission(permKey);
+  const hasPerm = await hasPermission(session, permKey);
   // Support tenant-wide override permissions for CM_LEADER and SERVICE_OWNER
-  const hasTenantPerm = await hasPermission(`${params.resource}.read.tenant`);
+  const hasTenantPerm = await hasPermission(session, `${params.resource}.read.tenant`);
   if (!hasPerm && !hasTenantPerm) return false;
 
   // 3. Record in scope check (delegated to canAccessEntity)
