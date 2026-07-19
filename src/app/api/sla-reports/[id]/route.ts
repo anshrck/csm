@@ -18,7 +18,8 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const row = await db.slaReport.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const row = await db.slaReport.findFirst({ where: { id, tenantId } });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const userMap = await buildUserMap(
@@ -64,7 +65,8 @@ export async function PATCH(
     }
 
     const { id } = await params;
-    const existing = await db.slaReport.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const existing = await db.slaReport.findFirst({ where: { id, tenantId } });
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     if (existing.preparedById !== session.id) {

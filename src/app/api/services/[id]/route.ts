@@ -28,14 +28,15 @@ export async function GET(
   }
 
   const { id } = await params;
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
 
   const allowed = await authorize(session, { resource: 'service', action: 'read', recordId: id });
-  if (!allowed) {
+  if (!allowed.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const service = await db.service.findUnique({
-    where: { id },
+  const service = await db.service.findFirst({
+    where: { id, tenantId },
     include: {
       offerings: {
         where: { active: true },
@@ -97,9 +98,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const { id } = await params;
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
 
-    const existing = await db.service.findUnique({
-      where: { id },
+    const existing = await db.service.findFirst({
+      where: { id, tenantId },
       select: {
         id: true,
         serviceOwnerId: true,
@@ -117,7 +119,7 @@ export async function PATCH(
     const body = await req.json().catch(() => ({}));
 
     const allowed = await authorize(session, { resource: 'service', action: 'update', recordId: id, requestedChanges: body });
-    if (!allowed) {
+    if (!allowed.allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

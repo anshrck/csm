@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { authorize } from '@/lib/permissions';
 import { serializeChange, authError } from './_serialize';
 import type { Change } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -16,8 +17,11 @@ export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const scope = await buildEntityQueryScope(session, 'CHANGE');
+  if (scope.id === '__none__') return NextResponse.json([]);
+
   const sp = req.nextUrl.searchParams;
-  const where: any = {};
+  const where: any = { AND: [scope] };
 
   const statusCsv = sp.get('status');
   if (statusCsv) {
@@ -25,17 +29,17 @@ export async function GET(req: NextRequest) {
       .split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
-    if (statuses.length) where.status = { in: statuses };
+    if (statuses.length) where.AND.push({ status: { in: statuses } });
   }
 
   const typeParam = sp.get('type');
-  if (typeParam) where.type = typeParam.toUpperCase();
+  if (typeParam) where.AND.push({ type: typeParam.toUpperCase() });
 
   const originDemandId = sp.get('originDemandId');
-  if (originDemandId) where.originDemandId = originDemandId;
+  if (originDemandId) where.AND.push({ originDemandId });
 
   if (sp.get('ceWorker') === 'me') {
-    where.assignedCeWorkerId = session.id;
+    where.AND.push({ assignedCeWorkerId: session.id });
   }
 
   const items = await db.change.findMany({
@@ -45,14 +49,7 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
-  // Scope filter: filter changes by authorize check
-  const filtered: any[] = [];
-  for (const item of items) {
-    const allowed = await authorize(session, { resource: 'change', action: 'read', recordId: item.id });
-    if (allowed) filtered.push(item);
-  }
-
-  return NextResponse.json(filtered.map(serializeChange) as Change[]);
+  return NextResponse.json(items.map(serializeChange) as Change[]);
 }
 
 // POST /api/changes — create a new change request.
@@ -61,7 +58,7 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const allowed = await authorize(session, { resource: 'change', action: 'create' });
-  if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   let body: any;
   try {

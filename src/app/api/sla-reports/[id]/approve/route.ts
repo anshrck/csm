@@ -21,7 +21,7 @@ export async function POST(
     if (!report) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const allowed = await authorize(session, { resource: 'sla_report', action: 'approve', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (report.status !== 'PENDING_REVIEW') {
       return NextResponse.json(

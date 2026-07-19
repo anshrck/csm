@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
-import { getAssignedCustomerOrgIds } from '@/lib/entity-access';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 import { authorize } from '@/lib/permissions';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from './_serialize';
@@ -47,58 +47,18 @@ export async function GET(req: NextRequest) {
       and.push({ title: { contains: q } });
     }
 
-    // Role-based scoping.
-    if (session.role === 'SERVICE_CUSTOMER') {
-      // Customers see only their own orgNode's demands.
-      if (!session.orgNodeId) {
-        return NextResponse.json([]);
-      }
+    const scope = await buildEntityQueryScope(session, 'DEMAND');
+    if (scope.id === '__none__') return NextResponse.json([]);
+    and.push(scope);
+
+    // Filter modifiers
+    if (assignedMe) {
+      and.push({ assignedScmWorkerId: session.id });
+    } else if (unassigned) {
+      and.push({ assignedScmWorkerId: null });
+    }
+    if (mine && session.orgNodeId) {
       and.push({ serviceCustomerId: session.orgNodeId });
-    } else if (session.role === 'SCM_WORKER') {
-      // CustomerAssignment-based scoping.
-      const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(session.id);
-      if (assignedMe) {
-        and.push({ assignedScmWorkerId: session.id });
-      } else if (unassigned) {
-        // Unassigned demands on customer orgs this SCM serves (plus any
-        // unassigned demand if the SCM has no assignments at all — keeps the
-        // queue reachable in dev / seed scenarios).
-        if (assignedCustomerOrgIds.length > 0) {
-          and.push({
-            AND: [
-              { assignedScmWorkerId: null },
-              { serviceCustomerId: { in: assignedCustomerOrgIds } },
-            ],
-          });
-        } else {
-          and.push({ assignedScmWorkerId: null });
-        }
-      } else {
-        // assigned-to-me OR (unassigned AND serviceCustomerId IN myCustomerOrgs)
-        // OR serviceCustomerId IN myCustomerOrgs.
-        const orClauses: Record<string, unknown>[] = [
-          { assignedScmWorkerId: session.id },
-        ];
-        if (assignedCustomerOrgIds.length > 0) {
-          orClauses.push({
-            AND: [
-              { assignedScmWorkerId: null },
-              { serviceCustomerId: { in: assignedCustomerOrgIds } },
-            ],
-          });
-          orClauses.push({ serviceCustomerId: { in: assignedCustomerOrgIds } });
-        }
-        and.push({ OR: orClauses });
-      }
-      // If mine=1, also restrict to caller's orgNode (rare for SCM, but supported).
-      if (mine && session.orgNodeId) {
-        and.push({ serviceCustomerId: session.orgNodeId });
-      }
-    } else if (session.role === 'CM_LEADER' || session.role === 'SERVICE_OWNER') {
-      // See all tenant demands. Optional mine filter still respected.
-      if (mine && session.orgNodeId) {
-        and.push({ serviceCustomerId: session.orgNodeId });
-      }
     }
 
     if (and.length === 0) delete where.AND;
@@ -124,7 +84,7 @@ export async function POST(req: NextRequest) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const allowed = await authorize(session, { resource: 'demand', action: 'create' });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
     const title = typeof body.title === 'string' ? body.title.trim() : '';

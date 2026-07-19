@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { authorize } from '@/lib/permissions';
 import type { Problem } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -40,21 +41,24 @@ export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const scope = await buildEntityQueryScope(session, 'PROBLEM');
+  if (scope.id === '__none__') return NextResponse.json([]);
+
   const sp = req.nextUrl.searchParams;
-  const where: any = {};
+  const where: any = { AND: [scope] };
 
   const serviceId = sp.get('serviceId');
-  if (serviceId) where.serviceId = serviceId;
+  if (serviceId) where.AND.push({ serviceId });
 
   const status = sp.get('status');
-  if (status) where.status = status.toUpperCase();
+  if (status) where.AND.push({ status: status.toUpperCase() });
 
   if (sp.get('owner') === 'me') {
     const owned = await db.service.findMany({
       where: { serviceOwnerId: session.id },
       select: { id: true },
     });
-    where.serviceId = { in: owned.map((s) => s.id) };
+    where.AND.push({ serviceId: { in: owned.map((s) => s.id) } });
   }
 
   const items = await db.problem.findMany({
@@ -64,11 +68,5 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
-  const filtered: any[] = [];
-  for (const item of items) {
-    const allowed = await authorize(session, { resource: 'problem', action: 'read', recordId: item.id });
-    if (allowed) filtered.push(item);
-  }
-
-  return NextResponse.json(filtered.map(serializeProblem) as Problem[]);
+  return NextResponse.json(items.map(serializeProblem) as Problem[]);
 }

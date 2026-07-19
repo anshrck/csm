@@ -142,6 +142,7 @@ export const TICKET_LIST_INCLUDE = {
       metAt: true,
       breachedAt: true,
       pausedAt: true,
+      tenantId: true,
     },
     orderBy: { startedAt: 'asc' as const },
   },

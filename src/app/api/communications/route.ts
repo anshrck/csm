@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { authorize } from '@/lib/permissions';
 import { serializeCommunication, errorResponse } from './_serialize';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +26,10 @@ export async function GET(req: NextRequest) {
     const where: Record<string, unknown> = { AND: [] };
     const and = where.AND as Array<Record<string, unknown>>;
 
+    const scope = await buildEntityQueryScope(session, 'COMMUNICATION');
+    if (scope.id === '__none__') return NextResponse.json([]);
+    and.push(scope);
+
     if (demandId) and.push({ demandId });
     if (serviceCustomerId) and.push({ serviceCustomerId });
     if (serviceId) and.push({ serviceId });
@@ -38,13 +43,7 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
-    const filtered: any[] = [];
-    for (const row of rows) {
-      const allowed = await authorize(session, { resource: 'communication', action: 'read', recordId: row.id });
-      if (allowed) filtered.push(row);
-    }
-
-    return NextResponse.json(filtered.map(serializeCommunication));
+    return NextResponse.json(rows.map(serializeCommunication));
   } catch (err) {
     return errorResponse(err);
   }
@@ -57,7 +56,7 @@ export async function POST(req: NextRequest) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const allowed = await authorize(session, { resource: 'communication', action: 'create' });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
 

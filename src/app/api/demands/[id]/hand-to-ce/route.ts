@@ -28,7 +28,7 @@ export async function POST(
       requestedChanges: { status: 'IN_CHANGE' },
       workflowState: demand.status,
     });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'ACCEPTED') {
       return NextResponse.json(

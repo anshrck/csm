@@ -25,11 +25,12 @@ export async function POST(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
-    const demand = await db.demand.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const demand = await db.demand.findFirst({ where: { id, tenantId } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const allowed = await authorize(session, { resource: 'demand', action: 'update', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'UNDER_REVIEW') {
       return NextResponse.json(

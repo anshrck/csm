@@ -26,8 +26,9 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const row = await db.attachment.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const row = await db.attachment.findFirst({
+      where: { id, tenantId },
       include: ATTACHMENT_INCLUDE,
     });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -58,8 +59,9 @@ export async function DELETE(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const row = await db.attachment.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const row = await db.attachment.findFirst({
+      where: { id, tenantId },
       include: ATTACHMENT_INCLUDE,
     });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });

@@ -22,6 +22,8 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  tenantId     String   @default("default-tenant")
+
   orgNode            OrgNode?          @relation(fields: [orgNodeId], references: [id])
   assignedDemands    Demand[]          @relation("ScmWorkerDemands")
   submittedDemands   Demand[]          @relation("DemandSubmitter")
@@ -31,7 +33,7 @@ model User {
   // Phase 2-6 relations
   assignedTickets    Ticket[]          @relation("TicketAssignee")
   requestedTickets   Ticket[]          @relation("TicketRequester")
-  ticketEvents       TicketEvent[]
+  ticketEvents       TicketEvent[]     @relation("TicketEventActor")
   comments           Comment[]
   attachments        Attachment[]
   auditLogs          AuditLog[]
@@ -52,6 +54,7 @@ model User {
   assignedEscalations  Escalation[]
 
   @@index([role])
+  @@index([tenantId])
 }
 
 model OrgNode {
@@ -61,6 +64,8 @@ model OrgNode {
   parentId  String?
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   parent    OrgNode?  @relation("OrgNodeTree", fields: [parentId], references: [id])
   children  OrgNode[] @relation("OrgNodeTree")
   users     User[]
@@ -68,6 +73,8 @@ model OrgNode {
   tickets   Ticket[]  @relation("TicketCustomer")
   slaReportCustomers SlaReportCustomer[]
   customerAssignments CustomerAssignment[]
+
+  @@index([tenantId])
 }
 
 model Service {
@@ -90,6 +97,8 @@ model Service {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  tenantId        String   @default("default-tenant")
+
   offerings    ServiceOffering[]
   slaProfiles  SlaProfile[]
   slaEvents    SlaEvent[]
@@ -109,6 +118,7 @@ model Service {
   @@index([domain])
   @@index([slaClass])
   @@index([status])
+  @@index([tenantId])
 }
 
 model ServiceOffering {
@@ -121,10 +131,13 @@ model ServiceOffering {
   active          Boolean  @default(true)
   createdAt       DateTime @default(now())
 
+  tenantId        String   @default("default-tenant")
+
   service      Service      @relation(fields: [serviceId], references: [id])
   entitlements Entitlement[]
 
   @@index([serviceId])
+  @@index([tenantId])
 }
 
 model SlaProfile {
@@ -138,9 +151,12 @@ model SlaProfile {
   p2ResolutionMins Int
   createdAt        DateTime @default(now())
 
+  tenantId         String   @default("default-tenant")
+
   service Service @relation(fields: [serviceId], references: [id])
 
   @@index([serviceId])
+  @@index([tenantId])
 }
 
 model Entitlement {
@@ -151,9 +167,12 @@ model Entitlement {
   validUntil        DateTime?
   createdAt         DateTime  @default(now())
 
+  tenantId          String    @default("default-tenant")
+
   offering ServiceOffering @relation(fields: [serviceOfferingId], references: [id])
 
   @@index([orgNodeId])
+  @@index([tenantId])
 }
 
 model Demand {
@@ -184,6 +203,8 @@ model Demand {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
+  tenantId              String    @default("default-tenant")
+
   customer     OrgNode       @relation("DemandCustomer", fields: [serviceCustomerId], references: [id])
   submitter    User          @relation("DemandSubmitter", fields: [submittedById], references: [id])
   scmWorker    User?         @relation("ScmWorkerDemands", fields: [assignedScmWorkerId], references: [id])
@@ -199,6 +220,7 @@ model Demand {
   @@index([status])
   @@index([serviceCustomerId])
   @@index([assignedScmWorkerId])
+  @@index([tenantId])
 }
 
 model DemandEvent {
@@ -210,10 +232,13 @@ model DemandEvent {
   notes     String?
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   demand Demand @relation(fields: [demandId], references: [id], onDelete: Cascade)
   actor  User?  @relation("DemandEventActor", fields: [actorId], references: [id])
 
   @@index([demandId])
+  @@index([tenantId])
 }
 
 model SlaEvent {
@@ -225,10 +250,13 @@ model SlaEvent {
   createdAt         DateTime  @default(now())
   resolvedAt        DateTime?
 
+  tenantId          String    @default("default-tenant")
+
   service Service @relation(fields: [serviceId], references: [id])
 
   @@index([serviceId])
   @@index([eventType])
+  @@index([tenantId])
 }
 
 model Change {
@@ -255,6 +283,8 @@ model Change {
   updatedAt                DateTime  @updatedAt
   closedAt                 DateTime?
 
+  tenantId                 String    @default("default-tenant")
+
   ceWorker      User?  @relation("CeWorkerChanges", fields: [assignedCeWorkerId], references: [id])
   originDemand  Demand? @relation("ChangeOriginDemand", fields: [originDemandId], references: [id])
   handovers     ProcessHandover[] @relation("HandoverChange")
@@ -264,6 +294,7 @@ model Change {
 
   @@index([status])
   @@index([originDemandId])
+  @@index([tenantId])
 }
 
 model ProcessHandover {
@@ -276,10 +307,13 @@ model ProcessHandover {
   acknowledgedAt    DateTime?
   createdAt         DateTime  @default(now())
 
+  tenantId          String    @default("default-tenant")
+
   demand   Demand? @relation("HandoverDemand", fields: [sourceDemandId], references: [id])
   change   Change? @relation("HandoverChange", fields: [targetChangeId], references: [id])
 
   @@index([type])
+  @@index([tenantId])
 }
 
 model Problem {
@@ -297,9 +331,12 @@ model Problem {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
+  tenantId              String    @default("default-tenant")
+
   service Service @relation(fields: [serviceId], references: [id])
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model Notification {
@@ -312,11 +349,14 @@ model Notification {
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
   deliveries NotificationDelivery[]
 
   @@index([userId])
   @@index([read])
+  @@index([tenantId])
 }
 
 // SLA performance report prepared by SCM Worker, reviewed/approved by CM Leader
@@ -338,12 +378,15 @@ model SlaReport {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  tenantId        String    @default("default-tenant")
+
   // Phase 2 relations
   reportServices  SlaReportService[]
   reportCustomers SlaReportCustomer[]
 
   @@index([status])
   @@index([preparedById])
+  @@index([tenantId])
 }
 
 // Customer communication record — the governed thread owned by SCM Worker
@@ -361,8 +404,11 @@ model Communication {
   authorName   String
   createdAt    DateTime  @default(now())
 
+  tenantId     String    @default("default-tenant")
+
   @@index([demandId])
   @@index([serviceCustomerId])
+  @@index([tenantId])
 }
 
 // Service Owner governance decision (commitment approval, escalation, breach response)
@@ -382,9 +428,12 @@ model GovernanceDecision {
   decidedByName   String
   createdAt       DateTime  @default(now())
 
+  tenantId        String    @default("default-tenant")
+
   @@index([serviceId])
   @@index([demandId])
   @@index([decisionType])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -483,6 +532,8 @@ model Ticket {
   resolvedAt        DateTime?
   closedAt          DateTime?
 
+  tenantId          String    @default("default-tenant")
+
   service       Service?       @relation(fields: [serviceId], references: [id])
   customer      OrgNode        @relation("TicketCustomer", fields: [serviceCustomerId], references: [id])
   requester     User           @relation("TicketRequester", fields: [requesterId], references: [id])
@@ -498,6 +549,7 @@ model Ticket {
   @@index([serviceCustomerId])
   @@index([assignedUserId])
   @@index([priority])
+  @@index([tenantId])
 }
 
 model AssignmentGroup {
@@ -507,7 +559,11 @@ model AssignmentGroup {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   tickets Ticket[]
+
+  @@index([tenantId])
 }
 
 model TicketEvent {
@@ -519,10 +575,13 @@ model TicketEvent {
   notes     String?
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  actor  User?  @relation(fields: [actorId], references: [id])
+  actor  User?  @relation("TicketEventActor", fields: [actorId], references: [id])
 
   @@index([ticketId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -541,6 +600,8 @@ model SlaPolicy {
   active             Boolean  @default(true)
   createdAt          DateTime @default(now())
 
+  tenantId           String   @default("default-tenant")
+
   service          Service?         @relation(fields: [serviceId], references: [id])
   businessCalendar BusinessCalendar? @relation(fields: [businessCalendarId], references: [id])
   slaClocks        SlaClock[]
@@ -548,6 +609,7 @@ model SlaPolicy {
 
   @@index([serviceId])
   @@index([priority])
+  @@index([tenantId])
 }
 
 model SlaClock {
@@ -563,11 +625,14 @@ model SlaClock {
   metAt            DateTime?
   breachedAt       DateTime?
 
+  tenantId         String    @default("default-tenant")
+
   ticket Ticket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   policy SlaPolicy  @relation(fields: [policyId], references: [id])
 
   @@index([ticketId])
   @@index([status])
+  @@index([tenantId])
 }
 
 model BusinessCalendar {
@@ -577,7 +642,11 @@ model BusinessCalendar {
   rulesJson String   // JSON: work hours, holidays, etc.
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   policies SlaPolicy[]
+
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -592,9 +661,12 @@ model Conversation {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  tenantId          String   @default("default-tenant")
+
   comments Comment[]
 
   @@index([entityType, entityId])
+  @@index([tenantId])
 }
 
 model Comment {
@@ -607,10 +679,13 @@ model Comment {
   createdAt      DateTime @default(now())
   editedAt       DateTime?
 
+  tenantId       String   @default("default-tenant")
+
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   author       User         @relation(fields: [authorId], references: [id])
 
   @@index([conversationId])
+  @@index([tenantId])
 }
 
 model Attachment {
@@ -624,9 +699,12 @@ model Attachment {
   uploadedById String
   createdAt    DateTime @default(now())
 
+  tenantId     String   @default("default-tenant")
+
   uploader User @relation(fields: [uploadedById], references: [id])
 
   @@index([entityType, entityId])
+  @@index([tenantId])
 }
 
 model SatisfactionSurvey {
@@ -638,10 +716,13 @@ model SatisfactionSurvey {
   comment     String?
   createdAt   DateTime @default(now())
 
+  tenantId    String   @default("default-tenant")
+
   customer User @relation(fields: [customerId], references: [id])
 
   @@unique([entityType, entityId, customerId])
   @@index([entityType, entityId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -661,6 +742,8 @@ model KnowledgeArticle {
   updatedAt   DateTime  @updatedAt
   publishedAt DateTime?
 
+  tenantId    String    @default("default-tenant")
+
   service   Service? @relation(fields: [serviceId], references: [id])
   author    User     @relation("KnowledgeAuthor", fields: [authorId], references: [id])
   reviewer  User?    @relation("KnowledgeReviewer", fields: [reviewerId], references: [id])
@@ -669,6 +752,7 @@ model KnowledgeArticle {
   @@index([status])
   @@index([type])
   @@index([serviceId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -680,10 +764,14 @@ model Permission {
   key         String @unique
   description String
 
+  tenantId    String @default("default-tenant")
+
   rolePermissions RolePermission[]
 
   // Enterprise additions
   accessGrants AccessGrant[]
+
+  @@index([tenantId])
 }
 
 model RolePermission {
@@ -691,10 +779,13 @@ model RolePermission {
   role         String
   permissionId String
 
+  tenantId     String @default("default-tenant")
+
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([role, permissionId])
   @@index([role])
+  @@index([tenantId])
 }
 
 model AuditLog {
@@ -710,11 +801,14 @@ model AuditLog {
   userAgent  String?
   createdAt  DateTime @default(now())
 
+  tenantId   String   @default("default-tenant")
+
   actor User? @relation(fields: [actorId], references: [id])
 
   @@index([entityType, entityId])
   @@index([action])
   @@index([actorId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -730,10 +824,13 @@ model NotificationDelivery {
   sentAt         DateTime?
   createdAt      DateTime @default(now())
 
+  tenantId       String   @default("default-tenant")
+
   notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
   @@index([notificationId])
   @@index([status])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -748,12 +845,15 @@ model CustomerAssignment {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   orgNode OrgNode @relation(fields: [orgNodeId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([orgNodeId, userId, role])
   @@index([userId])
   @@index([orgNodeId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -763,6 +863,10 @@ model CustomerAssignment {
 model SequenceCounter {
   key   String @id
   value Int    @default(0)
+
+  tenantId String @default("default-tenant")
+
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -778,9 +882,12 @@ model SlaEscalationPolicy {
   active       Boolean @default(true)
   createdAt    DateTime @default(now())
 
+  tenantId     String  @default("default-tenant")
+
   policy SlaPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
 
   @@index([policyId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -796,10 +903,13 @@ model KnowledgeArticleVersion {
   createdById String
   createdAt   DateTime @default(now())
 
+  tenantId    String   @default("default-tenant")
+
   article KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
   creator User             @relation("KnowledgeVersionCreator", fields: [createdById], references: [id])
 
   @@index([articleId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -816,9 +926,12 @@ model EntityLink {
   createdBy String?
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   @@unique([fromType, fromId, toType, toId, linkType])
   @@index([fromType, fromId])
   @@index([toType, toId])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -841,11 +954,14 @@ model ServiceRisk {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  tenantId    String    @default("default-tenant")
+
   service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@index([serviceId])
   @@index([status])
   @@index([severity])
+  @@index([tenantId])
 }
 
 // ============================================================================
@@ -858,7 +974,10 @@ model LeaderManagedScope {
   orgNodeId String?
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   @@unique([leaderId, orgNodeId])
+  @@index([tenantId])
 }
 
 model UserRoleAssignment {
@@ -874,9 +993,12 @@ model UserRoleAssignment {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  tenantId   String   @default("default-tenant")
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, roleId, scopeType, scopeId])
+  @@index([tenantId])
 }
 
 model AccessGrant {
@@ -891,10 +1013,13 @@ model AccessGrant {
   grantedBy    String?
   createdAt    DateTime  @default(now())
 
+  tenantId     String    @default("default-tenant")
+
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([userId, permissionId, scopeType, scopeId])
+  @@index([tenantId])
 }
 
 model ServiceOwnershipAssignment {
@@ -909,10 +1034,13 @@ model ServiceOwnershipAssignment {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  tenantId       String    @default("default-tenant")
+
   service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([serviceId, userId, assignmentType])
+  @@index([tenantId])
 }
 
 model Team {
@@ -923,7 +1051,11 @@ model Team {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  tenantId  String   @default("default-tenant")
+
   members TeamMembership[]
+
+  @@index([tenantId])
 }
 
 model TeamMembership {
@@ -933,10 +1065,13 @@ model TeamMembership {
   role      String   @default("MEMBER") // LEAD | MEMBER
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+  @@index([tenantId])
 }
 
 model Queue {
@@ -946,7 +1081,11 @@ model Queue {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   members QueueMembership[]
+
+  @@index([tenantId])
 }
 
 model QueueMembership {
@@ -955,10 +1094,13 @@ model QueueMembership {
   userId    String
   createdAt DateTime @default(now())
 
+  tenantId  String   @default("default-tenant")
+
   queue Queue @relation(fields: [queueId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([queueId, userId])
+  @@index([tenantId])
 }
 
 model WorkflowDefinition {
@@ -969,9 +1111,13 @@ model WorkflowDefinition {
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 
+  tenantId    String   @default("default-tenant")
+
   states      WorkflowState[]
   transitions WorkflowTransition[]
   versions    WorkflowVersion[]
+
+  @@index([tenantId])
 }
 
 model WorkflowState {
@@ -982,7 +1128,11 @@ model WorkflowState {
   isTerminal  Boolean  @default(false)
   createdAt   DateTime @default(now())
 
+  tenantId    String   @default("default-tenant")
+
   workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model WorkflowTransition {
@@ -994,7 +1144,11 @@ model WorkflowTransition {
   permission  String?  // required permission key
   createdAt   DateTime @default(now())
 
+  tenantId    String   @default("default-tenant")
+
   workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model Approval {
@@ -1011,8 +1165,12 @@ model Approval {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  tenantId       String    @default("default-tenant")
+
   requester User  @relation("ApprovalRequester", fields: [requesterId], references: [id], onDelete: Cascade)
   approver  User? @relation("ApprovalApprover", fields: [approverId], references: [id])
+
+  @@index([tenantId])
 }
 
 model Escalation {
@@ -1028,9 +1186,13 @@ model Escalation {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  tenantId     String    @default("default-tenant")
+
   responsible User?   @relation(fields: [responsibleId], references: [id])
   ticket      Ticket? @relation(fields: [ticketId], references: [id])
   demand      Demand? @relation(fields: [demandId], references: [id])
+
+  @@index([tenantId])
 }
 
 model Tenant {
@@ -1061,7 +1223,10 @@ model WorkflowVersion {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  tenantId    String   @default("default-tenant")
+
   workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
 
   @@unique([workflowId, version])
+  @@index([tenantId])
 }

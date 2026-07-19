@@ -27,7 +27,7 @@ export async function POST(
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const allowed = await authorize(session, { resource: 'demand', action: 'reject', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'UNDER_REVIEW') {
       return NextResponse.json(

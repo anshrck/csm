@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
 import type { Role } from '@/lib/types';
 import { serializeGovernanceDecision, errorResponse } from './_serialize';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -45,38 +46,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const scope = await buildEntityQueryScope(session, 'GOVERNANCE_DECISION');
+    if (scope.id === '__none__') return NextResponse.json([]);
+
     const sp = req.nextUrl.searchParams;
     const serviceId = sp.get('serviceId') ?? undefined;
     const demandId = sp.get('demandId') ?? undefined;
     const decisionType = sp.get('decisionType') ?? undefined;
 
-    const where: Record<string, unknown> = { AND: [] };
-    const and = where.AND as Array<Record<string, unknown>>;
-
-    if (serviceId) and.push({ serviceId });
-    if (demandId) and.push({ demandId });
-    if (decisionType) and.push({ decisionType });
-
-    if (session.role === 'SERVICE_OWNER') {
-      // Restrict to services the caller owns (serviceOwnerId is a plain String
-      // foreign key on the Service table — no Prisma relation).
-      const owned = await db.service.findMany({
-        where: { serviceOwnerId: session.id },
-        select: { id: true },
-      });
-      const ownedIds = owned.map((s) => s.id);
-      and.push({ serviceId: { in: ownedIds.length ? ownedIds : ['__none__'] } });
-    } else if (session.role === 'SCM_WORKER') {
-      const assigned = await db.demand.findMany({
-        where: { assignedScmWorkerId: session.id },
-        select: { id: true },
-      });
-      const assignedIds = assigned.map((d) => d.id);
-      and.push({ demandId: { in: assignedIds.length ? assignedIds : ['__none__'] } });
-    }
-    // CM_LEADER: no extra scoping.
-
-    if (and.length === 0) delete where.AND;
+    const where: any = { AND: [scope] };
+    if (serviceId) where.AND.push({ serviceId });
+    if (demandId) where.AND.push({ demandId });
+    if (decisionType) where.AND.push({ decisionType });
 
     const rows = await db.governanceDecision.findMany({
       where,

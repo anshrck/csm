@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAuth, getSession } from '@/lib/auth';
 import type { Role } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -12,38 +13,33 @@ function safeParseArray(raw: unknown): string[] {
 
 // GET /api/sla-reports
 // Filters: status (comma multi), preparedBy (user id or "me")
-// Role scoping:
-//   - SCM_WORKER: reports prepared by them (or all if preparedBy omitted — they're the author pool)
-//     To keep it simple: SCM sees reports they prepared; CM_LEADER sees all; SERVICE_OWNER sees all
-//     on their services; SERVICE_CUSTOMER sees only ISSUED reports for their org.
 export async function GET(req: NextRequest) {
   try {
-    const session = await requireAuth();
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const scope = await buildEntityQueryScope(session, 'SLA_REPORT');
+    if (scope.id === '__none__') return NextResponse.json([]);
 
     const url = new URL(req.url);
     const statusParam = url.searchParams.get('status');
     const preparedBy = url.searchParams.get('preparedBy');
 
-    const where: Record<string, unknown> = {};
+    const where: any = { AND: [scope] };
     if (statusParam) {
       const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
-      if (statuses.length === 1) where.status = statuses[0];
-      else if (statuses.length > 1) where.status = { in: statuses };
+      if (statuses.length === 1) {
+        where.AND.push({ status: statuses[0] });
+      } else if (statuses.length > 1) {
+        where.AND.push({ status: { in: statuses } });
+      }
     }
     if (preparedBy) {
-      where.preparedById = preparedBy === 'me' ? session.id : preparedBy;
+      where.AND.push({ preparedById: preparedBy === 'me' ? session.id : preparedBy });
     }
 
-    // Role-based filter:
-    //   SERVICE_CUSTOMER → only ISSUED reports for their orgNode
-    //   SERVICE_OWNER → all reports (they can review what's been issued on their services)
-    //   SCM_WORKER → reports they prepared + all ISSUED/APPROVED (so they see what's been approved)
-    //   CM_LEADER → all
-    if (session.role === 'SERVICE_CUSTOMER' as Role) {
-      where.status = 'ISSUED';
-      if (session.orgNodeId) {
-        // Filter to reports that include this customer — we'll do it in JS since serviceCustomerIds is JSON
-      }
+    if (session.role === 'SERVICE_CUSTOMER') {
+      where.AND.push({ status: 'ISSUED' });
     }
 
     const rows = await db.slaReport.findMany({
@@ -52,13 +48,7 @@ export async function GET(req: NextRequest) {
       take: 100,
     });
 
-    let result = rows.map((r) => serializeReport(r));
-
-    // SERVICE_CUSTOMER: filter client-side to reports that include their orgNode
-    if (session.role === 'SERVICE_CUSTOMER' as Role && session.orgNodeId) {
-      result = result.filter((r) => r.serviceCustomerIds.includes(session.orgNodeId!));
-    }
-
+    const result = rows.map((r) => serializeReport(r));
     return NextResponse.json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal server error';

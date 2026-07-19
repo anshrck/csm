@@ -5,6 +5,7 @@
 
 import { db } from '@/lib/db';
 import type { Role, SessionUser } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export interface VolumeBucket {
   key: string | null;
@@ -150,35 +151,25 @@ interface ReportScope {
 
 async function buildScope(session: SessionUser): Promise<ReportScope | null> {
   const role = session.role as Role;
-  if (role === 'CM_LEADER' || role === 'SERVICE_OWNER') {
-    return {
-      ticketWhere: {},
-      demandWhere: {},
-      clockTicketWhere: {},
-      workloadScope: 'all',
-      surveyTicketWhere: {},
-    };
+
+  const ticketWhere = await buildEntityQueryScope(session, 'TICKET');
+  const demandWhere = await buildEntityQueryScope(session, 'DEMAND');
+  const clockTicketWhere = await buildEntityQueryScope(session, 'TICKET');
+  const surveyTicketWhere = await buildEntityQueryScope(session, 'TICKET');
+
+  if (ticketWhere.id === '__none__' || demandWhere.id === '__none__') {
+    return null;
   }
-  if (role === 'SERVICE_CUSTOMER') {
-    if (!session.orgNodeId) return null;
-    return {
-      ticketWhere: { serviceCustomerId: session.orgNodeId },
-      demandWhere: { serviceCustomerId: session.orgNodeId },
-      clockTicketWhere: { serviceCustomerId: session.orgNodeId },
-      workloadScope: 'self',
-      surveyTicketWhere: { serviceCustomerId: session.orgNodeId },
-    };
-  }
-  if (role === 'SCM_WORKER') {
-    return {
-      ticketWhere: { assignedUserId: session.id },
-      demandWhere: { assignedScmWorkerId: session.id },
-      clockTicketWhere: { assignedUserId: session.id },
-      workloadScope: 'self',
-      surveyTicketWhere: { assignedUserId: session.id },
-    };
-  }
-  return null;
+
+  const workloadScope = (role === 'CM_LEADER' || role === 'SERVICE_OWNER') ? 'all' : 'self';
+
+  return {
+    ticketWhere,
+    demandWhere,
+    clockTicketWhere,
+    workloadScope,
+    surveyTicketWhere,
+  };
 }
 
 export function emptyReport(range: DateRange): OperationalReport {

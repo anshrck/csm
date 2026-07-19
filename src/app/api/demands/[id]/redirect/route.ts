@@ -29,7 +29,7 @@ export async function POST(
       requestedChanges: { status: 'REDIRECTED' },
       workflowState: demand.status,
     });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'UNDER_REVIEW') {
       return NextResponse.json(

@@ -26,7 +26,7 @@ export async function POST(
     const { id } = await params;
 
     const allowed = await authorize(session, { resource: 'knowledge', action: 'retire', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const article = await db.knowledgeArticle.findUnique({
       where: { id },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { serializeService, buildOwnerMap } from './_serialize';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -33,24 +34,27 @@ export async function GET(req: NextRequest) {
   const q = sp.get('q');
   const entitled = sp.get('entitled') === '1';
 
+  const scope = await buildEntityQueryScope(session, 'SERVICE');
+  if (scope.id === '__none__') return NextResponse.json([]);
+
   // ---- Build the Prisma where clause ----
-  const where: any = {};
+  const where: any = { AND: [scope] };
 
   // status: default ACTIVE, "ALL" disables the filter
   if (status && status.toUpperCase() === 'ALL') {
     // no status filter
   } else if (status) {
-    where.status = status.toUpperCase();
+    where.AND.push({ status: status.toUpperCase() });
   } else {
-    where.status = 'ACTIVE';
+    where.AND.push({ status: 'ACTIVE' });
   }
 
-  if (domain) where.domain = domain.toUpperCase();
-  if (slaClass) where.slaClass = slaClass.toUpperCase();
+  if (domain) where.AND.push({ domain: domain.toUpperCase() });
+  if (slaClass) where.AND.push({ slaClass: slaClass.toUpperCase() });
 
   // owner=me — Service Owner looking at their own portfolio
   if (owner === 'me') {
-    where.serviceOwnerId = session.id;
+    where.AND.push({ serviceOwnerId: session.id });
   }
 
   // entitled=1 — caller sees only services that have offerings entitled to their orgNode
@@ -75,7 +79,7 @@ export async function GET(req: NextRequest) {
     if (serviceIds.length === 0) {
       return NextResponse.json([]);
     }
-    where.id = { in: serviceIds };
+    where.AND.push({ id: { in: serviceIds } });
   }
 
   // ---- Fetch services with offerings + first slaProfile ----

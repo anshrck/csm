@@ -25,7 +25,8 @@ export async function GET(
     }
 
     const { id } = await params;
-    const row = await db.governanceDecision.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const row = await db.governanceDecision.findFirst({ where: { id, tenantId } });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     if (session.role === 'SERVICE_OWNER') {

@@ -16,12 +16,13 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
-    const demand = await db.demand.findUnique({ where: { id }, include: DEMAND_INCLUDE });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const demand = await db.demand.findFirst({ where: { id, tenantId }, include: DEMAND_INCLUDE });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     // Scoping & permission enforcement.
     const allowed = await authorize(session, { resource: 'demand', action: 'read', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     return NextResponse.json(serializeDemand(demand as DemandWithRelations));
   } catch (err) {
@@ -39,7 +40,8 @@ export async function PATCH(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
-    const demand = await db.demand.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const demand = await db.demand.findFirst({ where: { id, tenantId } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const body = await req.json().catch(() => ({}));
@@ -51,7 +53,7 @@ export async function PATCH(
       requestedChanges: body,
       workflowState: demand.status,
     });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const data: Record<string, unknown> = {};
 

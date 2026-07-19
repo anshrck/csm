@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import type { Role, SessionUser } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -105,35 +106,11 @@ function serializeClock(c: ClockWithRelations): SlaClockRow {
 
 /**
  * Resolve the role-scoped `where` clause for ticket-scoped queries.
- *
- * SlaClock scoping follows the ticket visibility rules:
- *   - SERVICE_CUSTOMER: only tickets for their own orgNode (serviceCustomerId)
- *   - SCM_WORKER: tickets assigned to them
- *   - SERVICE_OWNER: tickets on services they own
- *   - CM_LEADER: all tickets
- *
- * Returns null if the caller has no scope at all (e.g. customer without orgNode).
  */
 async function buildTicketScope(session: SessionUser): Promise<Record<string, unknown> | null> {
-  if (session.role === 'CM_LEADER' as Role) {
-    return {};
-  }
-  if (session.role === 'SERVICE_CUSTOMER' as Role) {
-    if (!session.orgNodeId) return null;
-    return { serviceCustomerId: session.orgNodeId };
-  }
-  if (session.role === 'SCM_WORKER' as Role) {
-    return { assignedUserId: session.id };
-  }
-  if (session.role === 'SERVICE_OWNER' as Role) {
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    if (owned.length === 0) return { id: '__none__' }; // forces empty result
-    return { serviceId: { in: owned.map((s) => s.id) } };
-  }
-  return null;
+  const scope = await buildEntityQueryScope(session, 'TICKET');
+  if (scope.id === '__none__') return null;
+  return scope;
 }
 
 /**

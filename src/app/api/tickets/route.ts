@@ -3,10 +3,10 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
 import {
-  buildTicketScope,
   resolveSlaPolicy,
   createSlaClocksForTicket,
 } from './_helpers';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 import {
   TICKET_LIST_INCLUDE,
   TICKET_INCLUDE,
@@ -46,8 +46,8 @@ export async function GET(req: NextRequest) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const sp = req.nextUrl.searchParams;
-    const scope = await buildTicketScope(session);
-    if (scope === null) return NextResponse.json([]);
+    const scope = await buildEntityQueryScope(session, 'TICKET');
+    if (scope.id === '__none__') return NextResponse.json([]);
 
     const and: Record<string, unknown>[] = [scope];
 

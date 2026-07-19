@@ -51,8 +51,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
     const rows = await db.attachment.findMany({
-      where: { entityType, entityId },
+      where: { entityType, entityId, tenantId },
       include: ATTACHMENT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -135,6 +136,7 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     await fs.writeFile(absPath, buffer);
 
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
     const created = await db.attachment.create({
       data: {
         entityType,
@@ -144,6 +146,7 @@ export async function POST(req: NextRequest) {
         sizeBytes: size,
         storageKey,
         uploadedById: session.id,
+        tenantId,
       },
       include: ATTACHMENT_INCLUDE,
     });

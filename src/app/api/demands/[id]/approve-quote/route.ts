@@ -23,7 +23,7 @@ export async function POST(
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     const allowed = await authorize(session, { resource: 'demand', action: 'approve', recordId: id });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     // Allow approval from UNDER_REVIEW (typical) or QUOTED (re-approval after a
     // declined/re-submitted quote). Reject terminal statuses.

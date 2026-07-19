@@ -24,8 +24,9 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
-    const ticket = await db.ticket.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const ticket = await db.ticket.findFirst({
+      where: { id, tenantId },
       include: TICKET_INCLUDE,
     });
     if (!ticket) {
@@ -33,7 +34,7 @@ export async function GET(
     }
 
     const allowed = await authorize(session, { resource: 'ticket', action: 'read', recordId: id });
-    if (!allowed) {
+    if (!allowed.allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -59,7 +60,8 @@ export async function PATCH(
     }
     const { id } = await params;
 
-    const existingTicket = await db.ticket.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const existingTicket = await db.ticket.findFirst({ where: { id, tenantId } });
     if (!existingTicket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -73,7 +75,7 @@ export async function PATCH(
       requestedChanges: body,
       workflowState: existingTicket.status,
     });
-    if (!allowed) {
+    if (!allowed.allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

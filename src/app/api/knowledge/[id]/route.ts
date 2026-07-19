@@ -24,8 +24,9 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const article = await db.knowledgeArticle.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const article = await db.knowledgeArticle.findFirst({
+      where: { id, tenantId },
       include: KNOWLEDGE_INCLUDE,
     });
     if (!article) {
@@ -57,8 +58,9 @@ export async function PATCH(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const article = await db.knowledgeArticle.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const article = await db.knowledgeArticle.findFirst({
+      where: { id, tenantId },
       include: KNOWLEDGE_INCLUDE,
     });
     if (!article) {

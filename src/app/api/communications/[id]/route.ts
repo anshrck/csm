@@ -20,7 +20,8 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const row = await db.communication.findUnique({ where: { id } });
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const row = await db.communication.findFirst({ where: { id, tenantId } });
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     if (session.role === 'SERVICE_CUSTOMER') {

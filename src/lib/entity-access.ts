@@ -562,3 +562,443 @@ export async function requireEntityAccess(
   const ok = await canAccessEntity(sessionOrContext, entityType, entityId, action);
   if (!ok) throw new Error('FORBIDDEN');
 }
+
+/**
+ * Centralized, role-aware query-scope builder for business and access-control entities.
+ * Ensures strict tenant isolation (by appending `tenantId`) and filters matching the
+ * exact row-level access control rules of `canAccessEntity`.
+ *
+ * If the user has no permissions or does not fit any access rule, returns `{ id: '__none__' }`
+ * (a sentinel that forces an empty result set) to default-deny access.
+ */
+export async function buildEntityQueryScope(
+  sessionOrContext: (SessionUser & { actorContext?: ActorContext }) | ActorContext,
+  entityType: EntityType
+): Promise<Record<string, any>> {
+  if (!sessionOrContext) return { id: '__none__' };
+
+  const actor = 'actorContext' in sessionOrContext && sessionOrContext.actorContext
+    ? sessionOrContext.actorContext
+    : sessionOrContext as ActorContext;
+
+  const roles = actor.roles || [];
+  const isCustomer = roles.includes('SERVICE_CUSTOMER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SERVICE_CUSTOMER');
+  const isWorker = roles.includes('SCM_WORKER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SCM_WORKER');
+  const isOwner = roles.includes('SERVICE_OWNER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'SERVICE_OWNER');
+  const isLeader = roles.includes('CM_LEADER' as Role) || ('role' in sessionOrContext && sessionOrContext.role === 'CM_LEADER');
+
+  const userId = actor.user ? actor.user.id : (sessionOrContext as SessionUser).id;
+  const orgNodeId = actor.user ? actor.user.orgNodeId : (sessionOrContext as SessionUser).orgNodeId;
+  const tenantId = actor.tenantId || 'default-tenant';
+
+  // Helper to obtain service IDs owned by the user
+  const ownedServiceIds = await getOwnedServiceIds(actor, userId, tenantId);
+
+  const roleClauses: Record<string, any>[] = [];
+
+  switch (entityType) {
+    case 'TICKET': {
+      if (isLeader) {
+        const hasTenant = await hasPermission(actor, 'ticket.read.tenant');
+        if (hasTenant) {
+          roleClauses.push({});
+        } else {
+          const managedOrgIds = await getLeaderManagedOrgIds(actor);
+          roleClauses.push({ serviceCustomerId: { in: managedOrgIds } });
+        }
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({ serviceCustomerId: orgNodeId });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        roleClauses.push({
+          OR: [
+            { assignedUserId: userId },
+            { serviceCustomerId: { in: assignedCustomerOrgIds } }
+          ]
+        });
+      }
+      if (isOwner) {
+        roleClauses.push({ serviceId: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    case 'DEMAND': {
+      if (isLeader) {
+        const hasTenant = await hasPermission(actor, 'demand.read.tenant');
+        if (hasTenant) {
+          roleClauses.push({});
+        } else {
+          const managedOrgIds = await getLeaderManagedOrgIds(actor);
+          roleClauses.push({ serviceCustomerId: { in: managedOrgIds } });
+        }
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({ serviceCustomerId: orgNodeId });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        roleClauses.push({
+          OR: [
+            { assignedScmWorkerId: userId },
+            { serviceCustomerId: { in: assignedCustomerOrgIds } }
+          ]
+        });
+      }
+      if (isOwner) {
+        if (ownedServiceIds.length > 0) {
+          roleClauses.push({
+            OR: ownedServiceIds.map((sid) => ({
+              relatedServiceIds: { contains: `"${sid}"` }
+            }))
+          });
+        }
+      }
+      break;
+    }
+
+    case 'CHANGE': {
+      if (isLeader) {
+        roleClauses.push({});
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({
+            originDemand: {
+              serviceCustomerId: orgNodeId
+            }
+          });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        roleClauses.push({
+          OR: [
+            { assignedCeWorkerId: userId },
+            {
+              originDemand: {
+                OR: [
+                  { assignedScmWorkerId: userId },
+                  { serviceCustomerId: { in: assignedCustomerOrgIds } }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      if (isOwner) {
+        if (ownedServiceIds.length > 0) {
+          roleClauses.push({
+            OR: ownedServiceIds.map((sid) => ({
+              affectedServiceIds: { contains: `"${sid}"` }
+            }))
+          });
+        }
+      }
+      break;
+    }
+
+    case 'PROBLEM': {
+      if (isLeader) {
+        roleClauses.push({});
+      }
+      if (isWorker) {
+        const tickets = await db.ticket.findMany({
+          where: { tenantId, assignedUserId: userId, NOT: { serviceId: null } },
+          select: { serviceId: true }
+        });
+        const ticketServiceIds = tickets.map((t) => t.serviceId as string);
+
+        const demands = await db.demand.findMany({
+          where: { tenantId, assignedScmWorkerId: userId },
+          select: { relatedServiceIds: true }
+        });
+        const demandServiceIds = demands.flatMap((d) => {
+          try {
+            return JSON.parse(d.relatedServiceIds || '[]');
+          } catch {
+            return [];
+          }
+        });
+
+        const customerOrgIds = await getAssignedCustomerOrgIds(actor);
+        const entitlements = await db.entitlement.findMany({
+          where: {
+            tenantId,
+            orgNodeId: { in: customerOrgIds }
+          },
+          select: { offering: { select: { serviceId: true } } }
+        });
+        const entitledServiceIds = entitlements.map((e) => e.offering.serviceId);
+
+        const allowedServiceIds = Array.from(new Set([
+          ...ticketServiceIds,
+          ...demandServiceIds,
+          ...entitledServiceIds
+        ]));
+
+        roleClauses.push({ serviceId: { in: allowedServiceIds } });
+      }
+      if (isOwner) {
+        roleClauses.push({ serviceId: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    case 'SLA_EVENT': {
+      if (isLeader) {
+        roleClauses.push({});
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({ serviceCustomerId: orgNodeId });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        const tickets = await db.ticket.findMany({
+          where: { tenantId, assignedUserId: userId, NOT: { serviceId: null } },
+          select: { serviceId: true }
+        });
+        const ticketServiceIds = tickets.map((t) => t.serviceId as string);
+
+        const demands = await db.demand.findMany({
+          where: { tenantId, assignedScmWorkerId: userId },
+          select: { relatedServiceIds: true }
+        });
+        const demandServiceIds = demands.flatMap((d) => {
+          try {
+            return JSON.parse(d.relatedServiceIds || '[]');
+          } catch {
+            return [];
+          }
+        });
+
+        const allowedServiceIds = Array.from(new Set([...ticketServiceIds, ...demandServiceIds]));
+
+        roleClauses.push({
+          OR: [
+            { serviceCustomerId: { in: assignedCustomerOrgIds } },
+            { serviceId: { in: allowedServiceIds } }
+          ]
+        });
+      }
+      if (isOwner) {
+        roleClauses.push({ serviceId: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    case 'KNOWLEDGE_ARTICLE': {
+      if (isLeader || isWorker) {
+        roleClauses.push({});
+      }
+      if (isCustomer) {
+        roleClauses.push({ status: 'PUBLISHED' });
+      }
+      if (isOwner) {
+        roleClauses.push({
+          OR: [
+            { serviceId: { in: ownedServiceIds } },
+            { authorId: userId }
+          ]
+        });
+      }
+      break;
+    }
+
+    case 'SLA_REPORT': {
+      if (isLeader) {
+        const managedOrgIds = await getLeaderManagedOrgIds(actor);
+        if (managedOrgIds.length > 0) {
+          roleClauses.push({
+            reportCustomers: { some: { orgNodeId: { in: managedOrgIds } } }
+          });
+        } else {
+          roleClauses.push({});
+        }
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({
+            status: 'ISSUED',
+            reportCustomers: { some: { orgNodeId } }
+          });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        roleClauses.push({
+          OR: [
+            { preparedById: userId },
+            { reportCustomers: { some: { orgNodeId: { in: assignedCustomerOrgIds } } } }
+          ]
+        });
+      }
+      if (isOwner) {
+        roleClauses.push({
+          reportServices: { some: { serviceId: { in: ownedServiceIds } } }
+        });
+      }
+      break;
+    }
+
+    case 'GOVERNANCE_DECISION': {
+      if (isLeader) {
+        roleClauses.push({});
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        const workerDemands = await db.demand.findMany({
+          where: {
+            tenantId,
+            OR: [
+              { assignedScmWorkerId: userId },
+              { serviceCustomerId: { in: assignedCustomerOrgIds } }
+            ]
+          },
+          select: { id: true }
+        });
+        const workerDemandIds = workerDemands.map((d) => d.id);
+
+        const entitlements = await db.entitlement.findMany({
+          where: {
+            tenantId,
+            orgNodeId: { in: assignedCustomerOrgIds }
+          },
+          select: { offering: { select: { serviceId: true } } }
+        });
+        const entitledServiceIds = entitlements.map((e) => e.offering.serviceId);
+
+        roleClauses.push({
+          OR: [
+            { serviceId: { in: entitledServiceIds } },
+            { demandId: { in: workerDemandIds } }
+          ]
+        });
+      }
+      if (isOwner) {
+        roleClauses.push({ serviceId: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    case 'COMMUNICATION': {
+      if (isLeader) {
+        roleClauses.push({});
+      }
+      if (isCustomer) {
+        if (orgNodeId) {
+          roleClauses.push({
+            NOT: { direction: 'INTERNAL_NOTE' },
+            serviceCustomerId: orgNodeId
+          });
+        }
+      }
+      if (isWorker) {
+        const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(actor);
+        const workerDemands = await db.demand.findMany({
+          where: {
+            tenantId,
+            OR: [
+              { assignedScmWorkerId: userId },
+              { serviceCustomerId: { in: assignedCustomerOrgIds } }
+            ]
+          },
+          select: { id: true }
+        });
+        const workerDemandIds = workerDemands.map((d) => d.id);
+
+        roleClauses.push({
+          OR: [
+            { authorId: userId },
+            { serviceCustomerId: { in: assignedCustomerOrgIds } },
+            { demandId: { in: workerDemandIds } }
+          ]
+        });
+      }
+      if (isOwner) {
+        roleClauses.push({ serviceId: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    case 'SERVICE': {
+      if (isLeader || isWorker) {
+        roleClauses.push({});
+      }
+      if (isCustomer) {
+        roleClauses.push({ status: { in: ['ACTIVE', 'PLANNED'] } });
+      }
+      if (isOwner) {
+        roleClauses.push({ id: { in: ownedServiceIds } });
+      }
+      break;
+    }
+
+    default:
+      return { id: '__none__' };
+  }
+
+  if (roleClauses.length === 0) {
+    return { id: '__none__' };
+  }
+
+  // Strict tenant isolation and combination of roles
+  if (roleClauses.length === 1) {
+    return { tenantId, ...roleClauses[0] };
+  }
+
+  return {
+    tenantId,
+    OR: roleClauses
+  };
+}
+
+/**
+ * Get service IDs owned by the user directly or via delegated/backup ownership assignments.
+ */
+export async function getOwnedServiceIds(
+  actor: ActorContext,
+  userId: string,
+  tenantId: string
+): Promise<string[]> {
+  const directServices = await db.service.findMany({
+    where: { tenantId, serviceOwnerId: userId },
+    select: { id: true }
+  });
+  const ownedServiceIds = new Set(directServices.map((s) => s.id));
+
+  if (actor.serviceOwnerships) {
+    for (const oa of actor.serviceOwnerships) {
+      if (oa.status === 'ACCEPTED') {
+        ownedServiceIds.add(oa.serviceId);
+      }
+    }
+  } else {
+    const now = new Date();
+    const extra = await db.serviceOwnershipAssignment.findMany({
+      where: {
+        tenantId,
+        userId,
+        status: 'ACCEPTED',
+        validFrom: { lte: now },
+        OR: [
+          { validUntil: null },
+          { validUntil: { gte: now } }
+        ]
+      },
+      select: { serviceId: true }
+    });
+    for (const oa of extra) {
+      ownedServiceIds.add(oa.serviceId);
+    }
+  }
+  return Array.from(ownedServiceIds);
+}

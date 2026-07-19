@@ -31,7 +31,7 @@ export async function POST(
       requestedChanges: { status: 'CLOSED' },
       workflowState: demand.status,
     });
-    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!allowed.allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
     const reason =

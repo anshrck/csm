@@ -14,15 +14,17 @@ function authError(e: unknown) {
 
 // GET /api/problems/[id] — single problem with service.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireRole('SCM_WORKER', 'CM_LEADER', 'SERVICE_OWNER');
-  } catch (e) {
-    return authError(e);
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const roles = session.actorContext?.roles || [];
+  if (!roles.includes('SCM_WORKER') && !roles.includes('CM_LEADER') && !roles.includes('SERVICE_OWNER')) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const { id } = await params;
-  const p = await db.problem.findUnique({
-    where: { id },
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
+  const p = await db.problem.findFirst({
+    where: { id, tenantId },
     include: {
       service: { select: { id: true, name: true, domain: true, slaClass: true, chapter: true, status: true } },
     },
@@ -88,8 +90,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    const existing = await db.problem.findUnique({
-      where: { id },
+    const tenantId = session.actorContext?.tenantId || 'default-tenant';
+    const existing = await db.problem.findFirst({
+      where: { id, tenantId },
       include: { service: { select: { id: true, name: true, serviceOwnerId: true } } },
     });
     if (!existing) return NextResponse.json({ error: 'Problem not found' }, { status: 404 });

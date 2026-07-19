@@ -17,13 +17,14 @@ function money(n: number | null | undefined): string {
 // live portfolio. Queries are deliberately lightweight (counts + a handful
 // of records) so we never dump entire tables into the prompt.
 
-async function buildCustomerContext(session: SessionUser): Promise<string> {
+async function buildCustomerContext(session: any): Promise<string> {
   const orgId = session.orgNodeId;
   if (!orgId) return 'No organizational unit is linked to your account.';
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
 
   // Demands for this customer org
   const demands = await db.demand.findMany({
-    where: { serviceCustomerId: orgId },
+    where: { tenantId, serviceCustomerId: orgId },
     select: {
       id: true,
       title: true,
@@ -45,7 +46,7 @@ async function buildCustomerContext(session: SessionUser): Promise<string> {
 
   // Entitled services (via offerings → service)
   const entitlements = await db.entitlement.findMany({
-    where: { orgNodeId: orgId },
+    where: { tenantId, orgNodeId: orgId },
     include: { offering: { include: { service: { select: { id: true, name: true, slaClass: true, status: true } } } } },
     take: 100,
   });
@@ -57,7 +58,7 @@ async function buildCustomerContext(session: SessionUser): Promise<string> {
 
   // SLA events affecting this customer
   const slaEvents = await db.slaEvent.findMany({
-    where: { serviceCustomerId: orgId },
+    where: { tenantId, serviceCustomerId: orgId },
     include: { service: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 12,
@@ -86,9 +87,10 @@ async function buildCustomerContext(session: SessionUser): Promise<string> {
   return lines.join('\n');
 }
 
-async function buildScmWorkerContext(session: SessionUser): Promise<string> {
+async function buildScmWorkerContext(session: any): Promise<string> {
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
   const assigned = await db.demand.findMany({
-    where: { assignedScmWorkerId: session.id },
+    where: { tenantId, assignedScmWorkerId: session.id },
     select: {
       id: true,
       title: true,
@@ -104,7 +106,7 @@ async function buildScmWorkerContext(session: SessionUser): Promise<string> {
   });
 
   const unassigned = await db.demand.findMany({
-    where: { assignedScmWorkerId: null, status: 'NEW' },
+    where: { tenantId, assignedScmWorkerId: null, status: 'NEW' },
     select: { id: true, title: true, createdAt: true, customer: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 6,
@@ -127,7 +129,7 @@ async function buildScmWorkerContext(session: SessionUser): Promise<string> {
   const slaEvents =
     serviceIds.size > 0
       ? await db.slaEvent.findMany({
-          where: { serviceId: { in: [...serviceIds] } },
+          where: { tenantId, serviceId: { in: [...serviceIds] } },
           include: { service: { select: { name: true } } },
           orderBy: { createdAt: 'desc' },
           take: 12,
@@ -136,7 +138,7 @@ async function buildScmWorkerContext(session: SessionUser): Promise<string> {
 
   // Active changes this worker coordinates (as CE worker)
   const activeChanges = await db.change.findMany({
-    where: { assignedCeWorkerId: session.id, status: { notIn: ['CLOSED', 'REJECTED'] } },
+    where: { tenantId, assignedCeWorkerId: session.id, status: { notIn: ['CLOSED', 'REJECTED'] } },
     select: { id: true, title: true, status: true, type: true, complexity: true },
     take: 12,
   });
@@ -186,9 +188,11 @@ async function buildScmWorkerContext(session: SessionUser): Promise<string> {
   return lines.join('\n');
 }
 
-async function buildCmLeaderContext(session: SessionUser): Promise<string> {
+async function buildCmLeaderContext(session: any): Promise<string> {
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
   // Full demand picture
   const allDemands = await db.demand.findMany({
+    where: { tenantId },
     select: {
       id: true,
       title: true,
@@ -211,7 +215,7 @@ async function buildCmLeaderContext(session: SessionUser): Promise<string> {
 
   // Open SLA breaches
   const slaBreaches = await db.slaEvent.findMany({
-    where: { eventType: 'BREACHED', resolvedAt: null },
+    where: { tenantId, eventType: 'BREACHED', resolvedAt: null },
     include: { service: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
     take: 25,
@@ -229,7 +233,7 @@ async function buildCmLeaderContext(session: SessionUser): Promise<string> {
 
   // Active changes
   const activeChangesCount = await db.change.count({
-    where: { status: { notIn: ['CLOSED', 'REJECTED'] } },
+    where: { tenantId, status: { notIn: ['CLOSED', 'REJECTED'] } },
   });
 
   const lines: string[] = [];
@@ -258,9 +262,10 @@ async function buildCmLeaderContext(session: SessionUser): Promise<string> {
   return lines.join('\n');
 }
 
-async function buildServiceOwnerContext(session: SessionUser): Promise<string> {
+async function buildServiceOwnerContext(session: any): Promise<string> {
+  const tenantId = session.actorContext?.tenantId || 'default-tenant';
   const services = await db.service.findMany({
-    where: { serviceOwnerId: session.id },
+    where: { tenantId, serviceOwnerId: session.id },
     select: { id: true, name: true, slaClass: true, status: true, chapter: true, domain: true },
   });
   const serviceIds = services.map((s) => s.id);
@@ -269,7 +274,7 @@ async function buildServiceOwnerContext(session: SessionUser): Promise<string> {
   const slaEvents =
     serviceIds.length > 0
       ? await db.slaEvent.findMany({
-          where: { serviceId: { in: serviceIds } },
+          where: { tenantId, serviceId: { in: serviceIds } },
           include: { service: { select: { name: true } } },
           orderBy: { createdAt: 'desc' },
           take: 25,
@@ -280,7 +285,7 @@ async function buildServiceOwnerContext(session: SessionUser): Promise<string> {
   const problems =
     serviceIds.length > 0
       ? await db.problem.findMany({
-          where: { serviceId: { in: serviceIds }, status: { notIn: ['CLOSED'] } },
+          where: { tenantId, serviceId: { in: serviceIds }, status: { notIn: ['CLOSED'] } },
           select: { id: true, title: true, status: true, serviceId: true, updatedAt: true },
           orderBy: { updatedAt: 'desc' },
           take: 25,
@@ -291,7 +296,7 @@ async function buildServiceOwnerContext(session: SessionUser): Promise<string> {
   const candidateDemands =
     serviceIds.length > 0
       ? await db.demand.findMany({
-          where: { status: { in: ['ACCEPTED', 'IN_CHANGE'] } },
+          where: { tenantId, status: { in: ['ACCEPTED', 'IN_CHANGE'] } },
           select: {
             id: true,
             title: true,

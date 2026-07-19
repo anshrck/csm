@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import type { SlaEvent, SlaHealth } from '@/lib/types';
+import { buildEntityQueryScope } from '@/lib/entity-access';
 
 export const runtime = 'nodejs';
 
@@ -36,21 +37,17 @@ export async function GET(req: NextRequest) {
   const typeParam = sp.get('type');
   const activeParam = sp.get('active');
 
-  // Build base filter
-  const where: Record<string, unknown> = {};
-  if (serviceIdParam) where.serviceId = serviceIdParam;
-  if (typeParam) where.eventType = typeParam;
-  if (activeParam === '1') where.resolvedAt = null;
+  const scope = await buildEntityQueryScope(session, 'SLA_EVENT');
+  if (scope.id === '__none__') return NextResponse.json([]);
 
-  // Role scoping — SERVICE_CUSTOMER is restricted to their own orgNode.
-  if (session.role === 'SERVICE_CUSTOMER') {
-    if (!session.orgNodeId) {
-      return NextResponse.json<SlaEventWithHealth[]>([]);
-    }
-    where.serviceCustomerId = session.orgNodeId;
-  } else if (customerIdParam) {
-    // Allow explicit customer filter for non-customer roles.
-    where.serviceCustomerId = customerIdParam;
+  // Build base filter
+  const where: any = { AND: [scope] };
+  if (serviceIdParam) where.AND.push({ serviceId: serviceIdParam });
+  if (typeParam) where.AND.push({ eventType: typeParam });
+  if (activeParam === '1') where.AND.push({ resolvedAt: null });
+
+  if (customerIdParam && session.role !== 'SERVICE_CUSTOMER') {
+    where.AND.push({ serviceCustomerId: customerIdParam });
   }
 
   const events = await db.slaEvent.findMany({

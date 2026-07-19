@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
-import { canAccessEntity, getAssignedCustomerOrgIds } from '@/lib/entity-access';
+import { canAccessEntity, buildEntityQueryScope } from '@/lib/entity-access';
 import type { Role, SessionUser } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -82,57 +82,15 @@ async function searchDemands(
   limit: number,
   out: SearchResult[],
 ): Promise<void> {
-  const where: Record<string, unknown> = {
-    OR: [{ title: { contains: q } }, { description: { contains: q } }],
-  };
+  const scope = await buildEntityQueryScope(session, 'DEMAND');
+  if (scope.id === '__none__') return;
 
-  if (session.role === ('SERVICE_CUSTOMER' as Role)) {
-    if (!session.orgNodeId) return;
-    where.serviceCustomerId = session.orgNodeId;
-  } else if (session.role === ('SCM_WORKER' as Role)) {
-    // SCM sees demands assigned to them + demands from customers they serve.
-    const assignedOrgIds = await getAssignedCustomerOrgIds(session.id);
-    const orClauses: Record<string, unknown>[] = [{ assignedScmWorkerId: session.id }];
-    if (assignedOrgIds.length) {
-      orClauses.push({ serviceCustomerId: { in: assignedOrgIds } });
-    }
-    where.AND = [{ OR: orClauses }];
-  } else if (session.role === ('SERVICE_OWNER' as Role)) {
-    // Owner sees demands touching their services. relatedServiceIds is a JSON
-    // string — we filter client-side after the contains query.
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    const ownedIds = owned.map((s) => s.id);
-    if (ownedIds.length === 0) return;
-    const rows = await db.demand.findMany({
-      where,
-      select: { id: true, title: true, status: true, relatedServiceIds: true },
-      take: 50,
-      orderBy: { updatedAt: 'desc' },
-    });
-    const filtered = rows.filter((r) => {
-      let svcIds: string[] = [];
-      try {
-        svcIds = JSON.parse(r.relatedServiceIds || '[]');
-      } catch {
-        /* empty */
-      }
-      return svcIds.some((sid) => ownedIds.includes(sid));
-    });
-    for (const r of filtered.slice(0, limit)) {
-      out.push({
-        type: 'DEMAND',
-        id: r.id,
-        title: r.title,
-        subtitle: r.status,
-        url: `/${rolePrefix}/demands/${r.id}`,
-      });
-    }
-    return;
-  }
-  // CM_LEADER — no extra filter.
+  const where: any = {
+    AND: [
+      scope,
+      { OR: [{ title: { contains: q } }, { description: { contains: q } }] },
+    ],
+  };
 
   const rows = await db.demand.findMany({
     where,
@@ -158,32 +116,15 @@ async function searchTickets(
   limit: number,
   out: SearchResult[],
 ): Promise<void> {
-  const where: Record<string, unknown> = {
-    OR: [{ title: { contains: q } }, { number: { contains: q } }, { description: { contains: q } }],
-  };
+  const scope = await buildEntityQueryScope(session, 'TICKET');
+  if (scope.id === '__none__') return;
 
-  if (session.role === ('SERVICE_CUSTOMER' as Role)) {
-    if (!session.orgNodeId) return;
-    where.serviceCustomerId = session.orgNodeId;
-  } else if (session.role === ('SCM_WORKER' as Role)) {
-    const assignedOrgIds = await getAssignedCustomerOrgIds(session.id);
-    const orClauses: Record<string, unknown>[] = [
-      { assignedUserId: session.id },
-      { assignedUserId: null },
-    ];
-    if (assignedOrgIds.length) {
-      orClauses.push({ serviceCustomerId: { in: assignedOrgIds } });
-    }
-    where.AND = [{ OR: orClauses }];
-  } else if (session.role === ('SERVICE_OWNER' as Role)) {
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    if (owned.length === 0) return;
-    where.serviceId = { in: owned.map((s) => s.id) };
-  }
-  // CM_LEADER — no filter.
+  const where: any = {
+    AND: [
+      scope,
+      { OR: [{ title: { contains: q } }, { number: { contains: q } }, { description: { contains: q } }] },
+    ],
+  };
 
   const rows = await db.ticket.findMany({
     where,
@@ -203,15 +144,21 @@ async function searchTickets(
 }
 
 async function searchServices(
-  _session: SessionUser,
+  session: SessionUser,
   q: string,
   rolePrefix: string,
   limit: number,
   out: SearchResult[],
 ): Promise<void> {
+  const scope = await buildEntityQueryScope(session, 'SERVICE');
+  if (scope.id === '__none__') return;
+
   const rows = await db.service.findMany({
     where: {
-      OR: [{ name: { contains: q } }, { description: { contains: q } }],
+      AND: [
+        scope,
+        { OR: [{ name: { contains: q } }, { description: { contains: q } }] },
+      ],
     },
     select: { id: true, name: true, slaClass: true, status: true, domain: true },
     take: limit,
@@ -235,12 +182,15 @@ async function searchKnowledge(
   limit: number,
   out: SearchResult[],
 ): Promise<void> {
-  const where: Record<string, unknown> = {
-    OR: [{ title: { contains: q } }, { body: { contains: q } }],
+  const scope = await buildEntityQueryScope(session, 'KNOWLEDGE_ARTICLE');
+  if (scope.id === '__none__') return;
+
+  const where: any = {
+    AND: [
+      scope,
+      { OR: [{ title: { contains: q } }, { body: { contains: q } }] },
+    ],
   };
-  if (session.role === ('SERVICE_CUSTOMER' as Role)) {
-    where.status = 'PUBLISHED';
-  }
 
   const rows = await db.knowledgeArticle.findMany({
     where,
@@ -269,44 +219,15 @@ async function searchChanges(
   // Customers don't see the Changes workspace directly.
   if (session.role === ('SERVICE_CUSTOMER' as Role)) return;
 
-  const where: Record<string, unknown> = {
-    OR: [{ title: { contains: q } }, { implementationPlan: { contains: q } }],
-  };
+  const scope = await buildEntityQueryScope(session, 'CHANGE');
+  if (scope.id === '__none__') return;
 
-  if (session.role === ('SERVICE_OWNER' as Role)) {
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    if (owned.length === 0) return;
-    // affectedServiceIds is JSON — filter client-side.
-    const rows = await db.change.findMany({
-      where,
-      select: { id: true, title: true, status: true, type: true, affectedServiceIds: true },
-      take: 30,
-      orderBy: { updatedAt: 'desc' },
-    });
-    const ownedIds = owned.map((s) => s.id);
-    const filtered = rows.filter((r) => {
-      let svcIds: string[] = [];
-      try {
-        svcIds = JSON.parse(r.affectedServiceIds || '[]');
-      } catch {
-        /* empty */
-      }
-      return svcIds.some((sid) => ownedIds.includes(sid));
-    });
-    for (const r of filtered.slice(0, limit)) {
-      out.push({
-        type: 'CHANGE',
-        id: r.id,
-        title: r.title,
-        subtitle: `${r.type} · ${r.status}`,
-        url: `/${rolePrefix}/changes`,
-      });
-    }
-    return;
-  }
+  const where: any = {
+    AND: [
+      scope,
+      { OR: [{ title: { contains: q } }, { implementationPlan: { contains: q } }] },
+    ],
+  };
 
   const rows = await db.change.findMany({
     where,
@@ -335,18 +256,15 @@ async function searchProblems(
   // Problems are internal — customers don't see them.
   if (session.role === ('SERVICE_CUSTOMER' as Role)) return;
 
-  const where: Record<string, unknown> = {
-    OR: [{ title: { contains: q } }, { rootCauseDescription: { contains: q } }],
-  };
+  const scope = await buildEntityQueryScope(session, 'PROBLEM');
+  if (scope.id === '__none__') return;
 
-  if (session.role === ('SERVICE_OWNER' as Role)) {
-    const owned = await db.service.findMany({
-      where: { serviceOwnerId: session.id },
-      select: { id: true },
-    });
-    if (owned.length === 0) return;
-    where.serviceId = { in: owned.map((s) => s.id) };
-  }
+  const where: any = {
+    AND: [
+      scope,
+      { OR: [{ title: { contains: q } }, { rootCauseDescription: { contains: q } }] },
+    ],
+  };
 
   const rows = await db.problem.findMany({
     where,

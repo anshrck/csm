@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
     // Entity-access gate via central authorize layer
     const allowed = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'read', recordId: entityId });
-    if (!allowed) {
+    if (!allowed.allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 
     if (!conv && createIfMissing) {
       const allowedWrite = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'update', recordId: entityId });
-      if (!allowedWrite) {
+      if (!allowedWrite.allowed) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
 
     // Entity-access gate via central authorize layer
     const allowed = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'update', recordId: entityId });
-    if (!allowed) {
+    if (!allowed.allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
