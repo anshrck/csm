@@ -51,6 +51,12 @@ export async function PATCH(
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (session.role === 'SERVICE_CUSTOMER' || session.role === 'SERVICE_OWNER') {
+      return NextResponse.json(
+        { error: 'Only SCM Workers and CM Leaders can edit tickets' },
+        { status: 403 },
+      );
+    }
     const { id } = await params;
 
     const existingTicket = await db.ticket.findUnique({ where: { id } });

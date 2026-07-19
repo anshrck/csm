@@ -90,6 +90,30 @@ export async function requireAnyPermission(...keys: string[]): Promise<SessionUs
 /** Check (non-throwing) whether the caller has a permission. */
 export async function hasPermission(session: SessionUser | null, key: string): Promise<boolean> {
   if (!session) return false;
+
+  // 1. Evaluate custom AccessGrants (DENY > ALLOW > baseline)
+  const now = new Date();
+  const grants = await db.accessGrant.findMany({
+    where: {
+      userId: session.id,
+      permission: { key },
+    },
+    include: { permission: true },
+  });
+
+  const activeGrants = grants.filter((g) => {
+    const fromOk = g.validFrom <= now;
+    const untilOk = g.validUntil === null || g.validUntil >= now;
+    return fromOk && untilOk;
+  });
+
+  const denyGrant = activeGrants.find((g) => g.effect === 'DENY');
+  if (denyGrant) return false; // DENY wins
+
+  const allowGrant = activeGrants.find((g) => g.effect === 'ALLOW');
+  if (allowGrant) return true; // ALLOW wins
+
+  // 2. Fall back to role-based baseline
   const perms = await loadPermissions();
   const rolePerms = perms[session.role];
   return !!rolePerms && rolePerms.has(key);
@@ -366,6 +390,19 @@ export async function authorize(
             (state === 'IN_PROGRESS' && (targetStatus === 'WAITING_CUSTOMER' || targetStatus === 'RESOLVED'));
           if (!allowed) return false;
         }
+      }
+    } else if (params.resource === 'change') {
+      const targetStatus = params.requestedChanges?.status;
+      if (targetStatus && targetStatus !== state) {
+        const allowed =
+          (state === 'REQUESTED' && targetStatus === 'ASSESSMENT') ||
+          (state === 'ASSESSMENT' && targetStatus === 'PLANNING') ||
+          (state === 'PLANNING' && targetStatus === 'APPROVED') ||
+          (state === 'APPROVED' && targetStatus === 'IMPLEMENTATION') ||
+          (state === 'IMPLEMENTATION' && targetStatus === 'VERIFICATION') ||
+          (state === 'VERIFICATION' && targetStatus === 'CLOSED') ||
+          (targetStatus === 'REJECTED');
+        if (!allowed) return false;
       }
     }
   }

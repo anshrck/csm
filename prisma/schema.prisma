@@ -41,6 +41,16 @@ model User {
   customerAssignments CustomerAssignment[]
   knowledgeVersions   KnowledgeArticleVersion[] @relation("KnowledgeVersionCreator")
 
+  // Enterprise additions
+  roleAssignments      UserRoleAssignment[]
+  accessGrants         AccessGrant[]
+  ownershipAssignments ServiceOwnershipAssignment[]
+  teamMemberships      TeamMembership[]
+  queueMemberships     QueueMembership[]
+  requestedApprovals   Approval[]                  @relation("ApprovalRequester")
+  assignedApprovals    Approval[]                  @relation("ApprovalApprover")
+  assignedEscalations  Escalation[]
+
   @@index([role])
 }
 
@@ -94,6 +104,7 @@ model Service {
   technicalOwnerTasks TechnicalOwnerTask[]
   // Service Owner Enterprise
   risks         ServiceRisk[]
+  ownershipAssignments ServiceOwnershipAssignment[]
 
   @@index([domain])
   @@index([slaClass])
@@ -181,6 +192,9 @@ model Demand {
   handovers    ProcessHandover[] @relation("HandoverDemand")
   // Phase 2-6 relations
   demandServices DemandService[]
+
+  // Enterprise additions
+  escalations  Escalation[]
 
   @@index([status])
   @@index([serviceCustomerId])
@@ -477,6 +491,9 @@ model Ticket {
   events        TicketEvent[]
   slaClocks     SlaClock[]
 
+  // Enterprise additions
+  escalations  Escalation[]
+
   @@index([status])
   @@index([serviceCustomerId])
   @@index([assignedUserId])
@@ -664,6 +681,9 @@ model Permission {
   description String
 
   rolePermissions RolePermission[]
+
+  // Enterprise additions
+  accessGrants AccessGrant[]
 }
 
 model RolePermission {
@@ -854,6 +874,8 @@ model UserRoleAssignment {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([userId, roleId, scopeType, scopeId])
 }
 
@@ -868,6 +890,9 @@ model AccessGrant {
   validUntil   DateTime?
   grantedBy    String?
   createdAt    DateTime  @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([userId, permissionId, scopeType, scopeId])
 }
@@ -884,6 +909,9 @@ model ServiceOwnershipAssignment {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([serviceId, userId, assignmentType])
 }
 
@@ -894,6 +922,8 @@ model Team {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  members TeamMembership[]
 }
 
 model TeamMembership {
@@ -902,6 +932,9 @@ model TeamMembership {
   userId    String
   role      String   @default("MEMBER") // LEAD | MEMBER
   createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
 }
@@ -912,6 +945,8 @@ model Queue {
   type      String   // TICKET | DEMAND
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  members QueueMembership[]
 }
 
 model QueueMembership {
@@ -919,6 +954,9 @@ model QueueMembership {
   queueId   String
   userId    String
   createdAt DateTime @default(now())
+
+  queue Queue @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([queueId, userId])
 }
@@ -930,6 +968,10 @@ model WorkflowDefinition {
   version     Int      @default(1)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
+
+  states      WorkflowState[]
+  transitions WorkflowTransition[]
+  versions    WorkflowVersion[]
 }
 
 model WorkflowState {
@@ -939,6 +981,8 @@ model WorkflowState {
   isInitial   Boolean  @default(false)
   isTerminal  Boolean  @default(false)
   createdAt   DateTime @default(now())
+
+  workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
 }
 
 model WorkflowTransition {
@@ -949,6 +993,8 @@ model WorkflowTransition {
   action      String   // e.g. triage, approve, close
   permission  String?  // required permission key
   createdAt   DateTime @default(now())
+
+  workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
 }
 
 model Approval {
@@ -964,6 +1010,9 @@ model Approval {
   dueAt          DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  requester User  @relation("ApprovalRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  approver  User? @relation("ApprovalApprover", fields: [approverId], references: [id])
 }
 
 model Escalation {
@@ -978,4 +1027,41 @@ model Escalation {
   dueAt        DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  responsible User?   @relation(fields: [responsibleId], references: [id])
+  ticket      Ticket? @relation(fields: [ticketId], references: [id])
+  demand      Demand? @relation(fields: [demandId], references: [id])
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TenantMembership {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      String   @default("MEMBER") // ADMIN | MEMBER
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, userId])
+}
+
+model WorkflowVersion {
+  id          String   @id @default(cuid())
+  workflowId  String
+  version     Int
+  status      String   @default("DRAFT") // DRAFT | REVIEW | PUBLISHED | RETIRED
+  effectiveAt DateTime?
+  publishedBy String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflow WorkflowDefinition @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, version])
 }

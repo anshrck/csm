@@ -111,6 +111,12 @@ export interface SessionUser {
   orgNodeName: string | null;
   avatarColor: string;
   title: string | null;
+  roles?: Role[];
+  roleAssignments?: {
+    roleId: string;
+    scopeType: string;
+    scopeId: string | null;
+  }[];
 }
 
 export interface OrgNode {
