@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
 import type { Role } from '@/lib/types';
 import { validateBody, knowledgeArticleSchema } from '@/lib/validation';
@@ -95,11 +96,11 @@ export async function GET(req: NextRequest) {
 // endpoints below.
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireRole(
-      'SCM_WORKER' as Role,
-      'CM_LEADER' as Role,
-      'SERVICE_OWNER' as Role,
-    );
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const allowed = await authorize(session, { resource: 'knowledge', action: 'create' });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const raw = await req.json().catch(() => ({}));
     const parsed = validateBody(knowledgeArticleSchema, raw);

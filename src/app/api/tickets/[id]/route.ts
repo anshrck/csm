@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
-import { requireEntityAccess } from '@/lib/entity-access';
-import { isAgent } from '../_helpers';
 import {
   TICKET_INCLUDE,
   serializeTicket,
@@ -16,7 +15,6 @@ export const runtime = 'nodejs';
 // ---- GET /api/tickets/[id] -------------------------------------------------
 //
 // Fetch a single ticket with events, slaClocks, service, customer, assignee.
-// All authenticated roles; scoping enforced via the entity-access helper.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -34,9 +32,8 @@ export async function GET(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    try {
-      await requireEntityAccess(session, 'TICKET', id, 'read');
-    } catch {
+    const allowed = await authorize(session, { resource: 'ticket', action: 'read', recordId: id });
+    if (!allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -47,15 +44,6 @@ export async function GET(
 }
 
 // ---- PATCH /api/tickets/[id] -----------------------------------------------
-//
-// Update editable fields. Direct `status` writes are FORBIDDEN — transitions
-// must go through the dedicated action routes (/assign, /triage, /progress,
-// /waiting, /resume, /resolve, /close, /reopen). Role gating:
-//   - title, description, priority, impact, urgency, serviceId,
-//     assignedUserId, assignmentGroupId, resolutionCode, resolutionNotes:
-//     SCM_WORKER (must be in scope) or CM_LEADER.
-//   - SERVICE_CUSTOMER: cannot PATCH tickets.
-//   - SERVICE_OWNER: cannot PATCH tickets (read-only).
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -63,20 +51,7 @@ export async function PATCH(
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (!isAgent(session.role)) {
-      return NextResponse.json(
-        { error: 'Only SCM Workers and CM Leaders can edit tickets' },
-        { status: 403 },
-      );
-    }
     const { id } = await params;
-
-    // Entity-access gate (write).
-    try {
-      await requireEntityAccess(session, 'TICKET', id, 'write');
-    } catch {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     const existingTicket = await db.ticket.findUnique({ where: { id } });
     if (!existingTicket) {
@@ -84,6 +59,17 @@ export async function PATCH(
     }
 
     const body = await req.json().catch(() => ({}));
+
+    const allowed = await authorize(session, {
+      resource: 'ticket',
+      action: 'update',
+      recordId: id,
+      requestedChanges: body,
+      workflowState: existingTicket.status,
+    });
+    if (!allowed) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     // Direct status writes are forbidden — transitions must go through the
     // dedicated action routes.

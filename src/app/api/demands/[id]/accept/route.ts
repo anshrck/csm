@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -17,17 +18,19 @@ export async function POST(
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (session.role !== 'SERVICE_CUSTOMER') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const { id } = await params;
+
     const demand = await db.demand.findUnique({ where: { id } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    if (demand.serviceCustomerId !== session.orgNodeId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const allowed = await authorize(session, {
+      resource: 'demand',
+      action: 'accept',
+      recordId: id,
+      requestedChanges: { status: 'ACCEPTED' },
+      workflowState: demand.status,
+    });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'QUOTED') {
       return NextResponse.json(

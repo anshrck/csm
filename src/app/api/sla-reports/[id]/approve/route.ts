@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
-import type { Role } from '@/lib/types';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 
 export const runtime = 'nodejs';
 
@@ -13,11 +13,15 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole('CM_LEADER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
     const report = await db.slaReport.findUnique({ where: { id } });
     if (!report) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    const allowed = await authorize(session, { resource: 'sla_report', action: 'approve', recordId: id });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (report.status !== 'PENDING_REVIEW') {
       return NextResponse.json(

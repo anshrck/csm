@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { serializeChange, authError } from '../_serialize';
 import type { Change, ProcessHandover, Service } from '@/lib/types';
 
@@ -10,13 +11,13 @@ const VALID_COMPLEXITY = new Set(['SIMPLE', 'MEDIUM', 'COMPLEX']);
 
 // GET /api/changes/[id] — single change with originDemand, services, handovers.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireRole('SCM_WORKER', 'CM_LEADER', 'SERVICE_OWNER');
-  } catch (e) {
-    return authError(e);
-  }
-
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
+
+  const allowed = await authorize(session, { resource: 'change', action: 'read', recordId: id });
+  if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   const c = await db.change.findUnique({
     where: { id },
     include: {
@@ -82,15 +83,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 // PATCH /api/changes/[id] — update editable fields on a non-terminal change.
-// Body: complexity?, implementationPlan?, technicalOwnerTasksJson?, verificationNotes?, approvalNotes?, assignedCeWorkerId?
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireRole('SCM_WORKER', 'CM_LEADER');
-  } catch (e) {
-    return authError(e);
-  }
-
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
+
+  const allowed = await authorize(session, { resource: 'change', action: 'update', recordId: id });
+  if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   let body: any;
   try {
     body = await req.json();

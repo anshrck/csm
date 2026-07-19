@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from '../../_serialize';
 
@@ -23,30 +24,20 @@ export async function POST(
     const demand = await db.demand.findUnique({ where: { id } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+    const allowed = await authorize(session, {
+      resource: 'demand',
+      action: 'close',
+      recordId: id,
+      requestedChanges: { status: 'CLOSED' },
+      workflowState: demand.status,
+    });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
     const body = await req.json().catch(() => ({}));
     const reason =
       typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim() : null;
 
     const isCustomer = session.role === 'SERVICE_CUSTOMER';
-    const isScmOrCm = session.role === 'SCM_WORKER' || session.role === 'CM_LEADER';
-
-    if (!isCustomer && !isScmOrCm) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // Customer must own this demand.
-    if (isCustomer && demand.serviceCustomerId !== session.orgNodeId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // SCM scoping: assigned worker only (CM_LEADER can close any).
-    if (
-      session.role === 'SCM_WORKER' &&
-      demand.assignedScmWorkerId !== null &&
-      demand.assignedScmWorkerId !== session.id
-    ) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     // Validate current status against the close semantics.
     if (demand.status === 'FULFILLED') {

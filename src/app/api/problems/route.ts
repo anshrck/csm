@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import type { Problem } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -36,12 +37,8 @@ function serializeProblem(
 // GET /api/problems — list problems.
 // Query: serviceId, status, owner=me (problems on services owned by the caller — SERVICE_OWNER)
 export async function GET(req: NextRequest) {
-  let session;
-  try {
-    session = await requireRole('SCM_WORKER', 'CM_LEADER', 'SERVICE_OWNER');
-  } catch (e) {
-    return authError(e);
-  }
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const sp = req.nextUrl.searchParams;
   const where: any = {};
@@ -67,5 +64,11 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
-  return NextResponse.json(items.map(serializeProblem) as Problem[]);
+  const filtered: any[] = [];
+  for (const item of items) {
+    const allowed = await authorize(session, { resource: 'problem', action: 'read', recordId: item.id });
+    if (allowed) filtered.push(item);
+  }
+
+  return NextResponse.json(filtered.map(serializeProblem) as Problem[]);
 }

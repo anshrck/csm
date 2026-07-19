@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession, requireRole } from '@/lib/auth';
 import { getAssignedCustomerOrgIds } from '@/lib/entity-access';
+import { authorize } from '@/lib/permissions';
 import type { Role } from '@/lib/types';
 import { DEMAND_INCLUDE, serializeDemand, errorResponse, type DemandWithRelations } from './_serialize';
 
@@ -119,7 +120,11 @@ export async function GET(req: NextRequest) {
 // Role: SERVICE_CUSTOMER or SCM_WORKER.
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireRole('SERVICE_CUSTOMER' as Role, 'SCM_WORKER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const allowed = await authorize(session, { resource: 'demand', action: 'create' });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
     const title = typeof body.title === 'string' ? body.title.trim() : '';

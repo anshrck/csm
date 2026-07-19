@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireRole } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { auditLog } from '@/lib/audit';
-import type { Role } from '@/lib/types';
 import {
   DEMAND_INCLUDE,
   serializeDemand,
@@ -16,27 +16,20 @@ export const runtime = 'nodejs';
 // SCM_WORKER submits their quote draft for CM Leader approval.
 // Validates: caller is SCM_WORKER, demand is UNDER_REVIEW, quote fields are filled.
 // Side effects: creates a COMMENT event + notifications to all CM_LEADER users.
-// Note: the PATCH /api/demands/[id] endpoint already saves the quote fields; this route
-// is the explicit "request approval" action that creates the audit trail + notifications.
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await requireRole('SCM_WORKER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
 
     const demand = await db.demand.findUnique({ where: { id } });
     if (!demand) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // SCM must be the assigned worker (or a CM Leader acting on their behalf — but this
-    // route is SCM_WORKER-only per spec)
-    if (demand.assignedScmWorkerId && demand.assignedScmWorkerId !== session.id) {
-      return NextResponse.json(
-        { error: 'Only the assigned SCM Worker can request quote approval' },
-        { status: 403 },
-      );
-    }
+    const allowed = await authorize(session, { resource: 'demand', action: 'update', recordId: id });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (demand.status !== 'UNDER_REVIEW') {
       return NextResponse.json(
@@ -83,7 +76,7 @@ export async function POST(
 
     await auditLog({
       actor: session,
-      action: 'DEMAND_QUOTE_APPROVAL_REQUESTED',
+      action: 'DEMAND_QUOTE_APPROVAL_REQS',
       entityType: 'Demand',
       entityId: id,
       before: { status: demand.status, quoteApprovedByCmLeader: demand.quoteApprovedByCmLeader },
