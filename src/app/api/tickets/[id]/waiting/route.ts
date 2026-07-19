@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { requireEntityAccess } from '@/lib/entity-access';
+import { requireAuthorizedAction } from '@/lib/permissions';
 import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
-import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
   serializeTicket,
@@ -16,31 +14,25 @@ export const runtime = 'nodejs';
 
 // POST /api/tickets/[id]/waiting
 // Body: { comment: string (required, customer-visible), notes? }
-//
-// Transition: IN_PROGRESS | ASSIGNED | TRIAGED → WAITING_CUSTOMER.
-// Requires a customer-visible `comment` (state-machine enforced). The comment
-// is posted to the ticket's conversation thread + a TicketEvent is emitted.
-// Pauses all RUNNING SLA clocks.
-// Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (!isAgent(session.role)) {
-      return NextResponse.json(
-        { error: 'Only SCM Workers and CM Leaders can set tickets to waiting' },
-        { status: 403 },
-      );
-    }
     const { id } = await params;
+    const body = await req.json().catch(() => ({}));
 
-    // Entity-access gate (write).
+    let session;
     try {
-      await requireEntityAccess(session, 'TICKET', id, 'write');
-    } catch {
+      session = await requireAuthorizedAction({
+        resource: 'ticket',
+        action: 'update',
+        recordId: id,
+        requestedChanges: body,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'UNAUTHORIZED') return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -48,8 +40,6 @@ export async function POST(
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-
-    const body = await req.json().catch(() => ({}));
 
     // State-machine validation — requires a customer-visible `comment`.
     const currentStatus = ticket.status as TicketStatus;

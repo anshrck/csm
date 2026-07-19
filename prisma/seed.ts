@@ -566,4 +566,63 @@ async function seedCustomerAssignments() {
   console.log('  Customer assignments, SLA escalation policies, and sequence counters seeded.');
 }
 
+// ---- Enterprise Role & Workflow Seeding ----
+async function seedEnterpriseRolesAndWorkflows() {
+  const users = await db.user.findMany();
+  for (const u of users) {
+    await db.userRoleAssignment.upsert({
+      where: {
+        userId_roleId_scopeType_scopeId: {
+          userId: u.id,
+          roleId: u.role,
+          scopeType: 'TENANT',
+          scopeId: 'default-tenant',
+        },
+      },
+      update: {},
+      create: {
+        userId: u.id,
+        roleId: u.role,
+        scopeType: 'TENANT',
+        scopeId: 'default-tenant',
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  // Seed standard workflows
+  const workflows = [
+    { name: 'Standard Demand Pipeline', resource: 'demand' },
+    { name: 'Standard Incident Flow', resource: 'ticket' },
+    { name: 'Standard Change Execution', resource: 'change' },
+  ];
+
+  for (const wf of workflows) {
+    const created = await db.workflowDefinition.create({
+      data: { name: wf.name, resource: wf.resource, active: true },
+    });
+
+    const states =
+      wf.resource === 'demand'
+        ? ['NEW', 'UNDER_REVIEW', 'QUOTED', 'ACCEPTED', 'IN_CHANGE', 'FULFILLED', 'CLOSED', 'REJECTED', 'REDIRECTED']
+        : wf.resource === 'ticket'
+          ? ['NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_CUSTOMER', 'RESOLVED', 'CLOSED', 'CANCELED']
+          : ['REQUESTED', 'ASSESSMENT', 'PLANNING', 'APPROVED', 'IMPLEMENTATION', 'VERIFICATION', 'CLOSED', 'REJECTED'];
+
+    for (const st of states) {
+      await db.workflowState.create({
+        data: {
+          workflowId: created.id,
+          name: st,
+          isInitial: st === 'NEW' || st === 'REQUESTED',
+          isTerminal: st === 'CLOSED' || st === 'REJECTED' || st === 'REDIRECTED' || st === 'CANCELED',
+        },
+      });
+    }
+  }
+
+  console.log('  Enterprise role assignments and workflow definitions seeded.');
+}
+
 await seedCustomerAssignments();
+await seedEnterpriseRolesAndWorkflows();

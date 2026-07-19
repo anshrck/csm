@@ -70,9 +70,8 @@ export function invalidatePermissionCache() {
 export async function requirePermission(key: string): Promise<SessionUser> {
   const session = await getSession();
   if (!session) throw new Error('UNAUTHORIZED');
-  const perms = await loadPermissions();
-  const rolePerms = perms[session.role];
-  if (!rolePerms || !rolePerms.has(key)) {
+  const has = await hasPermission(session, key);
+  if (!has) {
     throw new Error('FORBIDDEN');
   }
   return session;
@@ -82,17 +81,14 @@ export async function requirePermission(key: string): Promise<SessionUser> {
 export async function requireAnyPermission(...keys: string[]): Promise<SessionUser> {
   const session = await getSession();
   if (!session) throw new Error('UNAUTHORIZED');
-  const perms = await loadPermissions();
-  const rolePerms = perms[session.role] ?? new Set<string>();
-  if (!keys.some((k) => rolePerms.has(k))) {
-    throw new Error('FORBIDDEN');
+  for (const key of keys) {
+    if (await hasPermission(session, key)) return session;
   }
-  return session;
+  throw new Error('FORBIDDEN');
 }
 
 /** Check (non-throwing) whether the caller has a permission. */
-export async function hasPermission(key: string): Promise<boolean> {
-  const session = await getSession();
+export async function hasPermission(session: SessionUser | null, key: string): Promise<boolean> {
   if (!session) return false;
   const perms = await loadPermissions();
   const rolePerms = perms[session.role];
@@ -262,9 +258,9 @@ export async function authorize(
   const permKey = getRequiredPermission(params.resource, params.action, session.role);
   if (!permKey) return false; // Default result is DENY
 
-  const hasPerm = await hasPermission(permKey);
+  const hasPerm = await hasPermission(session, permKey);
   // Support tenant-wide override permissions for CM_LEADER and SERVICE_OWNER
-  const hasTenantPerm = await hasPermission(`${params.resource}.read.tenant`);
+  const hasTenantPerm = await hasPermission(session, `${params.resource}.read.tenant`);
   if (!hasPerm && !hasTenantPerm) return false;
 
   // 3. Record in scope check (delegated to canAccessEntity)
@@ -274,15 +270,15 @@ export async function authorize(
       ticket: 'TICKET',
       change: 'CHANGE',
       problem: 'PROBLEM',
-      service: 'KNOWLEDGE_ARTICLE', // fallback/shared scoping
-      service_offering: 'KNOWLEDGE_ARTICLE',
+      service: 'SERVICE',
+      service_offering: 'SERVICE_OFFERING',
       sla: 'SLA_EVENT',
       sla_report: 'SLA_REPORT',
       knowledge: 'KNOWLEDGE_ARTICLE',
       communication: 'COMMUNICATION',
       governance_decision: 'GOVERNANCE_DECISION',
-      audit: 'COMMUNICATION',
-      user_assignment: 'COMMUNICATION',
+      audit: 'AUDIT_LOG',
+      user_assignment: 'CUSTOMER_ASSIGNMENT',
     };
     const entityType = entityMap[params.resource];
     if (entityType) {
@@ -355,6 +351,22 @@ export async function authorize(
           if (!params.reason) return false;
         }
       }
+    } else if (params.resource === 'ticket') {
+      const targetStatus = params.requestedChanges?.status;
+      if (targetStatus && targetStatus !== state) {
+        if (session.role === 'SERVICE_CUSTOMER') {
+          const allowed =
+            (state === 'RESOLVED' && targetStatus === 'CLOSED') ||
+            ((state === 'RESOLVED' || state === 'CLOSED') && targetStatus === 'IN_PROGRESS');
+          if (!allowed) return false;
+        } else if (session.role === 'SCM_WORKER') {
+          const allowed =
+            (state === 'NEW' && targetStatus === 'TRIAGED') ||
+            ((state === 'TRIAGED' || state === 'ASSIGNED' || state === 'WAITING_CUSTOMER') && targetStatus === 'IN_PROGRESS') ||
+            (state === 'IN_PROGRESS' && (targetStatus === 'WAITING_CUSTOMER' || targetStatus === 'RESOLVED'));
+          if (!allowed) return false;
+        }
+      }
     }
   }
 
@@ -393,6 +405,28 @@ export async function authorize(
   }
 
   return true;
+}
+
+/**
+ * Shared API helper to authorize an action or throw.
+ */
+export async function requireAuthorizedAction(
+  params: {
+    resource: Resource;
+    action: Action;
+    recordId?: string;
+    requestedChanges?: Record<string, any>;
+    workflowState?: string;
+    reason?: string;
+  }
+): Promise<SessionUser> {
+  const session = await getSession();
+  if (!session) throw new Error('UNAUTHORIZED');
+
+  const ok = await authorize(session, params);
+  if (!ok) throw new Error('FORBIDDEN');
+
+  return session;
 }
 
 /** Default permission set per role (used by seed to populate the Permission/RolePermission tables). */

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
+import { authorize } from '@/lib/permissions';
 import {
   canAccessEntity,
-  requireEntityAccess,
   type EntityType,
 } from '@/lib/entity-access';
 import {
@@ -17,22 +17,6 @@ import {
 export const runtime = 'nodejs';
 
 // GET /api/conversations?entityType=DEMAND&entityId=...&createIfMissing=1
-// Returns the conversation (with comments) for the given entity, optionally
-// creating one if it does not yet exist. All roles are scoped via the
-// entity-access helper — access is verified before the conversation is read
-// or created.
-//
-// Query params:
-//   entityType (required) — TICKET | DEMAND | CHANGE | PROBLEM | SLA_EVENT
-//   entityId   (required) — entity id
-//   createIfMissing (optional, default 0) — if '1', upsert a conversation
-//
-// Role scoping (visibility is enforced on the comments array):
-//   SERVICE_CUSTOMER → CUSTOMER_VISIBLE comments only, and only for entities
-//                       in their orgNode.
-//   SCM_WORKER       → all comments for entities they're assigned to.
-//   CM_LEADER        → all comments.
-//   SERVICE_OWNER    → all comments for entities tied to services they own.
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -53,14 +37,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'INVALID_ENTITY_ID — entityId is required' }, { status: 400 });
     }
 
-    // Entity-access gate (read) — verify the caller can read the underlying entity.
-    const ok = await canAccessEntity(session, entityType as EntityType, entityId, 'read');
-    if (!ok) {
+    // Entity-access gate via central authorize layer
+    const allowed = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'read', recordId: entityId });
+    if (!allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Resolve the owning serviceCustomerId for the entity so we can stamp it on
-    // newly-created conversations + scope SERVICE_CUSTOMER reads.
     const serviceCustomerId = await resolveServiceCustomerId(entityType, entityId);
 
     let conv = await db.conversation.findFirst({
@@ -69,10 +51,8 @@ export async function GET(req: NextRequest) {
     });
 
     if (!conv && createIfMissing) {
-      // Verify write access before creating a conversation shell.
-      try {
-        await requireEntityAccess(session, entityType as EntityType, entityId, 'write');
-      } catch {
+      const allowedWrite = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'update', recordId: entityId });
+      if (!allowedWrite) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
 
@@ -94,7 +74,6 @@ export async function GET(req: NextRequest) {
     }
 
     if (!conv) {
-      // Return an empty-shell shape so the frontend can render the input box.
       return NextResponse.json({
         id: null,
         entityType,
@@ -120,9 +99,6 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/conversations — create a new conversation explicitly.
-// Body: { entityType, entityId }
-// Useful when the caller wants to guarantee the shell exists before posting
-// the first comment (the comments POST route also auto-creates the shell).
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -142,11 +118,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'INVALID_ENTITY_ID — entityId is required' }, { status: 400 });
     }
 
-    // Entity-access gate (write) — caller must be allowed to write the
-    // underlying entity before we create a conversation on it.
-    try {
-      await requireEntityAccess(session, entityType as EntityType, entityId, 'write');
-    } catch {
+    // Entity-access gate via central authorize layer
+    const allowed = await authorize(session, { resource: entityType.toLowerCase() as any, action: 'update', recordId: entityId });
+    if (!allowed) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -186,9 +160,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Resolve the serviceCustomerId (OrgNode id) for an entity, when applicable.
-// Returns null for entity types that aren't customer-owned (CHANGE, PROBLEM,
-// SLA_EVENT are internal — we still attempt to derive from originDemand).
 async function resolveServiceCustomerId(
   entityType: 'TICKET' | 'DEMAND' | 'CHANGE' | 'PROBLEM' | 'SLA_EVENT',
   entityId: string,
@@ -209,7 +180,6 @@ async function resolveServiceCustomerId(
       return d?.serviceCustomerId ?? null;
     }
     if (entityType === 'CHANGE') {
-      // Derive customer through origin demand, if any.
       const c = await db.change.findUnique({
         where: { id: entityId },
         select: { originDemandId: true },
@@ -230,7 +200,6 @@ async function resolveServiceCustomerId(
       });
       return e?.serviceCustomerId ?? null;
     }
-    // PROBLEM has no direct customer link in the schema — return null.
     return null;
   } catch {
     return null;

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { requireEntityAccess } from '@/lib/entity-access';
+import { requireAuthorizedAction } from '@/lib/permissions';
 import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
-import { isAgent } from '../../_helpers';
 import {
   TICKET_INCLUDE,
   serializeTicket,
@@ -19,37 +17,12 @@ const VALID_CODES = ['FIXED', 'WORKAROUND', 'DUPLICATE', 'NOT_REPRODUCIBLE', 'OU
 // POST /api/tickets/[id]/resolve
 // Body: { resolutionCode: 'FIXED' | 'WORKAROUND' | 'DUPLICATE' | 'NOT_REPRODUCIBLE' | 'OUT_OF_SCOPE',
 //         resolutionNotes: string (required, ≥5 chars) }
-//
-// Transition: any non-terminal status → RESOLVED (state-machine enforced).
-// Marks all RUNNING/PAUSED SLA clocks as MET.
-// Roles: SCM_WORKER or CM_LEADER.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (!isAgent(session.role)) {
-      return NextResponse.json(
-        { error: 'Only SCM Workers and CM Leaders can resolve tickets' },
-        { status: 403 },
-      );
-    }
     const { id } = await params;
-
-    // Entity-access gate (write).
-    try {
-      await requireEntityAccess(session, 'TICKET', id, 'write');
-    } catch {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    const ticket = await db.ticket.findUnique({ where: { id } });
-    if (!ticket) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
-
     const body = await req.json().catch(() => ({}));
     const resolutionCode =
       typeof body.resolutionCode === 'string' ? body.resolutionCode.toUpperCase() : '';
@@ -60,6 +33,25 @@ export async function POST(
       );
     }
     body.resolutionCode = resolutionCode; // normalize for state-machine validation
+
+    let session;
+    try {
+      session = await requireAuthorizedAction({
+        resource: 'ticket',
+        action: 'resolve',
+        recordId: id,
+        requestedChanges: body,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'UNAUTHORIZED') return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const ticket = await db.ticket.findUnique({ where: { id } });
+    if (!ticket) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
 
     // State-machine validation — RESOLVED requires resolutionCode + resolutionNotes (≥5 chars).
     const currentStatus = ticket.status as TicketStatus;
