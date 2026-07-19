@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSession } from '@/lib/auth';
 import { auditLog } from '@/lib/audit';
-import { requireEntityAccess } from '@/lib/entity-access';
+import { requireAuthorizedAction } from '@/lib/permissions';
 import { validateTransition, ACTION_TO_STATUS, type TicketStatus } from '@/lib/ticket-state';
 import {
   TICKET_INCLUDE,
@@ -15,32 +14,25 @@ export const runtime = 'nodejs';
 
 // POST /api/tickets/[id]/close
 // Body: { notes? }
-//
-// Transition: RESOLVED → CLOSED (state-machine enforced; CM Leader may close
-// from any non-terminal status).
-// Customers can close their own tickets (typically after RESOLVED). SCM/CM
-// can close any ticket they can read. Service Owners cannot close tickets.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (session.role === 'SERVICE_OWNER') {
-      return NextResponse.json(
-        { error: 'Service Owners cannot close tickets' },
-        { status: 403 },
-      );
-    }
     const { id } = await params;
+    const body = await req.json().catch(() => ({}));
 
-    // Entity-access gate (write). For SERVICE_CUSTOMER this means the ticket
-    // belongs to their orgNode; for SCM_WORKER this means they're assigned or
-    // serve the customer; CM_LEADER has unrestricted access.
+    let session;
     try {
-      await requireEntityAccess(session, 'TICKET', id, 'write');
-    } catch {
+      session = await requireAuthorizedAction({
+        resource: 'ticket',
+        action: 'close',
+        recordId: id,
+        requestedChanges: body,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'UNAUTHORIZED') return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -48,8 +40,6 @@ export async function POST(
     if (!ticket) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-
-    const body = await req.json().catch(() => ({}));
 
     // State-machine validation — CLOSED requires RESOLVED unless CM_LEADER override.
     const currentStatus = ticket.status as TicketStatus;

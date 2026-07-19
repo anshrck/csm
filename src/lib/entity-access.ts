@@ -15,7 +15,11 @@ export type EntityType =
   | 'KNOWLEDGE_ARTICLE'
   | 'SLA_REPORT'
   | 'GOVERNANCE_DECISION'
-  | 'COMMUNICATION';
+  | 'COMMUNICATION'
+  | 'SERVICE'
+  | 'SERVICE_OFFERING'
+  | 'AUDIT_LOG'
+  | 'CUSTOMER_ASSIGNMENT';
 
 export type AccessAction = 'read' | 'write' | 'create';
 
@@ -33,17 +37,40 @@ export async function canAccessEntity(
 
   // CM_LEADER: Scoped access based on managed scope or tenant permission
   if (session.role === 'CM_LEADER') {
-    if (entityType === 'DEMAND') {
-      const tenant = await hasPermission('demand.read.tenant');
-      const managed = await hasPermission('demand.read.managed_scope');
-      if (tenant || managed) return true;
-    }
+    const hasTenant = await hasPermission(`${entityType.toLowerCase()}.read.tenant` as any);
+    if (hasTenant) return true;
+
+    // Check if there is a managed scope record for the leader
+    const hasAnyScope = await db.leaderManagedScope.count({
+      where: { leaderId: session.id },
+    }) > 0;
+    if (!hasAnyScope) return true; // unrestricted default
+
+    // Fetch the customer org id of the entity (if any) and check if it's in scope
+    let orgNodeId: string | null = null;
     if (entityType === 'TICKET') {
-      const tenant = await hasPermission('ticket.read.tenant');
-      const managed = await hasPermission('ticket.read.managed_scope');
-      if (tenant || managed) return true;
+      const t = await db.ticket.findUnique({ where: { id: entityId }, select: { serviceCustomerId: true } });
+      orgNodeId = t?.serviceCustomerId ?? null;
+    } else if (entityType === 'DEMAND') {
+      const d = await db.demand.findUnique({ where: { id: entityId }, select: { serviceCustomerId: true } });
+      orgNodeId = d?.serviceCustomerId ?? null;
+    } else if (entityType === 'SLA_REPORT') {
+      const managedOrgIds = await getLeaderManagedOrgIds(session.id);
+      const reportCustCount = await db.slaReportCustomer.count({
+        where: {
+          slaReportId: entityId,
+          orgNodeId: { in: managedOrgIds },
+        },
+      });
+      return reportCustCount > 0;
     }
-    // Default fallback for CM_LEADER is true for other entities in operational scope
+
+    if (orgNodeId) {
+      const count = await db.leaderManagedScope.count({
+        where: { leaderId: session.id, orgNodeId },
+      });
+      return count > 0;
+    }
     return true;
   }
 
@@ -142,8 +169,31 @@ export async function canAccessEntity(
       if (session.role === 'SERVICE_OWNER') {
         return await isOwnedService(session.id, problem.serviceId);
       }
-      // SCM and customers: problems are internal; SCM sees if service is in their scope
-      if (session.role === 'SCM_WORKER') return true; // SCM can see problems for awareness
+      if (session.role === 'SCM_WORKER') {
+        const hasLinkedTicket = await db.ticket.count({
+          where: { assignedUserId: session.id, serviceId: problem.serviceId },
+        }) > 0;
+        if (hasLinkedTicket) return true;
+
+        const customerOrgIds = await getAssignedCustomerOrgIds(session.id);
+        const hasEntitledCustomer = await db.entitlement.count({
+          where: {
+            orgNodeId: { in: customerOrgIds },
+            offering: { serviceId: problem.serviceId },
+          },
+        }) > 0;
+        if (hasEntitledCustomer) return true;
+
+        const hasLinkedDemand = await db.demand.count({
+          where: {
+            assignedScmWorkerId: session.id,
+            relatedServiceIds: { contains: problem.serviceId },
+          },
+        }) > 0;
+        if (hasLinkedDemand) return true;
+
+        return false;
+      }
       if (session.role === 'SERVICE_CUSTOMER') return false; // problems are internal
       return false;
     }
@@ -160,10 +210,22 @@ export async function canAccessEntity(
       if (session.role === 'SERVICE_OWNER') {
         return await isOwnedService(session.id, evt.serviceId);
       }
-      // SCM: see SLA events for their assigned customers
       if (session.role === 'SCM_WORKER') {
-        if (evt.serviceCustomerId) return await isAssignedCustomer(session.id, evt.serviceCustomerId);
-        return true; // tenant-wide SLA events for awareness
+        if (evt.serviceCustomerId && await isAssignedCustomer(session.id, evt.serviceCustomerId)) return true;
+        const hasTicket = await db.ticket.count({
+          where: { assignedUserId: session.id, serviceId: evt.serviceId },
+        }) > 0;
+        if (hasTicket) return true;
+
+        const hasDemand = await db.demand.count({
+          where: {
+            assignedScmWorkerId: session.id,
+            relatedServiceIds: { contains: evt.serviceId },
+          },
+        }) > 0;
+        if (hasDemand) return true;
+
+        return false;
       }
       return false;
     }
@@ -218,16 +280,26 @@ export async function canAccessEntity(
         return await isOwnedService(session.id, decision.serviceId);
       }
       if (session.role === 'SCM_WORKER') {
-        // SCM sees decisions affecting their demands
         if (decision.demandId) {
           const demand = await db.demand.findUnique({
             where: { id: decision.demandId },
             select: { assignedScmWorkerId: true, serviceCustomerId: true },
           });
-          if (demand?.assignedScmWorkerId === session.id) return true;
-          if (demand && await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+          if (demand) {
+            if (demand.assignedScmWorkerId === session.id) return true;
+            if (await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+          }
         }
-        return true; // SCM can see governance decisions for awareness
+        const customerOrgIds = await getAssignedCustomerOrgIds(session.id);
+        const hasEntitledCustomer = await db.entitlement.count({
+          where: {
+            orgNodeId: { in: customerOrgIds },
+            offering: { serviceId: decision.serviceId },
+          },
+        }) > 0;
+        if (hasEntitledCustomer) return true;
+
+        return false;
       }
       if (session.role === 'SERVICE_CUSTOMER') {
         // Customers don't see internal governance decisions directly
@@ -249,13 +321,74 @@ export async function canAccessEntity(
       }
       if (session.role === 'SCM_WORKER') {
         if (comm.authorId === session.id) return true;
-        if (comm.serviceCustomerId) return await isAssignedCustomer(session.id, comm.serviceCustomerId);
-        return true;
+        if (comm.serviceCustomerId && await isAssignedCustomer(session.id, comm.serviceCustomerId)) return true;
+        if (comm.demandId) {
+          const demand = await db.demand.findUnique({
+            where: { id: comm.demandId },
+            select: { assignedScmWorkerId: true, serviceCustomerId: true },
+          });
+          if (demand) {
+            if (demand.assignedScmWorkerId === session.id) return true;
+            if (await isAssignedCustomer(session.id, demand.serviceCustomerId)) return true;
+          }
+        }
+        return false;
       }
       if (session.role === 'SERVICE_OWNER') {
         return await isOwnedService(session.id, comm.serviceId);
       }
       return true;
+    }
+
+    case 'SERVICE': {
+      const service = await db.service.findUnique({
+        where: { id: entityId },
+      });
+      if (!service) return false;
+      if (session.role === 'SERVICE_CUSTOMER') {
+        return service.status === 'ACTIVE' || service.status === 'PLANNED';
+      }
+      if (session.role === 'SERVICE_OWNER') {
+        return await isOwnedService(session.id, entityId);
+      }
+      return true; // SCM_WORKER, CM_LEADER can read all services
+    }
+
+    case 'SERVICE_OFFERING': {
+      const offering = await db.serviceOffering.findUnique({
+        where: { id: entityId },
+        select: { serviceId: true },
+      });
+      if (!offering) return false;
+      return await canAccessEntity(session, 'SERVICE', offering.serviceId, action);
+    }
+
+    case 'AUDIT_LOG': {
+      const log = await db.auditLog.findUnique({
+        where: { id: entityId },
+      });
+      if (!log) return false;
+      // Audit records are visible if the user can access the underlying entity
+      const underlyingType = log.entityType.toUpperCase() as EntityType;
+      try {
+        return await canAccessEntity(session, underlyingType, log.entityId, 'read');
+      } catch {
+        return false;
+      }
+    }
+
+    case 'CUSTOMER_ASSIGNMENT': {
+      const assignment = await db.customerAssignment.findUnique({
+        where: { id: entityId },
+      });
+      if (!assignment) return false;
+      if (session.role === 'SERVICE_CUSTOMER') {
+        return assignment.orgNodeId === session.orgNodeId;
+      }
+      if (session.role === 'SCM_WORKER') {
+        return assignment.userId === session.id;
+      }
+      return true; // CM_LEADER, SERVICE_OWNER
     }
 
     default:
@@ -289,6 +422,15 @@ export async function getAssignedCustomerOrgIds(userId: string): Promise<string[
     select: { orgNodeId: true },
   });
   return assignments.map((a) => a.orgNodeId);
+}
+
+/** Get the list of customer org IDs managed by a CM leader. */
+export async function getLeaderManagedOrgIds(leaderId: string): Promise<string[]> {
+  const scopes = await db.leaderManagedScope.findMany({
+    where: { leaderId },
+    select: { orgNodeId: true },
+  });
+  return scopes.map((s) => s.orgNodeId).filter((id): id is string => id !== null);
 }
 
 /** Require entity access — throws FORBIDDEN if denied. */

@@ -827,3 +827,16 @@ model ServiceRisk {
   @@index([status])
   @@index([severity])
 }
+
+// ============================================================================
+// CM Leader: Managed Portfolio Scope
+// ============================================================================
+
+model LeaderManagedScope {
+  id        String   @id @default(cuid())
+  leaderId  String
+  orgNodeId String?
+  createdAt DateTime @default(now())
+
+  @@unique([leaderId, orgNodeId])
+}

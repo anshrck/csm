@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSession, requireRole } from '@/lib/auth';
-import { getAssignedCustomerOrgIds } from '@/lib/entity-access';
-import type { Role } from '@/lib/types';
+import { getSession } from '@/lib/auth';
+import { authorize } from '@/lib/permissions';
 import { serializeCommunication, errorResponse } from './_serialize';
 
 export const runtime = 'nodejs';
@@ -11,14 +10,6 @@ const VALID_DIRECTIONS = new Set(['TO_CUSTOMER', 'INTERNAL_NOTE']);
 const VALID_CHANNELS = new Set(['PORTAL', 'EMAIL', 'MESSAGE']);
 
 // GET /api/communications — list with filters + role-based scoping.
-// Query params: demandId, serviceCustomerId, serviceId, slaEventId, direction.
-// Role scoping:
-//   SERVICE_CUSTOMER → only TO_CUSTOMER communications where
-//                      serviceCustomerId === caller.orgNodeId.
-//   SCM_WORKER       → communications on their assigned customer orgs (via
-//                      CustomerAssignment) OR communications they authored.
-//   CM_LEADER        → all communications.
-//   SERVICE_OWNER    → all communications (read-only governance visibility).
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -40,22 +31,6 @@ export async function GET(req: NextRequest) {
     if (slaEventId) and.push({ slaEventId });
     if (direction) and.push({ direction });
 
-    if (session.role === 'SERVICE_CUSTOMER') {
-      if (!session.orgNodeId) {
-        return NextResponse.json([]);
-      }
-      and.push({ direction: 'TO_CUSTOMER', serviceCustomerId: session.orgNodeId });
-    } else if (session.role === 'SCM_WORKER') {
-      // SCM sees comms on their assigned customer orgs OR comms they authored.
-      const assignedCustomerOrgIds = await getAssignedCustomerOrgIds(session.id);
-      const orClauses: Record<string, unknown>[] = [{ authorId: session.id }];
-      if (assignedCustomerOrgIds.length > 0) {
-        orClauses.push({ serviceCustomerId: { in: assignedCustomerOrgIds } });
-      }
-      and.push({ OR: orClauses });
-    }
-    // CM_LEADER + SERVICE_OWNER: no extra scoping.
-
     if (and.length === 0) delete where.AND;
 
     const rows = await db.communication.findMany({
@@ -63,26 +38,26 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json(rows.map(serializeCommunication));
+    const filtered: any[] = [];
+    for (const row of rows) {
+      const allowed = await authorize(session, { resource: 'communication', action: 'read', recordId: row.id });
+      if (allowed) filtered.push(row);
+    }
+
+    return NextResponse.json(filtered.map(serializeCommunication));
   } catch (err) {
     return errorResponse(err);
   }
 }
 
 // POST /api/communications — create a communication record.
-// Role: SCM_WORKER, CM_LEADER, or SERVICE_OWNER.
-// Body: { demandId?, serviceId?, serviceCustomerId?, slaEventId?,
-//         direction, channel, subject, body }
-// Side effects:
-//   - authorId / authorName from session.
-//   - When direction=TO_CUSTOMER, notify the customer org's SERVICE_CUSTOMER
-//     users (type 'BreachCommunicated' if slaEventId is set, else
-//     'CommunicationReceived').
-//   - When slaEventId is set, the relationship is recorded on the
-//     Communication row itself (no additional DemandEvent needed).
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireRole('SCM_WORKER' as Role, 'CM_LEADER' as Role, 'SERVICE_OWNER' as Role);
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const allowed = await authorize(session, { resource: 'communication', action: 'create' });
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
 

@@ -274,15 +274,15 @@ export async function authorize(
       ticket: 'TICKET',
       change: 'CHANGE',
       problem: 'PROBLEM',
-      service: 'KNOWLEDGE_ARTICLE', // fallback/shared scoping
-      service_offering: 'KNOWLEDGE_ARTICLE',
+      service: 'SERVICE',
+      service_offering: 'SERVICE_OFFERING',
       sla: 'SLA_EVENT',
       sla_report: 'SLA_REPORT',
       knowledge: 'KNOWLEDGE_ARTICLE',
       communication: 'COMMUNICATION',
       governance_decision: 'GOVERNANCE_DECISION',
-      audit: 'COMMUNICATION',
-      user_assignment: 'COMMUNICATION',
+      audit: 'AUDIT_LOG',
+      user_assignment: 'CUSTOMER_ASSIGNMENT',
     };
     const entityType = entityMap[params.resource];
     if (entityType) {
@@ -355,6 +355,22 @@ export async function authorize(
           if (!params.reason) return false;
         }
       }
+    } else if (params.resource === 'ticket') {
+      const targetStatus = params.requestedChanges?.status;
+      if (targetStatus && targetStatus !== state) {
+        if (session.role === 'SERVICE_CUSTOMER') {
+          const allowed =
+            (state === 'RESOLVED' && targetStatus === 'CLOSED') ||
+            ((state === 'RESOLVED' || state === 'CLOSED') && targetStatus === 'IN_PROGRESS');
+          if (!allowed) return false;
+        } else if (session.role === 'SCM_WORKER') {
+          const allowed =
+            (state === 'NEW' && targetStatus === 'TRIAGED') ||
+            ((state === 'TRIAGED' || state === 'ASSIGNED' || state === 'WAITING_CUSTOMER') && targetStatus === 'IN_PROGRESS') ||
+            (state === 'IN_PROGRESS' && (targetStatus === 'WAITING_CUSTOMER' || targetStatus === 'RESOLVED'));
+          if (!allowed) return false;
+        }
+      }
     }
   }
 
@@ -393,6 +409,28 @@ export async function authorize(
   }
 
   return true;
+}
+
+/**
+ * Shared API helper to authorize an action or throw.
+ */
+export async function requireAuthorizedAction(
+  params: {
+    resource: Resource;
+    action: Action;
+    recordId?: string;
+    requestedChanges?: Record<string, any>;
+    workflowState?: string;
+    reason?: string;
+  }
+): Promise<SessionUser> {
+  const session = await getSession();
+  if (!session) throw new Error('UNAUTHORIZED');
+
+  const ok = await authorize(session, params);
+  if (!ok) throw new Error('FORBIDDEN');
+
+  return session;
 }
 
 /** Default permission set per role (used by seed to populate the Permission/RolePermission tables). */
