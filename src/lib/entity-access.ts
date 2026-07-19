@@ -37,8 +37,15 @@ export async function canAccessEntity(
 
   // CM_LEADER: Scoped access based on managed scope or tenant permission
   if (session.role === 'CM_LEADER') {
-    const hasTenant = await hasPermission(session, `${entityType.toLowerCase()}.read.tenant` as any);
-    if (hasTenant) return true;
+    if (entityType === 'DEMAND') {
+      const hasTenant = await hasPermission(session, 'demand.read.tenant');
+      if (hasTenant) return true;
+    } else if (entityType === 'TICKET') {
+      const hasTenant = await hasPermission(session, 'ticket.read.tenant');
+      if (hasTenant) return true;
+    } else {
+      return true;
+    }
 
     // Check if there is a managed scope record for the leader
     const hasAnyScope = await db.leaderManagedScope.count({
@@ -408,11 +415,31 @@ export async function isAssignedCustomer(userId: string, orgNodeId: string | nul
 /** Helper: check if a user owns a service. */
 export async function isOwnedService(userId: string, serviceId: string | null): Promise<boolean> {
   if (!serviceId) return false;
+
+  // 1. Direct Service Owner Check
   const service = await db.service.findUnique({
     where: { id: serviceId },
     select: { serviceOwnerId: true },
   });
-  return service?.serviceOwnerId === userId;
+  if (service?.serviceOwnerId === userId) return true;
+
+  // 2. Active ServiceOwnershipAssignment check (PRIMARY | DELEGATE | BACKUP)
+  const now = new Date();
+  const assignments = await db.serviceOwnershipAssignment.findMany({
+    where: {
+      serviceId,
+      userId,
+      status: 'ACCEPTED',
+    },
+  });
+
+  const active = assignments.find((a) => {
+    const fromOk = a.validFrom <= now;
+    const untilOk = a.validUntil === null || a.validUntil >= now;
+    return fromOk && untilOk;
+  });
+
+  return !!active;
 }
 
 /** Get the list of customer org IDs assigned to an SCM worker. */

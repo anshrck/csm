@@ -152,18 +152,28 @@ export async function getSession(): Promise<SessionUser | null> {
     if (Date.now() - payload.ts > SESSION_MAX_AGE_MS) return null;
     const user = await db.user.findUnique({
       where: { id: payload.uid },
-      include: { orgNode: true },
+      include: { orgNode: true, roleAssignments: true },
     });
     if (!user) return null;
+
+    const roleAssignments = user.roleAssignments.map((ra) => ({
+      roleId: ra.roleId,
+      scopeType: ra.scopeType,
+      scopeId: ra.scopeId,
+    }));
+    const roles = Array.from(new Set(user.roleAssignments.map((ra) => ra.roleId as Role)));
+
     return {
       id: user.id,
       email: user.email,
       name: user.name,
-      role: user.role as Role,
+      role: (roles.includes(user.role as Role) ? user.role : (roles[0] ?? user.role)) as Role,
       orgNodeId: user.orgNodeId,
       orgNodeName: user.orgNode?.name ?? null,
       avatarColor: user.avatarColor,
       title: user.title ?? null,
+      roles,
+      roleAssignments,
     };
   } catch {
     return null;
